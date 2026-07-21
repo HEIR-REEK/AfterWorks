@@ -18,6 +18,12 @@ services:
         sync: false
       - key: FIREBASE_PROJECT_ID
         sync: false
+      - key: FIREBASE_WEB_API_KEY
+        sync: false
+      - key: FIREBASE_AUTH_DOMAIN
+        sync: false
+      - key: FIREBASE_APP_ID
+        sync: false
       - key: DIDIT_CLIENT_ID
         sync: false
       - key: DIDIT_CLIENT_SECRET

@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: afterworks
+    runtime: node
+    plan: starter
+    buildCommand: npm install && npm run build
+    startCommand: npm run start
+    envVars:
+      - key: NODE_VERSION
+        value: 20.18.0
+      - key: NODE_ENV
+        value: production
+      - key: NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY
+        sync: false
+      - key: PAYSTACK_SECRET_KEY
+        sync: false
+      - key: FIREBASE_SERVICE_ACCOUNT_JSON
+        sync: false
+      - key: FIREBASE_PROJECT_ID
+        sync: false
+      - key: DIDIT_CLIENT_ID
+        sync: false
+      - key: DIDIT_CLIENT_SECRET
+        sync: false
+      - key: DIDIT_WORKFLOW_ID
+        sync: false

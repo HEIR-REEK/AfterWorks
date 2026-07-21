@@ -1,8 +1,9 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
+import { KycQrModal } from '@/components/kyc-qr-modal'
 import { useAfterWorks } from '@/components/afterworks-provider'
 import { useAuth } from '@/components/firebase-auth-provider'
 import { Button } from '@/components/ui/button'
@@ -24,13 +25,14 @@ import {
   Sparkles,
   UserCircle,
   X,
+  Building2,
+  Smartphone,
+  Landmark,
+  AlertCircle,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { formatKes, formatUsd } from '@/lib/afterworks-data'
 import { KENYAN_BANKS } from '@/lib/banks'
-import { Building2, Smartphone, Landmark, AlertCircle } from 'lucide-react'
-
-import { Suspense } from 'react'
 
 function ProfilePageContent() {
   const { worker, wallet, applications, getJob, updateProfile } = useAfterWorks()
@@ -42,7 +44,9 @@ function ProfilePageContent() {
   const [toastMessage, setToastMessage] = useState('Profile updated successfully!')
   const [startingKyc, setStartingKyc] = useState(false)
   const [kycError, setKycError] = useState<string | null>(null)
-  const [activeSessionToken, setActiveSessionToken] = useState<string | null>(null)
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
+  const [activeVerificationUrl, setActiveVerificationUrl] = useState<string | null>(null)
+  const [isQrModalOpen, setIsQrModalOpen] = useState(false)
 
   // 1. Check for ?kyc=success in query string
   useEffect(() => {
@@ -56,15 +60,15 @@ function ProfilePageContent() {
 
   // 2. Poll for cross-device KYC completion (e.g., when laptop user scans QR code on phone)
   useEffect(() => {
-    if (!activeSessionToken || !user?.uid || worker.kycVerified) return
+    if (!activeSessionId || !user?.uid || worker.kycVerified) return
 
     const interval = setInterval(async () => {
       try {
-        const res = await fetch(`/api/kyc/status?sessionToken=${activeSessionToken}&userId=${user.uid}`)
+        const res = await fetch(`/api/kyc/status?sessionId=${activeSessionId}&userId=${user.uid}`)
         const data = await res.json()
         if (data.isApproved) {
           await updateProfile({ kycVerified: true })
-          setActiveSessionToken(null)
+          setActiveSessionId(null)
           setToastMessage('Biometric KYC Verified successfully!')
           setShowToast(true)
           setTimeout(() => setShowToast(false), 5000)
@@ -75,7 +79,7 @@ function ProfilePageContent() {
     }, 4000)
 
     return () => clearInterval(interval)
-  }, [activeSessionToken, user, worker.kycVerified, updateProfile])
+  }, [activeSessionId, user, worker.kycVerified, updateProfile])
 
   const handleStartKyc = async () => {
     if (!user) {
@@ -85,10 +89,12 @@ function ProfilePageContent() {
     setStartingKyc(true)
     setKycError(null)
     try {
+      const isMobile = typeof window !== 'undefined' && /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent)
+
       const res = await fetch('/api/kyc/submit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: user.uid }),
+        body: JSON.stringify({ userId: user.uid, isMobile }),
       })
 
       const data = await res.json()
@@ -97,12 +103,15 @@ function ProfilePageContent() {
         throw new Error(data.error || 'Failed to start KYC session.')
       }
 
-      if (data.sessionToken) {
-        setActiveSessionToken(data.sessionToken)
-      }
-
-      if (data.verificationUrl) {
-        window.location.href = data.verificationUrl
+      if (data.sessionId && data.verificationUrl) {
+        if (isMobile) {
+          // Redirection for mobile flow
+          window.location.href = data.verificationUrl
+        } else {
+          setActiveSessionId(data.sessionId)
+          setActiveVerificationUrl(data.verificationUrl)
+          setIsQrModalOpen(true)
+        }
       } else {
         throw new Error('No verification URL returned from Didit.')
       }
@@ -748,6 +757,20 @@ function ProfilePageContent() {
           </div>
         </div>
       )}
+      {/* QR Code Modal for Mobile Scan */}
+      <KycQrModal
+        isOpen={isQrModalOpen}
+        onClose={() => setIsQrModalOpen(false)}
+        sessionId={activeSessionId}
+        verificationUrl={activeVerificationUrl}
+        userId={user?.uid}
+        onVerified={() => {
+          updateProfile({ kycVerified: true })
+          setToastMessage('Biometric KYC Verified successfully!')
+          setShowToast(true)
+          setTimeout(() => setShowToast(false), 5000)
+        }}
+      />
     </div>
   )
 }

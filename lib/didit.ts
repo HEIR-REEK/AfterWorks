@@ -17,11 +17,7 @@ function callbackUrl() {
   return `${appUrl}/kyc/callback`
 }
 
-/**
- * Create a new Didit KYC session for a user.
- * Returns { session_token, verification_url } from Didit.
- */
-export async function createKycSession(userId: string) {
+export async function createKycSession(userId: string, isMobile?: boolean, origin?: string) {
   // Detect unconfigured / placeholder env values
   const missingKey = !DIDIT_API_KEY || DIDIT_API_KEY.startsWith('your_')
   const missingWorkflow = !DIDIT_WORKFLOW_ID || DIDIT_WORKFLOW_ID.startsWith('your_')
@@ -37,6 +33,11 @@ export async function createKycSession(userId: string) {
     )
   }
 
+  const baseCbUrl = origin ? `${origin}/kyc/callback` : callbackUrl()
+  const cbUrl = isMobile
+    ? `${baseCbUrl}?device=mobile`
+    : `${baseCbUrl}?device=cross_device`
+
   const response = await fetch(`${DIDIT_BASE_URL}/v3/session/`, {
     method: 'POST',
     headers: {
@@ -46,7 +47,7 @@ export async function createKycSession(userId: string) {
     body: JSON.stringify({
       workflow_id: DIDIT_WORKFLOW_ID,
       vendor_data: userId,          // ties session to your Firebase UID
-      callback: callbackUrl(),       // Didit redirects here after flow
+      callback: cbUrl,              // Didit redirects here after flow
     }),
   })
 
@@ -66,12 +67,12 @@ export async function createKycSession(userId: string) {
 
 /**
  * Retrieve the current status of a Didit KYC session.
- * Uses the session_token returned from createKycSession.
+ * Uses the session_id returned from createKycSession.
  */
-export async function getKycSessionStatus(sessionToken: string) {
+export async function getKycSessionStatus(sessionId: string) {
   if (!DIDIT_API_KEY) throw new Error('DIDIT_API_KEY is not configured.')
 
-  const response = await fetch(`${DIDIT_BASE_URL}/v3/session/${sessionToken}`, {
+  const response = await fetch(`${DIDIT_BASE_URL}/v3/session/${sessionId}`, {
     method: 'GET',
     headers: {
       'x-api-key': DIDIT_API_KEY,

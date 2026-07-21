@@ -7,7 +7,7 @@ import { useAuth } from '@/components/firebase-auth-provider'
 import { AfterWorksProvider } from '@/components/afterworks-provider'
 import { AppShell } from '@/components/app-shell'
 
-const PUBLIC_ROUTES = ['/sign-in', '/sign-up']
+const PUBLIC_ROUTES = ['/sign-in', '/sign-up', '/kyc/callback']
 
 export function AppGate({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()

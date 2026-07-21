@@ -11,7 +11,7 @@ export const dynamic = 'force-dynamic'
 
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyWebhookSignature } from '@/lib/didit'
-import { updateUserProfile } from '@/lib/firestore'
+import { updateUserProfile, saveKycRecord } from '@/lib/firestore-admin'
 
 export async function POST(req: NextRequest) {
   try {
@@ -34,9 +34,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Missing vendor_data (userId).' }, { status: 400 })
     }
 
+    // Save status update to kyc_records
+    await saveKycRecord(
+      userId,
+      payload.session_id || payload.id || '',
+      session_token || '',
+      status
+    )
+
     // Map Didit statuses → our Firestore field
     if (status === 'Approved') {
-      await updateUserProfile(userId, { kycVerified: true })
+      await updateUserProfile(userId, { kycVerified: true, accountState: 'active' })
       console.log(`[KYC webhook] Marked uid=${userId} as KYC verified.`)
     } else if (status === 'Declined') {
       await updateUserProfile(userId, { kycVerified: false })

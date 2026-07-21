@@ -46,15 +46,9 @@ export default function ProfilePage() {
     setStartingKyc(true)
     setKycError(null)
     try {
-      // Get a fresh Firebase ID token to authenticate the backend request
-      const idToken = await user.getIdToken()
-
       const res = await fetch('/api/kyc/submit', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${idToken}`,
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId: user.uid }),
       })
 
@@ -65,7 +59,6 @@ export default function ProfilePage() {
       }
 
       if (data.verificationUrl) {
-        // Open Didit's hosted verification page in the same tab
         window.location.href = data.verificationUrl
       } else {
         throw new Error('No verification URL returned from Didit.')

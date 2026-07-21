@@ -1,84 +1,109 @@
-import { env } from 'process';
-
-const DIDIT_API_URL = process.env.DIDIT_API_URL || 'https://apx.didit.me';
-const DIDIT_CLIENT_ID = process.env.DIDIT_CLIENT_ID || '';
-const DIDIT_CLIENT_SECRET = process.env.DIDIT_CLIENT_SECRET || '';
-const DIDIT_WORKFLOW_ID = process.env.DIDIT_WORKFLOW_ID || '';
-
 /**
- * Authenticate with Didit to get an access token.
- * This assumes standard OAuth2 client credentials flow or similar.
+ * Didit KYC API helper — server-side only.
+ *
+ * Didit uses a simple API key (x-api-key header) for auth.
+ * Base URL: https://verification.didit.me
+ *
+ * Docs: https://docs.didit.me
  */
-async function getDiditAccessToken() {
-  const response = await fetch(`${DIDIT_API_URL}/auth/token`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      'Authorization': `Basic ${Buffer.from(`${DIDIT_CLIENT_ID}:${DIDIT_CLIENT_SECRET}`).toString('base64')}`
-    },
-    body: new URLSearchParams({
-      grant_type: 'client_credentials'
-    })
-  });
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Failed to authenticate with Didit: ${errorText}`);
-  }
+const DIDIT_BASE_URL = 'https://verification.didit.me'
+const DIDIT_API_KEY = process.env.DIDIT_API_KEY || ''
+const DIDIT_WORKFLOW_ID = process.env.DIDIT_WORKFLOW_ID || ''
 
-  const data = await response.json();
-  return data.access_token;
+// The URL Didit should redirect the user back to after verification
+function callbackUrl() {
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
+  return `${appUrl}/kyc/callback`
 }
 
 /**
- * Create a new Didit KYC session.
+ * Create a new Didit KYC session for a user.
+ * Returns { session_token, verification_url } from Didit.
  */
 export async function createKycSession(userId: string) {
-  const token = await getDiditAccessToken();
-  
-  const response = await fetch(`${DIDIT_API_URL}/v3/session/`, {
+  // Detect unconfigured / placeholder env values
+  const missingKey = !DIDIT_API_KEY || DIDIT_API_KEY.startsWith('your_')
+  const missingWorkflow = !DIDIT_WORKFLOW_ID || DIDIT_WORKFLOW_ID.startsWith('your_')
+
+  if (missingKey) {
+    throw new Error(
+      'DIDIT_API_KEY is not configured. Go to https://business.didit.me → API & Webhooks to get your key, then set it in .env.',
+    )
+  }
+  if (missingWorkflow) {
+    throw new Error(
+      'DIDIT_WORKFLOW_ID is not configured. Create a verification workflow in the Didit Business Console and set it in .env.',
+    )
+  }
+
+  const response = await fetch(`${DIDIT_BASE_URL}/v3/session/`, {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json'
+      'x-api-key': DIDIT_API_KEY,
+      'Content-Type': 'application/json',
     },
     body: JSON.stringify({
       workflow_id: DIDIT_WORKFLOW_ID,
-      vendor_data: userId, // associate the session with our user ID
-      // You can add more config such as redirect_url if needed
-    })
-  });
+      vendor_data: userId,          // ties session to your Firebase UID
+      callback: callbackUrl(),       // Didit redirects here after flow
+    }),
+  })
 
   if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Failed to create Didit session: ${errorText}`);
+    const errorText = await response.text()
+    throw new Error(`Didit session creation failed (${response.status}): ${errorText}`)
   }
 
-  const data = await response.json();
-  // Returns something like { session_token: '...', verification_url: '...' }
-  return data;
+  const data = await response.json()
+  // Didit returns: { session_token, url, session_id, status, ... }
+  // Normalize 'url' → 'verification_url' for consistency with the rest of the app
+  return {
+    ...data,
+    verification_url: data.url ?? data.verification_url,
+  }
 }
 
 /**
- * Fetch the current status of a Didit KYC session.
- * Used for the API polling fallback strategy.
+ * Retrieve the current status of a Didit KYC session.
+ * Uses the session_token returned from createKycSession.
  */
 export async function getKycSessionStatus(sessionToken: string) {
-  const token = await getDiditAccessToken();
-  
-  const response = await fetch(`${DIDIT_API_URL}/v3/session/${sessionToken}`, {
+  if (!DIDIT_API_KEY) throw new Error('DIDIT_API_KEY is not configured.')
+
+  const response = await fetch(`${DIDIT_BASE_URL}/v3/session/${sessionToken}`, {
     method: 'GET',
     headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json'
-    }
-  });
+      'x-api-key': DIDIT_API_KEY,
+      'Content-Type': 'application/json',
+    },
+  })
 
   if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Failed to fetch Didit session status: ${errorText}`);
+    const errorText = await response.text()
+    throw new Error(`Didit status fetch failed (${response.status}): ${errorText}`)
   }
 
-  const data = await response.json();
-  return data;
+  return response.json()
+}
+
+/**
+ * Verify a Didit webhook signature.
+ * Didit signs webhooks with HMAC-SHA256 using DIDIT_WEBHOOK_SECRET.
+ * Call this inside your webhook route before trusting the payload.
+ */
+export async function verifyWebhookSignature(
+  rawBody: string,
+  signatureHeader: string | null,
+): Promise<boolean> {
+  const secret = process.env.DIDIT_WEBHOOK_SECRET
+  if (!secret || !signatureHeader) return false
+
+  try {
+    const { createHmac } = await import('crypto')
+    const expected = createHmac('sha256', secret).update(rawBody).digest('hex')
+    return signatureHeader === expected
+  } catch {
+    return false
+  }
 }

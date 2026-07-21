@@ -24,9 +24,11 @@ services:
         sync: false
       - key: FIREBASE_APP_ID
         sync: false
-      - key: DIDIT_CLIENT_ID
-        sync: false
-      - key: DIDIT_CLIENT_SECRET
+      - key: DIDIT_API_KEY
         sync: false
       - key: DIDIT_WORKFLOW_ID
+        sync: false
+      - key: DIDIT_WEBHOOK_SECRET
+        sync: false
+      - key: NEXT_PUBLIC_APP_URL
         sync: false

@@ -72,6 +72,7 @@ export type WorkerProfile = {
   zipCode?: string
   bankName?: string
   bankBranch?: string
+  bankAccountNumber?: string
 }
 
 export type Wallet = {

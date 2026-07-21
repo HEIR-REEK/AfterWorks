@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { useAfterWorks } from '@/components/afterworks-provider'
+import { useAuth } from '@/components/firebase-auth-provider'
 import { Button } from '@/components/ui/button'
 import {
   Award,
@@ -30,9 +31,53 @@ import { Building2, Smartphone, Landmark, AlertCircle } from 'lucide-react'
 
 export default function ProfilePage() {
   const { worker, wallet, applications, getJob, updateProfile } = useAfterWorks()
+  const { user } = useAuth()
   const [isEditing, setIsEditing] = useState(false)
   const [saving, setSaving] = useState(false)
   const [showToast, setShowToast] = useState(false)
+  const [startingKyc, setStartingKyc] = useState(false)
+  const [kycError, setKycError] = useState<string | null>(null)
+
+  const handleStartKyc = async () => {
+    if (!user) {
+      setKycError('You must be signed in to verify your identity.')
+      return
+    }
+    setStartingKyc(true)
+    setKycError(null)
+    try {
+      // Get a fresh Firebase ID token to authenticate the backend request
+      const idToken = await user.getIdToken()
+
+      const res = await fetch('/api/kyc/submit', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({ userId: user.uid }),
+      })
+
+      const data = await res.json()
+
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to start KYC session.')
+      }
+
+      if (data.verificationUrl) {
+        // Open Didit's hosted verification page in the same tab
+        window.location.href = data.verificationUrl
+      } else {
+        throw new Error('No verification URL returned from Didit.')
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Unknown error'
+      console.error('[KYC]', msg)
+      setKycError(msg)
+    } finally {
+      setStartingKyc(false)
+    }
+  }
 
   // Form state for editing profile
   const [formData, setFormData] = useState({
@@ -45,6 +90,7 @@ export default function ProfilePage() {
     preferredPayoutMethod: worker.preferredPayoutMethod || 'M-Pesa',
     bankName: worker.bankName || '',
     bankBranch: worker.bankBranch || '',
+    bankAccountNumber: worker.bankAccountNumber || '',
     skillsStr: (worker.skills || []).join(', '),
     languagesStr: (worker.languages || []).join(', '),
   })
@@ -61,6 +107,7 @@ export default function ProfilePage() {
       preferredPayoutMethod: worker.preferredPayoutMethod || 'M-Pesa',
       bankName: worker.bankName || '',
       bankBranch: worker.bankBranch || '',
+      bankAccountNumber: worker.bankAccountNumber || '',
       skillsStr: (worker.skills || []).join(', '),
       languagesStr: (worker.languages || []).join(', '),
     })
@@ -92,6 +139,7 @@ export default function ProfilePage() {
       preferredPayoutMethod: formData.preferredPayoutMethod,
       bankName: formData.preferredPayoutMethod === 'Bank Transfer' ? formData.bankName : '',
       bankBranch: formData.preferredPayoutMethod === 'Bank Transfer' ? formData.bankBranch : '',
+      bankAccountNumber: formData.preferredPayoutMethod === 'Bank Transfer' ? formData.bankAccountNumber.trim() : '',
       skills: skills.length > 0 ? skills : worker.skills,
       languages: languages.length > 0 ? languages : worker.languages,
     })
@@ -340,27 +388,36 @@ export default function ProfilePage() {
             </div>
           </div>
 
-          <div className="mt-6 flex items-center justify-between pt-2">
-            <p className="text-xs text-muted-foreground">
-              {worker.kycVerified
-                ? 'Your identity is fully verified on the Didit decentralized network.'
-                : 'Complete verification to unlock premium high-paying tasks.'}
-            </p>
-            {!worker.kycVerified ? (
-              <Button
-                onClick={() => alert('Didit KYC Verification Flow starting...')}
-                size="sm"
-                className="shrink-0 gap-1.5"
-              >
-                <ShieldCheck className="size-4" />
-                Verify Now
-              </Button>
-            ) : (
-              <Button variant="outline" size="sm" onClick={() => alert('Viewing Didit KYC Certificate...')} className="gap-1.5">
-                <ExternalLink className="size-3.5" />
-                View Status
-              </Button>
+          <div className="mt-6 flex flex-col gap-3 pt-2">
+            {kycError && (
+              <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2.5 text-xs text-destructive">
+                <AlertCircle className="size-4 shrink-0 mt-0.5" />
+                <p>{kycError}</p>
+              </div>
             )}
+            <div className="flex items-center justify-between">
+              <p className="text-xs text-muted-foreground">
+                {worker.kycVerified
+                  ? 'Your identity is fully verified on the Didit decentralized network.'
+                  : 'Complete verification to unlock premium high-paying tasks.'}
+              </p>
+              {!worker.kycVerified ? (
+                <Button
+                  onClick={handleStartKyc}
+                  disabled={startingKyc}
+                  size="sm"
+                  className="shrink-0 gap-1.5"
+                >
+                  <ShieldCheck className="size-4" />
+                  {startingKyc ? 'Starting...' : 'Verify Now'}
+                </Button>
+              ) : (
+                <Button variant="outline" size="sm" onClick={() => alert('Viewing Didit KYC Certificate...')} className="gap-1.5">
+                  <ExternalLink className="size-3.5" />
+                  View Status
+                </Button>
+              )}
+            </div>
           </div>
         </section>
       </div>
@@ -538,6 +595,23 @@ export default function ProfilePage() {
                         ))}
                       </select>
                     </div>
+
+                    {/* Bank Account Number — full width below the 2-col row */}
+                    <div className="col-span-2 space-y-1.5">
+                      <label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+                        <CreditCard className="size-3.5" />
+                        Bank Account Number
+                      </label>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        required={formData.preferredPayoutMethod === 'Bank Transfer'}
+                        value={formData.bankAccountNumber}
+                        onChange={(e) => setFormData({ ...formData, bankAccountNumber: e.target.value })}
+                        className="h-10 w-full rounded-lg border border-input bg-card px-3 text-sm outline-none focus:ring-2 focus:ring-primary"
+                        placeholder="e.g. 1234567890"
+                      />
+                    </div>
                   </div>
                 ) : (
                   <div className="space-y-1.5 animate-in fade-in slide-in-from-top-2">
@@ -574,9 +648,9 @@ export default function ProfilePage() {
                     <span className="text-xs text-muted-foreground">Required to withdraw funds.</span>
                   </div>
                   {!worker.kycVerified ? (
-                    <Button type="button" onClick={() => alert('Starting Didit KYC flow...')} size="sm" variant="default" className="h-8 gap-1.5">
+                    <Button type="button" disabled={startingKyc} onClick={handleStartKyc} size="sm" variant="default" className="h-8 gap-1.5">
                       <ShieldCheck className="size-3.5" />
-                      Verify Now
+                      {startingKyc ? 'Starting...' : 'Verify Now'}
                     </Button>
                   ) : (
                     <span className="inline-flex items-center gap-1 rounded-full bg-success/15 px-2.5 py-1 text-xs font-semibold text-success">
@@ -584,6 +658,12 @@ export default function ProfilePage() {
                     </span>
                   )}
                 </div>
+                {kycError && (
+                  <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2.5 text-xs text-destructive">
+                    <AlertCircle className="size-4 shrink-0 mt-0.5" />
+                    <p>{kycError}</p>
+                  </div>
+                )}
               </div>
 
               <div className="space-y-1.5">

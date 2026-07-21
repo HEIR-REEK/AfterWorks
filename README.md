@@ -725,3 +725,4 @@ npx prisma db push
 - Training module marketplace (workers can create + sell modules)
 - Dispute resolution system (appeals, mediation, refunds)
 # AfterWorks
+# AfterWorks

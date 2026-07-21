@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   Clock,
   GraduationCap,
+  ShieldAlert,
   ShieldCheck,
   Users,
 } from 'lucide-react'
@@ -31,7 +32,7 @@ export default function JobDetailPage({
 }) {
   const { id } = params
   const router = useRouter()
-  const { getJob, getApplicationForJob, applyToJob } = useAfterWorks()
+  const { getJob, getApplicationForJob, applyToJob, worker } = useAfterWorks()
   const [error, setError] = useState<string | null>(null)
 
   const job = getJob(id)
@@ -54,6 +55,10 @@ export default function JobDetailPage({
 
   function handleApply() {
     setError(null)
+    if (!worker.kycVerified) {
+      setError('Identity verification (KYC) is required before applying for jobs.')
+      return
+    }
     if (job!.trainingRequired) {
       router.push(`/training/${job!.id}`)
       return
@@ -116,8 +121,17 @@ export default function JobDetailPage({
             <h2 className="text-sm font-semibold">Requirements</h2>
             <ul className="mt-3 flex flex-col gap-3 text-sm">
               <li className="flex items-center gap-2.5 text-muted-foreground">
-                <ShieldCheck className="size-4 shrink-0 text-success" />
-                Verified account (KYC) — you&apos;re verified
+                {worker.kycVerified ? (
+                  <>
+                    <ShieldCheck className="size-4 shrink-0 text-success" />
+                    <span>Verified account (KYC) — <strong className="text-success font-medium">Verified</strong></span>
+                  </>
+                ) : (
+                  <>
+                    <ShieldAlert className="size-4 shrink-0 text-warning" />
+                    <span>Identity verification (KYC) — <strong className="text-warning font-medium">Action required</strong></span>
+                  </>
+                )}
               </li>
               {job.trainingRequired ? (
                 <li className="flex items-center gap-2.5 text-muted-foreground">
@@ -196,6 +210,26 @@ export default function JobDetailPage({
                     className="mt-1 w-full"
                   >
                     Track application
+                  </Button>
+                </div>
+              ) : !worker.kycVerified ? (
+                <div className="flex flex-col gap-2">
+                  <Button
+                    onClick={handleApply}
+                    disabled={isClosed}
+                    size="lg"
+                    className="w-full"
+                  >
+                    {isClosed ? 'Slots full' : 'Apply now — free'}
+                  </Button>
+                  <Button
+                    render={<Link href="/profile" />}
+                    variant="outline"
+                    size="sm"
+                    className="w-full gap-1.5 border-warning/40 text-warning hover:bg-warning/10"
+                  >
+                    <ShieldAlert className="size-4" />
+                    Verify KYC in Profile
                   </Button>
                 </div>
               ) : (

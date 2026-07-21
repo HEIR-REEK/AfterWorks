@@ -6,45 +6,56 @@ import { updateUserProfile, saveKycRecord } from '@/lib/firestore-admin'; // Use
 
 export async function GET(req: NextRequest) {
   try {
-    const sessionId = req.nextUrl.searchParams.get('sessionId');
-    const userId = req.nextUrl.searchParams.get('userId');
+    const sessionId =
+      req.nextUrl.searchParams.get('sessionId') ||
+      req.nextUrl.searchParams.get('session_id') ||
+      req.nextUrl.searchParams.get('sessionToken') ||
+      req.nextUrl.searchParams.get('session_token')
+    const userId =
+      req.nextUrl.searchParams.get('userId') ||
+      req.nextUrl.searchParams.get('vendor_data')
 
     if (!sessionId || !userId) {
       return NextResponse.json(
         { error: 'Session ID and User ID are required.' },
         { status: 400 },
-      );
+      )
     }
 
     // Polling fallback strategy: manually check Didit session status
-    const statusData = await getKycSessionStatus(sessionId);
+    const statusData = await getKycSessionStatus(sessionId)
 
     // Save status update to kyc_records
     await saveKycRecord(
       userId,
       statusData.session_id || statusData.id || sessionId,
-      '', // Optional sessionToken can be empty here
-      statusData.status
-    );
+      statusData.session_token || '',
+      statusData.status || statusData.state || 'Pending'
+    )
     
-    const isApproved = statusData.status === 'Approved' || statusData.status === 'Verified';
-    const isRejected = statusData.status === 'Declined' || statusData.status === 'Rejected';
+    const rawStatus = (statusData.status || statusData.state || '').toString()
+    const statusLower = rawStatus.toLowerCase()
+    const isApproved = statusLower === 'approved' || statusLower === 'verified' || statusLower === 'completed'
+    const isRejected = statusLower === 'declined' || statusLower === 'rejected' || statusLower === 'failed'
 
     if (isApproved) {
-      // For the mock / prototype, update the firestore user profile
       await updateUserProfile(userId, { 
         kycVerified: true, 
         accountState: 'active' 
-      });
+      })
+    } else if (isRejected) {
+      await updateUserProfile(userId, { 
+        kycVerified: false, 
+        accountState: 'kyc_rejected' 
+      })
     }
 
     return NextResponse.json({
-      status: statusData.status,
+      status: rawStatus,
       isApproved,
       isRejected,
-      // Pass the raw data back for the client to handle
       data: statusData
-    });
+    })
   } catch (err) {
     console.error('KYC status check error:', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

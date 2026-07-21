@@ -182,6 +182,12 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
     }
 
     function applyToJob(jobId: string): ApplyResult {
+      if (!worker.kycVerified) {
+        return {
+          ok: false,
+          reason: 'Identity verification (KYC) is required before applying for jobs. Please complete verification in your profile.',
+        }
+      }
       const job = jobs.find((j) => j.id === jobId)
       if (!job) return { ok: false, reason: 'Job not found.' }
       if (job.status !== 'open')

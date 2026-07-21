@@ -42,12 +42,13 @@ export async function POST(req: NextRequest) {
       status
     )
 
-    // Map Didit statuses → our Firestore field
-    if (status === 'Approved') {
+    // Map Didit statuses → our Firestore field (case-insensitive)
+    const statusLower = (status || '').toString().toLowerCase()
+    if (statusLower === 'approved' || statusLower === 'verified' || statusLower === 'completed') {
       await updateUserProfile(userId, { kycVerified: true, accountState: 'active' })
       console.log(`[KYC webhook] Marked uid=${userId} as KYC verified.`)
-    } else if (status === 'Declined') {
-      await updateUserProfile(userId, { kycVerified: false })
+    } else if (statusLower === 'declined' || statusLower === 'rejected' || statusLower === 'failed') {
+      await updateUserProfile(userId, { kycVerified: false, accountState: 'kyc_rejected' })
       console.log(`[KYC webhook] KYC declined for uid=${userId}.`)
     }
     // Other statuses (Pending, InProgress, etc.) — do nothing

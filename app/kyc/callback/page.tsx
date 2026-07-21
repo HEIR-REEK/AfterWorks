@@ -16,20 +16,30 @@ function KycCallbackContent() {
   useEffect(() => {
     async function processKycCallback() {
       try {
+        const sessionId = searchParams.get('session_id') || searchParams.get('sessionId') || searchParams.get('session_token') || searchParams.get('sessionToken')
         const sessionToken = searchParams.get('session_token') || searchParams.get('sessionToken') || searchParams.get('token')
-        const statusParam = searchParams.get('status')
+        const statusParam = (searchParams.get('status') || '').toLowerCase()
         const vendorData = searchParams.get('vendor_data') || searchParams.get('userId')
 
         // If status is explicit decline
-        if (statusParam === 'Declined' || statusParam === 'Rejected') {
+        if (statusParam === 'declined' || statusParam === 'rejected' || statusParam === 'failed') {
           setSuccess(false)
           setLoading(false)
           return
         }
 
         // Send status check/update to backend
-        if (sessionToken && vendorData) {
-          await fetch(`/api/kyc/status?sessionToken=${sessionToken}&userId=${vendorData}`).catch(() => {})
+        const activeId = sessionId || sessionToken
+        if (activeId && vendorData) {
+          const res = await fetch(`/api/kyc/status?sessionId=${encodeURIComponent(activeId)}&userId=${encodeURIComponent(vendorData)}`)
+          if (res.ok) {
+            const data = await res.json()
+            if (data.isRejected) {
+              setSuccess(false)
+            } else {
+              setSuccess(true)
+            }
+          }
         }
 
         if (isMobileInitiated) {
@@ -67,8 +77,14 @@ function KycCallbackContent() {
             Verification Unsuccessful
           </h1>
           <p className="mt-2 text-xs text-muted-foreground leading-relaxed">
-            Identity verification could not be completed. Please return to your original device to try again.
+            Identity verification could not be completed. Please return to your profile to try again.
           </p>
+          <button
+            onClick={() => router.push('/profile')}
+            className="mt-6 w-full rounded-xl bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
+          >
+            Return to Profile
+          </button>
         </div>
       </div>
     )
@@ -83,16 +99,21 @@ function KycCallbackContent() {
           </div>
 
           <h1 className="mt-6 text-xl font-bold tracking-tight text-foreground sm:text-2xl">
-            Identity verification completed successfully.
+            Identity Verification Successful!
           </h1>
 
-          <p className="mt-3 text-sm font-semibold text-muted-foreground">
-            Redirecting you back to the application...
+          <p className="mt-3 text-sm font-medium text-muted-foreground">
+            Redirecting you back to AfterWorks...
           </p>
+
+          <div className="mt-4 flex items-center justify-center gap-2 text-xs font-semibold text-success">
+            <Loader2 className="size-3.5 animate-spin" />
+            <span>Updating your profile...</span>
+          </div>
 
           <button
             onClick={() => router.push('/profile?kyc=success')}
-            className="mt-6 w-full rounded-xl bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
+            className="mt-6 w-full rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground hover:bg-primary/90 transition-colors shadow-sm"
           >
             Go to Profile
           </button>
@@ -109,16 +130,23 @@ function KycCallbackContent() {
         </div>
 
         <h1 className="mt-6 text-xl font-bold tracking-tight text-foreground sm:text-2xl">
-          Identity verification completed successfully.
+          Identity Verification Successful!
         </h1>
 
-        <p className="mt-3 text-sm font-semibold text-muted-foreground">
-          Please return to your original device.
+        <p className="mt-3 text-sm font-semibold text-foreground">
+          Please return to your original device (Laptop / Desktop).
         </p>
 
-        <p className="mt-1 text-xs text-muted-foreground/80">
-          Your account will update automatically.
+        <p className="mt-2 text-xs text-muted-foreground leading-relaxed">
+          Your laptop screen will automatically detect this verification and update your profile. You may close this tab on your phone.
         </p>
+
+        <button
+          onClick={() => router.push('/profile?kyc=success')}
+          className="mt-6 w-full rounded-xl border border-border bg-secondary px-4 py-2 text-xs font-medium text-secondary-foreground hover:bg-secondary/80 transition-colors"
+        >
+          View Profile on Mobile
+        </button>
       </div>
     </div>
   )

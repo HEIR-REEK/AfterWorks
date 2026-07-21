@@ -457,8 +457,17 @@ function ProfilePageContent() {
                   {startingKyc ? 'Starting...' : 'Verify Now'}
                 </Button>
               ) : (
-                <Button variant="outline" size="sm" onClick={() => alert('Viewing Didit KYC Certificate...')} className="gap-1.5">
-                  <ExternalLink className="size-3.5" />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setToastMessage('Didit Biometric KYC Certificate: Level 2 Verified & Active')
+                    setShowToast(true)
+                    setTimeout(() => setShowToast(false), 4000)
+                  }}
+                  className="gap-1.5"
+                >
+                  <ShieldCheck className="size-3.5 text-success" />
                   View Status
                 </Button>
               )}

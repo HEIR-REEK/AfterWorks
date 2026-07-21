@@ -40,7 +40,7 @@ export function KycQrModal({
     // Poll backend status every 3 seconds to detect when phone completes verification
     const interval = setInterval(async () => {
       try {
-        const res = await fetch(`/api/kyc/status?sessionId=${sessionId}&userId=${userId}`)
+        const res = await fetch(`/api/kyc/status?sessionId=${encodeURIComponent(sessionId)}&userId=${encodeURIComponent(userId)}`)
         const data = await res.json()
 
         if (data.isApproved) {

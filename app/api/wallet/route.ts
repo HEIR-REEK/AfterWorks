@@ -20,28 +20,41 @@ function getAdminApp(): admin.app.App {
   }
 
   const projectId = process.env.FIREBASE_PROJECT_ID
-  const serviceAccountPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH
 
+  // 1. Prefer inline JSON (for Render / cloud deployments — set via env var)
+  const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON
+  if (serviceAccountJson) {
+    try {
+      const serviceAccount = JSON.parse(serviceAccountJson) as admin.ServiceAccount
+      return admin.initializeApp({
+        credential: admin.credential.cert(serviceAccount),
+        projectId: (serviceAccount as unknown as { project_id: string }).project_id || projectId,
+      })
+    } catch (err) {
+      console.warn('[Admin] Could not parse FIREBASE_SERVICE_ACCOUNT_JSON:', err)
+    }
+  }
+
+  // 2. Fall back to file path (for local development)
+  const serviceAccountPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH
   if (serviceAccountPath) {
     try {
-      // Use fs.readFileSync so Next.js doesn't warn about dynamic require()
       const resolvedPath = path.resolve(
         process.cwd(),
         serviceAccountPath.replace(/^\.\//, ''),
       )
       const raw = fs.readFileSync(resolvedPath, 'utf8')
       const serviceAccount = JSON.parse(raw) as admin.ServiceAccount
-
       return admin.initializeApp({
         credential: admin.credential.cert(serviceAccount),
         projectId: (serviceAccount as unknown as { project_id: string }).project_id || projectId,
       })
     } catch (err) {
-      console.warn('Could not load service account file:', err)
+      console.warn('[Admin] Could not load service account file:', err)
     }
   }
 
-  // Fall back to application default credentials
+  // 3. Fall back to Application Default Credentials (GCP / Cloud Run)
   return admin.initializeApp({
     credential: admin.credential.applicationDefault(),
     projectId,

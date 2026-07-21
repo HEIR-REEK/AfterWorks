@@ -63,6 +63,15 @@ export type WorkerProfile = {
   qualityScore: number // 0-100
   jobsCompleted: number
   memberSince: string
+  phone?: string
+  bio?: string
+  skills?: string[]
+  languages?: string[]
+  preferredPayoutMethod?: string
+  country?: string
+  zipCode?: string
+  bankName?: string
+  bankBranch?: string
 }
 
 export type Wallet = {
@@ -618,9 +627,14 @@ export function seedWorker(): WorkerProfile {
     location: 'Nairobi, Kenya',
     accountState: 'active',
     kycVerified: true,
-    qualityScore: 88,
-    jobsCompleted: 12,
+    qualityScore: 98,
+    jobsCompleted: 14,
     memberSince: 'Mar 2025',
+    phone: '+254 712 345 678',
+    bio: 'Experienced data annotator, Swahili/English translator & audio transcription specialist with 2+ years in digital micro-tasking.',
+    skills: ['Swahili Transcription', 'Data Entry', 'Image Bounding Box', 'Medical Glossary', 'Content Moderation'],
+    languages: ['English (Native/Fluent)', 'Swahili (Native)', 'Kikuyu (Fluent)'],
+    preferredPayoutMethod: 'M-Pesa',
   }
 }
 

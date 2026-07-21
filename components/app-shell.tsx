@@ -13,6 +13,7 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/components/firebase-auth-provider'
+import { useAfterWorks } from '@/components/afterworks-provider'
 import logo from '@/components/logo.png'
 
 function initials(nameOrEmail: string) {
@@ -32,6 +33,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
   const router = useRouter()
   const { user, signOut } = useAuth()
+  const { worker } = useAfterWorks()
 
   const displayName = user?.displayName || user?.email || 'Worker'
   const avatar = initials(displayName).toUpperCase() || 'W'
@@ -84,10 +86,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </nav>
 
           <div className="ml-auto flex items-center gap-3">
-            <span className="hidden items-center gap-1.5 rounded-full bg-success/12 px-2.5 py-1 text-xs font-medium text-success sm:inline-flex">
-              <ShieldCheck className="size-3.5" />
-              Verified
-            </span>
+            {worker?.kycVerified && worker?.phone && worker?.country && (
+              <span className="hidden items-center gap-1.5 rounded-full bg-success/12 px-2.5 py-1 text-xs font-medium text-success sm:inline-flex">
+                <ShieldCheck className="size-3.5" />
+                Verified
+              </span>
+            )}
             <div
               className="flex size-9 items-center justify-center rounded-full bg-accent text-sm font-semibold text-accent-foreground"
               title={displayName}

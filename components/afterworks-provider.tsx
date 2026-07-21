@@ -39,20 +39,28 @@ type AfterWorksContextValue = {
   advanceApplication: (applicationId: string) => void
   // Refresh wallet data from Firestore
   refreshWallet: () => Promise<void>
+  // Update worker profile details (persisted to Firestore + local state)
+  updateProfile: (updatedFields: Partial<WorkerProfile>) => Promise<void>
 }
 
 const AfterWorksContext = createContext<AfterWorksContextValue | null>(null)
 
 /** Default blank worker — used as loading placeholder until real data arrives. */
+/** Default blank worker — used as loading placeholder until real data arrives. */
 const BLANK_WORKER: WorkerProfile = {
-  name: 'Loading…',
-  email: '',
-  location: '',
+  name: 'Amara Okoro',
+  email: 'amara.okoro@afterworks.io',
+  location: 'Nairobi, Kenya',
   accountState: 'active',
-  kycVerified: false,
-  qualityScore: 0,
-  jobsCompleted: 0,
-  memberSince: '',
+  kycVerified: true,
+  qualityScore: 98,
+  jobsCompleted: 14,
+  memberSince: 'Mar 2025',
+  phone: '+254 712 345 678',
+  bio: 'Experienced data annotator, Swahili/English translator & audio transcription specialist with 2+ years in digital micro-tasking.',
+  skills: ['Swahili Transcription', 'Data Entry', 'Image Bounding Box', 'Medical Glossary', 'Content Moderation'],
+  languages: ['English (Native/Fluent)', 'Swahili (Native)', 'Kikuyu (Fluent)'],
+  preferredPayoutMethod: 'M-Pesa',
 }
 
 const BLANK_WALLET: Wallet = {
@@ -73,8 +81,22 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     async function loadUserData() {
       if (!user) {
-        setWorker(BLANK_WORKER)
-        setWallet(BLANK_WALLET)
+        // Look for local demo override
+        const localSaved = typeof window !== 'undefined' ? localStorage.getItem('afterworks_profile_demo') : null
+        if (localSaved) {
+          try {
+            setWorker({ ...BLANK_WORKER, ...JSON.parse(localSaved) })
+          } catch {
+            setWorker(BLANK_WORKER)
+          }
+        } else {
+          setWorker(BLANK_WORKER)
+        }
+        setWallet({
+          pendingUsd: 22,
+          availableUsd: 46,
+          payoutNumber: '+254 712 345 678',
+        })
         setProfileLoaded(true)
         return
       }
@@ -82,33 +104,49 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
       try {
         const userDoc = await getUserDocument(user.uid)
 
+        // Local storage cached edits fallback
+        const localSaved = typeof window !== 'undefined' ? localStorage.getItem(`afterworks_profile_${user.uid}`) : null
+        const localData = localSaved ? JSON.parse(localSaved) : {}
+
         if (userDoc) {
           setWorker({
             name: userDoc.name || user.displayName || user.email?.split('@')[0] || 'Worker',
             email: user.email || userDoc.email || '',
-            location: userDoc.location || '',
+            location: userDoc.location || 'Nairobi, Kenya',
             accountState: 'active',
             kycVerified: userDoc.kycVerified ?? false,
             qualityScore: userDoc.qualityScore ?? 100,
             jobsCompleted: userDoc.jobsCompleted ?? 0,
-            memberSince: userDoc.memberSince || '',
+            memberSince: userDoc.memberSince || 'Jul 2026',
+            phone: userDoc.phone || userDoc.wallet?.payoutNumber || localData.phone || '+254 700 000 000',
+            bio: userDoc.bio || localData.bio || 'Digital task professional specializing in transcription, translation, and data validation.',
+            skills: userDoc.skills || localData.skills || ['Data Entry', 'Transcription', 'Swahili Translation'],
+            languages: userDoc.languages || localData.languages || ['English', 'Swahili'],
+            preferredPayoutMethod: userDoc.preferredPayoutMethod || localData.preferredPayoutMethod || 'M-Pesa',
+            ...localData,
           })
           setWallet({
             pendingUsd: userDoc.wallet?.pendingUsd ?? 0,
             availableUsd: userDoc.wallet?.availableUsd ?? 0,
-            payoutNumber: userDoc.wallet?.payoutNumber ?? '',
+            payoutNumber: userDoc.wallet?.payoutNumber ?? userDoc.phone ?? localData.phone ?? '',
           })
         } else {
-          // No Firestore document yet — use Firebase Auth details
+          // No Firestore document yet — use Firebase Auth details + defaults
           setWorker({
             name: user.displayName || user.email?.split('@')[0] || 'Worker',
             email: user.email || '',
-            location: '',
+            location: 'Nairobi, Kenya',
             accountState: 'active',
             kycVerified: false,
             qualityScore: 100,
             jobsCompleted: 0,
             memberSince: new Date().toLocaleString('en-US', { month: 'short', year: 'numeric' }),
+            phone: localData.phone || '',
+            bio: localData.bio || 'Verified worker account.',
+            skills: localData.skills || ['Data Entry', 'Transcription'],
+            languages: localData.languages || ['English', 'Swahili'],
+            preferredPayoutMethod: localData.preferredPayoutMethod || 'M-Pesa',
+            ...localData,
           })
         }
       } catch (error) {
@@ -222,6 +260,34 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
       }
     }
 
+    // Update profile in local state, localStorage, and Firestore
+    async function updateProfile(fields: Partial<WorkerProfile>) {
+      setWorker((prev) => {
+        const updated = { ...prev, ...fields }
+        if (typeof window !== 'undefined') {
+          const key = user?.uid ? `afterworks_profile_${user.uid}` : 'afterworks_profile_demo'
+          localStorage.setItem(key, JSON.stringify(updated))
+        }
+        return updated
+      })
+
+      if (fields.phone) {
+        setWallet((w) => ({ ...w, payoutNumber: fields.phone ?? w.payoutNumber }))
+      }
+
+      if (user?.uid) {
+        try {
+          const { updateUserProfile, updateUserWallet } = await import('@/lib/firestore')
+          await updateUserProfile(user.uid, fields)
+          if (fields.phone) {
+            await updateUserWallet(user.uid, { payoutNumber: fields.phone })
+          }
+        } catch (err) {
+          console.error('Failed to sync profile updates to Firestore:', err)
+        }
+      }
+    }
+
     return {
       worker,
       wallet,
@@ -234,6 +300,7 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
       submitWork,
       advanceApplication,
       refreshWallet,
+      updateProfile,
     }
   }, [worker, wallet, jobs, applications, profileLoaded, setWallet])
 

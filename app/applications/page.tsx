@@ -73,22 +73,22 @@ function ApplicationRow({ app }: { app: Application }) {
       </div>
 
       {/* Pipeline */}
-      <ol className="mt-5 flex items-center">
+      <ol className="mt-4 flex items-center sm:mt-5">
         {PIPELINE.map((step, i) => {
           const done = i < activeIndex
           const current = i === activeIndex
           return (
             <li key={step} className="flex flex-1 items-center last:flex-none">
-              <div className="flex flex-col items-center gap-1.5">
+              <div className="flex flex-col items-center gap-1">
                 {done ? (
-                  <CheckCircle2 className="size-5 text-success" />
+                  <CheckCircle2 className="size-4 text-success sm:size-5" />
                 ) : current ? (
-                  <Circle className="size-5 fill-primary/15 text-primary" />
+                  <Circle className="size-4 fill-primary/15 text-primary sm:size-5" />
                 ) : (
-                  <Circle className="size-5 text-muted-foreground/40" />
+                  <Circle className="size-4 text-muted-foreground/40 sm:size-5" />
                 )}
                 <span
-                  className={`hidden text-center text-[11px] leading-tight sm:block ${
+                  className={`hidden text-center text-[10px] leading-tight sm:block ${
                     current
                       ? 'font-medium text-foreground'
                       : done
@@ -112,12 +112,12 @@ function ApplicationRow({ app }: { app: Application }) {
       </ol>
 
       {/* Contextual footer per state */}
-      <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
+      <div className="mt-4 flex flex-col gap-3 border-t border-border pt-4 sm:mt-5 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
         <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
           {app.status === 'under_review' && (
             <>
               <Clock className="size-3.5" />
-              Reviewing your application — {reviewCountdown(app.reviewExpiresAt)}
+              Reviewing — {reviewCountdown(app.reviewExpiresAt)}
             </>
           )}
           {app.status === 'approved' && 'Slot reserved. Start the work when ready.'}

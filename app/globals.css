@@ -165,8 +165,15 @@
 @layer base {
   * {
     @apply border-border outline-ring/50;
+    -webkit-tap-highlight-color: transparent;
   }
   body {
     @apply bg-background text-foreground;
+    overscroll-behavior-y: none;
+  }
+  /* Smooth scrolling for all scroll containers */
+  * {
+    scroll-behavior: smooth;
+    -webkit-overflow-scrolling: touch;
   }
 }

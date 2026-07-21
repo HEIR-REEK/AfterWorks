@@ -48,15 +48,15 @@ export default function DashboardPage() {
   ]
 
   return (
-    <div className="flex flex-col gap-8">
+    <div className="flex flex-col gap-6 sm:gap-8">
       {/* Hero / wallet summary */}
       <section className="overflow-hidden rounded-2xl bg-primary text-primary-foreground">
-        <div className="grid gap-6 p-6 sm:p-8 md:grid-cols-2">
+        <div className="flex flex-col gap-6 p-5 sm:p-8 md:grid md:grid-cols-2">
           <div className="flex flex-col justify-center">
             <p className="text-sm font-medium text-primary-foreground/70">
               Welcome back, {worker.name && worker.name !== 'Loading…' ? worker.name.split(' ')[0] : 'there'}
             </p>
-            <h1 className="mt-2 text-pretty text-3xl font-semibold leading-tight sm:text-4xl">
+            <h1 className="mt-2 text-pretty text-2xl font-semibold leading-tight sm:text-4xl">
               Real, verified work. Paid to your mobile money.
             </h1>
             <p className="mt-3 max-w-md text-sm leading-relaxed text-primary-foreground/80">
@@ -67,7 +67,7 @@ export default function DashboardPage() {
               <Button
                 render={<Link href="/jobs" />}
                 size="lg"
-                className="bg-primary-foreground text-primary hover:bg-primary-foreground/90"
+                className="w-full bg-primary-foreground text-primary hover:bg-primary-foreground/90 sm:w-auto"
               >
                 Browse open jobs
                 <ArrowRight className="size-4" />
@@ -75,7 +75,7 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3 sm:gap-4">
+          <div className="grid grid-cols-2 gap-3">
             {stats.map((s) => {
               const Icon = s.icon
               return (

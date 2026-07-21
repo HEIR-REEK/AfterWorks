@@ -1,6 +1,7 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { useAfterWorks } from '@/components/afterworks-provider'
 import { useAuth } from '@/components/firebase-auth-provider'
@@ -29,14 +30,52 @@ import { formatKes, formatUsd } from '@/lib/afterworks-data'
 import { KENYAN_BANKS } from '@/lib/banks'
 import { Building2, Smartphone, Landmark, AlertCircle } from 'lucide-react'
 
-export default function ProfilePage() {
+import { Suspense } from 'react'
+
+function ProfilePageContent() {
   const { worker, wallet, applications, getJob, updateProfile } = useAfterWorks()
   const { user } = useAuth()
+  const searchParams = useSearchParams()
   const [isEditing, setIsEditing] = useState(false)
   const [saving, setSaving] = useState(false)
   const [showToast, setShowToast] = useState(false)
+  const [toastMessage, setToastMessage] = useState('Profile updated successfully!')
   const [startingKyc, setStartingKyc] = useState(false)
   const [kycError, setKycError] = useState<string | null>(null)
+  const [activeSessionToken, setActiveSessionToken] = useState<string | null>(null)
+
+  // 1. Check for ?kyc=success in query string
+  useEffect(() => {
+    if (searchParams.get('kyc') === 'success') {
+      updateProfile({ kycVerified: true })
+      setToastMessage('Identity verification complete! Your profile is verified.')
+      setShowToast(true)
+      setTimeout(() => setShowToast(false), 5000)
+    }
+  }, [searchParams, updateProfile])
+
+  // 2. Poll for cross-device KYC completion (e.g., when laptop user scans QR code on phone)
+  useEffect(() => {
+    if (!activeSessionToken || !user?.uid || worker.kycVerified) return
+
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/kyc/status?sessionToken=${activeSessionToken}&userId=${user.uid}`)
+        const data = await res.json()
+        if (data.isApproved) {
+          await updateProfile({ kycVerified: true })
+          setActiveSessionToken(null)
+          setToastMessage('Biometric KYC Verified successfully!')
+          setShowToast(true)
+          setTimeout(() => setShowToast(false), 5000)
+        }
+      } catch (err) {
+        console.error('KYC Polling error:', err)
+      }
+    }, 4000)
+
+    return () => clearInterval(interval)
+  }, [activeSessionToken, user, worker.kycVerified, updateProfile])
 
   const handleStartKyc = async () => {
     if (!user) {
@@ -56,6 +95,10 @@ export default function ProfilePage() {
 
       if (!res.ok) {
         throw new Error(data.error || 'Failed to start KYC session.')
+      }
+
+      if (data.sessionToken) {
+        setActiveSessionToken(data.sessionToken)
       }
 
       if (data.verificationUrl) {
@@ -146,78 +189,78 @@ export default function ProfilePage() {
   }
 
   return (
-    <div className="flex flex-col gap-8 pb-12">
+    <div className="flex flex-col gap-6 pb-4 sm:gap-8">
       {/* Toast Notification */}
       {showToast && (
-        <div className="fixed top-20 right-4 z-50 flex items-center gap-3 rounded-xl border border-success/30 bg-success/15 px-5 py-3 text-sm font-medium text-success shadow-lg backdrop-blur-md transition-all animate-in fade-in slide-in-from-top-3">
+        <div className="fixed top-16 left-4 right-4 z-50 flex items-center gap-3 rounded-xl border border-success/30 bg-success/15 px-4 py-3 text-sm font-medium text-success shadow-lg backdrop-blur-md transition-all animate-in fade-in slide-in-from-top-3 sm:left-auto sm:right-4 sm:top-20 sm:px-5">
           <CheckCircle2 className="size-5 shrink-0" />
-          <span>Profile updated successfully!</span>
+          <span>{toastMessage}</span>
         </div>
       )}
 
       {/* Page Header */}
-      <section className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+      <section className="flex items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Worker Profile</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Manage your personal credentials, skills, verification status, and payout details.
+          <h1 className="text-xl font-semibold tracking-tight sm:text-3xl">Worker Profile</h1>
+          <p className="mt-0.5 text-xs text-muted-foreground sm:mt-1 sm:text-sm">
+            Manage your credentials, skills, and verification.
           </p>
         </div>
-        <Button onClick={handleOpenEdit} className="self-start sm:self-auto gap-2">
+        <Button onClick={handleOpenEdit} size="sm" className="shrink-0 gap-2">
           <Edit3 className="size-4" />
-          Update Profile
+          <span className="hidden sm:inline">Update Profile</span>
+          <span className="sm:hidden">Edit</span>
         </Button>
       </section>
 
       {/* Main Profile Hero Card */}
       <section className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
-        <div className="flex flex-col gap-6 p-6 sm:p-8 sm:flex-row sm:items-start sm:justify-between">
-          <div className="flex flex-col items-center gap-5 text-center sm:flex-row sm:text-left">
+        <div className="flex flex-col gap-4 p-4 sm:gap-6 sm:p-8">
+          <div className="flex items-center gap-4">
             {/* Avatar with Status Badge */}
-            <div className="relative">
-              <div className="flex size-24 items-center justify-center rounded-full bg-primary/10 text-primary border-2 border-primary/20 shadow-inner">
-                <UserCircle className="size-16" />
+            <div className="relative shrink-0">
+              <div className="flex size-16 items-center justify-center rounded-full bg-primary/10 text-primary border-2 border-primary/20 shadow-inner sm:size-24">
+                <UserCircle className="size-10 sm:size-16" />
               </div>
               {worker.kycVerified && (
                 <div
-                  className="absolute bottom-0 right-0 flex size-7 items-center justify-center rounded-full bg-success text-success-foreground border-2 border-card shadow-sm"
+                  className="absolute bottom-0 right-0 flex size-5 items-center justify-center rounded-full bg-success text-success-foreground border-2 border-card shadow-sm sm:size-7"
                   title="KYC Verified Worker"
                 >
-                  <Check className="size-4 stroke-[3]" />
+                  <Check className="size-3 stroke-[3] sm:size-4" />
                 </div>
               )}
             </div>
 
             {/* Basic Info */}
-            <div className="flex flex-col gap-1.5">
-              <div className="flex flex-wrap items-center justify-center gap-2 sm:justify-start">
-                <h2 className="text-2xl font-bold tracking-tight">{worker.name}</h2>
+            <div className="min-w-0 flex flex-col gap-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="text-lg font-bold tracking-tight sm:text-2xl truncate">{worker.name}</h2>
                 {worker.kycVerified ? (
-                  <span className="inline-flex items-center gap-1 rounded-full bg-success/15 px-2.5 py-0.5 text-xs font-semibold text-success">
-                    <ShieldCheck className="size-3.5" />
-                    Verified Worker
+                  <span className="inline-flex items-center gap-1 rounded-full bg-success/15 px-2 py-0.5 text-xs font-semibold text-success">
+                    <ShieldCheck className="size-3" />
+                    Verified
                   </span>
                 ) : (
-                  <span className="inline-flex items-center gap-1 rounded-full bg-warning/15 px-2.5 py-0.5 text-xs font-semibold text-warning">
-                    <ShieldAlert className="size-3.5" />
+                  <span className="inline-flex items-center gap-1 rounded-full bg-warning/15 px-2 py-0.5 text-xs font-semibold text-warning">
+                    <ShieldAlert className="size-3" />
                     Unverified
                   </span>
                 )}
               </div>
-
-              <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1.5 text-sm text-muted-foreground sm:justify-start">
-                <div className="flex items-center gap-1.5">
-                  <Mail className="size-4 text-muted-foreground/70" />
-                  <span>{worker.email || 'No email set'}</span>
+              <div className="flex flex-col gap-1 text-xs text-muted-foreground sm:flex-row sm:flex-wrap sm:gap-x-4">
+                <div className="flex items-center gap-1">
+                  <Mail className="size-3.5 text-muted-foreground/70" />
+                  <span className="truncate">{worker.email || 'No email set'}</span>
                 </div>
                 {worker.phone && (
-                  <div className="flex items-center gap-1.5">
-                    <Phone className="size-4 text-muted-foreground/70" />
+                  <div className="flex items-center gap-1">
+                    <Phone className="size-3.5 text-muted-foreground/70" />
                     <span>{worker.phone}</span>
                   </div>
                 )}
-                <div className="flex items-center gap-1.5">
-                  <MapPin className="size-4 text-muted-foreground/70" />
+                <div className="flex items-center gap-1">
+                  <MapPin className="size-3.5 text-muted-foreground/70" />
                   <span>{worker.location || 'Nairobi, Kenya'}</span>
                 </div>
               </div>
@@ -227,31 +270,31 @@ export default function ProfilePage() {
 
         {/* Stats Grid */}
         <div className="grid grid-cols-2 divide-x divide-y sm:divide-y-0 sm:grid-cols-4 border-t border-border bg-muted/20">
-          <div className="flex flex-col p-4 sm:p-5">
+          <div className="flex flex-col p-3 sm:p-5">
             <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
               <Calendar className="size-3.5 text-primary" />
               Member Since
             </div>
-            <span className="mt-1 text-base font-semibold">{worker.memberSince || 'Jul 2026'}</span>
+            <span className="mt-1 text-sm font-semibold sm:text-base">{worker.memberSince || 'Jul 2026'}</span>
           </div>
 
-          <div className="flex flex-col p-4 sm:p-5">
+          <div className="flex flex-col p-3 sm:p-5">
             <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
               <Briefcase className="size-3.5 text-primary" />
-              Jobs Completed
+              Jobs Done
             </div>
-            <span className="mt-1 text-base font-semibold">{worker.jobsCompleted} tasks</span>
+            <span className="mt-1 text-sm font-semibold sm:text-base">{worker.jobsCompleted} tasks</span>
           </div>
 
-          <div className="flex flex-col p-4 sm:p-5">
+          <div className="flex flex-col p-3 sm:p-5">
             <div className="flex items-center justify-between text-xs font-medium text-muted-foreground">
-              <span className="flex items-center gap-1.5">
+              <span className="flex items-center gap-1">
                 <Award className="size-3.5 text-primary" />
-                Quality Score
+                Quality
               </span>
               <span className="font-semibold text-foreground">{worker.qualityScore}%</span>
             </div>
-            <div className="mt-2.5 h-2 w-full overflow-hidden rounded-full bg-muted">
+            <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-muted sm:mt-2.5 sm:h-2">
               <div
                 className="h-full rounded-full bg-primary transition-all duration-500"
                 style={{ width: `${worker.qualityScore}%` }}
@@ -259,12 +302,12 @@ export default function ProfilePage() {
             </div>
           </div>
 
-          <div className="flex flex-col p-4 sm:p-5">
+          <div className="flex flex-col p-3 sm:p-5">
             <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
               <CreditCard className="size-3.5 text-primary" />
-              Payout Channel
+              Payout
             </div>
-            <span className="mt-1 text-base font-semibold">{worker.preferredPayoutMethod || 'M-Pesa'}</span>
+            <span className="mt-1 text-sm font-semibold sm:text-base">{worker.preferredPayoutMethod || 'M-Pesa'}</span>
           </div>
         </div>
       </section>
@@ -287,7 +330,7 @@ export default function ProfilePage() {
       </section>
 
       {/* Two Column Layout: Skills & Languages / Didit KYC */}
-      <div className="grid gap-6 md:grid-cols-2">
+      <div className="grid gap-4 sm:gap-6 md:grid-cols-2">
         {/* Skills & Badges */}
         <section className="flex flex-col justify-between overflow-hidden rounded-2xl border border-border bg-card p-6 shadow-sm">
           <div>
@@ -463,8 +506,8 @@ export default function ProfilePage() {
 
       {/* ── EDIT PROFILE MODAL DIALOG ────────────────────────────────────────── */}
       {isEditing && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm animate-in fade-in">
-          <div className="flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl animate-in zoom-in-95">
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-background/80 backdrop-blur-sm animate-in fade-in sm:items-center sm:p-4">
+          <div className="flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-t-2xl border border-border bg-card shadow-2xl animate-in slide-in-from-bottom sm:max-w-lg sm:rounded-2xl sm:animate-in sm:zoom-in-95">
             {/* Modal Header */}
             <div className="flex items-center justify-between border-b border-border p-5">
               <div className="flex items-center gap-2">
@@ -708,3 +751,12 @@ export default function ProfilePage() {
     </div>
   )
 }
+
+export default function ProfilePage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-center text-sm text-muted-foreground">Loading profile...</div>}>
+      <ProfilePageContent />
+    </Suspense>
+  )
+}
+

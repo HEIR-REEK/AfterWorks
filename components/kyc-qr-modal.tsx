@@ -40,7 +40,16 @@ export function KycQrModal({
     // Poll backend status every 3 seconds to detect when phone completes verification
     const interval = setInterval(async () => {
       try {
-        const res = await fetch(`/api/kyc/status?sessionId=${encodeURIComponent(sessionId)}&userId=${encodeURIComponent(userId)}`)
+        // Get fresh Firebase ID token for authenticated status check
+        const { getAuth } = await import('firebase/auth')
+        const auth = getAuth()
+        const idToken = await auth.currentUser?.getIdToken()
+        if (!idToken) return
+
+        const res = await fetch(
+          `/api/kyc/status?sessionId=${encodeURIComponent(sessionId)}`,
+          { headers: { Authorization: `Bearer ${idToken}` } }
+        )
         const data = await res.json()
 
         if (data.isApproved) {

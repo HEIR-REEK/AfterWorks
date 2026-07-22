@@ -16,35 +16,58 @@ function KycCallbackContent() {
   useEffect(() => {
     async function processKycCallback() {
       try {
-        const sessionId = searchParams.get('session_id') || searchParams.get('sessionId') || searchParams.get('session_token') || searchParams.get('sessionToken')
-        const sessionToken = searchParams.get('session_token') || searchParams.get('sessionToken') || searchParams.get('token')
+        const sessionId = searchParams.get('session_id') || searchParams.get('sessionId') || searchParams.get('verificationSessionId')
         const statusParam = (searchParams.get('status') || '').toLowerCase()
-        const vendorData = searchParams.get('vendor_data') || searchParams.get('userId')
 
-        // If status is explicit decline
+        // Show immediate UI feedback based on URL status (cosmetic only)
+        // Didit docs warn: DO NOT trust URL params for business logic
         if (statusParam === 'declined' || statusParam === 'rejected' || statusParam === 'failed') {
           setSuccess(false)
           setLoading(false)
           return
         }
 
-        // Send status check/update to backend
-        const activeId = sessionId || sessionToken
-        if (activeId && vendorData) {
-          const res = await fetch(`/api/kyc/status?sessionId=${encodeURIComponent(activeId)}&userId=${encodeURIComponent(vendorData)}`)
-          if (res.ok) {
-            const data = await res.json()
-            if (data.isRejected) {
-              setSuccess(false)
-            } else {
-              setSuccess(true)
+        // Server-side verification — this is the ONLY trusted source of truth
+        if (sessionId) {
+          try {
+            const { getAuth } = await import('firebase/auth')
+            const auth = getAuth()
+            // Wait briefly for auth state to be ready
+            await new Promise<void>((resolve) => {
+              const unsub = auth.onAuthStateChanged(() => {
+                unsub()
+                resolve()
+              })
+            })
+
+            const idToken = await auth.currentUser?.getIdToken()
+            if (idToken) {
+              const res = await fetch(
+                `/api/kyc/status?sessionId=${encodeURIComponent(sessionId)}`,
+                { headers: { Authorization: `Bearer ${idToken}` } }
+              )
+              if (res.ok) {
+                const data = await res.json()
+                if (data.isRejected) {
+                  setSuccess(false)
+                } else if (data.isApproved) {
+                  setSuccess(true)
+                } else {
+                  // Still pending — show success UX but server will finalize via webhook
+                  setSuccess(true)
+                }
+              }
             }
+          } catch (authErr) {
+            console.error('Auth check in callback failed:', authErr)
           }
         }
 
         if (isMobileInitiated) {
+          // Redirect back to profile with session ID for final verification
+          const sid = sessionId ? `&sid=${encodeURIComponent(sessionId)}` : ''
           setTimeout(() => {
-            router.push('/profile?kyc=success')
+            router.push(`/profile?kyc=success${sid}`)
           }, 3000)
         }
       } catch (err) {
@@ -103,12 +126,12 @@ function KycCallbackContent() {
           </h1>
 
           <p className="mt-3 text-sm font-medium text-muted-foreground">
-            Redirecting you back to AfterWorks...
+            Redirecting to your profile...
           </p>
 
           <div className="mt-4 flex items-center justify-center gap-2 text-xs font-semibold text-success">
             <Loader2 className="size-3.5 animate-spin" />
-            <span>Updating your profile...</span>
+            <span>Updating your profile & dashboard...</span>
           </div>
 
           <button
@@ -122,6 +145,7 @@ function KycCallbackContent() {
     )
   }
 
+  // Cross-device QR scan flow (Scanned from Laptop / Desktop)
   return (
     <div className="flex min-h-dvh flex-col items-center justify-center bg-background p-6">
       <div className="w-full max-w-sm rounded-2xl border border-success/30 bg-card p-6 text-center shadow-xl sm:p-8">
@@ -130,22 +154,28 @@ function KycCallbackContent() {
         </div>
 
         <h1 className="mt-6 text-xl font-bold tracking-tight text-foreground sm:text-2xl">
-          Identity Verification Successful!
+          Verification Complete!
         </h1>
 
         <p className="mt-3 text-sm font-semibold text-foreground">
-          Please return to your original device (Laptop / Desktop).
+          Please return to your laptop or desktop computer.
         </p>
 
         <p className="mt-2 text-xs text-muted-foreground leading-relaxed">
-          Your laptop screen will automatically detect this verification and update your profile. You may close this tab on your phone.
+          Your laptop screen will automatically detect this verification and update your profile & dashboard. You may safely close this browser window.
         </p>
 
         <button
-          onClick={() => router.push('/profile?kyc=success')}
-          className="mt-6 w-full rounded-xl border border-border bg-secondary px-4 py-2 text-xs font-medium text-secondary-foreground hover:bg-secondary/80 transition-colors"
+          onClick={() => {
+            try {
+              window.close()
+            } catch {
+              // Ignore if browser blocks window.close
+            }
+          }}
+          className="mt-6 w-full rounded-xl bg-secondary px-4 py-2.5 text-xs font-semibold text-secondary-foreground hover:bg-secondary/80 transition-colors"
         >
-          View Profile on Mobile
+          Done (Close Window)
         </button>
       </div>
     </div>

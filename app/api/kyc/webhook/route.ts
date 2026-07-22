@@ -16,7 +16,7 @@ import { updateUserProfile, saveKycRecord } from '@/lib/firestore-admin'
 export async function POST(req: NextRequest) {
   try {
     const rawBody = await req.text()
-    const signature = req.headers.get('x-didit-signature')
+    const signature = req.headers.get('x-signature-v2') || req.headers.get('x-didit-signature')
 
     // Verify signature to ensure the request is from Didit
     const isValid = await verifyWebhookSignature(rawBody, signature)

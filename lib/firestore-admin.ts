@@ -103,3 +103,19 @@ export async function saveKycRecord(
     console.error('[FirestoreAdmin] saveKycRecord failed for uid:', uid, err)
   }
 }
+
+/**
+ * Verify a Firebase ID token and return the decoded claims.
+ * Returns null if the token is invalid or expired.
+ */
+export async function verifyIdToken(
+  idToken: string
+): Promise<admin.auth.DecodedIdToken | null> {
+  try {
+    const app = getAdminApp()
+    return await admin.auth(app).verifyIdToken(idToken)
+  } catch (err) {
+    console.warn('[FirestoreAdmin] verifyIdToken failed:', err)
+    return null
+  }
+}

@@ -48,38 +48,39 @@ function ProfilePageContent() {
   const [activeVerificationUrl, setActiveVerificationUrl] = useState<string | null>(null)
   const [isQrModalOpen, setIsQrModalOpen] = useState(false)
 
-  // 1. Check for ?kyc=success in query string
+  // 1. Handle return from KYC callback — verify server-side before trusting
   useEffect(() => {
-    if (searchParams.get('kyc') === 'success') {
-      updateProfile({ kycVerified: true })
-      setToastMessage('Identity verification complete! Your profile is verified.')
-      setShowToast(true)
-      setTimeout(() => setShowToast(false), 5000)
-    }
-  }, [searchParams, updateProfile])
+    if (searchParams.get('kyc') !== 'success') return
+    const sessionId = searchParams.get('sid')
+    if (!sessionId || !user?.uid) return
 
-  // 2. Poll for cross-device KYC completion (e.g., when laptop user scans QR code on phone)
-  useEffect(() => {
-    if (!activeSessionId || !user?.uid || worker.kycVerified) return
-
-    const interval = setInterval(async () => {
+    async function verifyOnReturn() {
       try {
-        const res = await fetch(`/api/kyc/status?sessionId=${activeSessionId}&userId=${user.uid}`)
+        const { getAuth } = await import('firebase/auth')
+        const auth = getAuth()
+        const idToken = await auth.currentUser?.getIdToken()
+        if (!idToken) return
+
+        const res = await fetch(
+          `/api/kyc/status?sessionId=${encodeURIComponent(sessionId!)}`,
+          { headers: { Authorization: `Bearer ${idToken}` } }
+        )
         const data = await res.json()
         if (data.isApproved) {
           await updateProfile({ kycVerified: true })
-          setActiveSessionId(null)
-          setToastMessage('Biometric KYC Verified successfully!')
+          setToastMessage('Identity verification complete! Your profile is verified.')
           setShowToast(true)
           setTimeout(() => setShowToast(false), 5000)
         }
       } catch (err) {
-        console.error('KYC Polling error:', err)
+        console.error('KYC return verification error:', err)
       }
-    }, 4000)
+    }
 
-    return () => clearInterval(interval)
-  }, [activeSessionId, user, worker.kycVerified, updateProfile])
+    verifyOnReturn()
+  }, [searchParams, user, updateProfile])
+
+  // 2. Cross-device KYC polling is handled by KycQrModal — no duplicate polling here
 
   const handleStartKyc = async () => {
     if (!user) {
@@ -91,10 +92,21 @@ function ProfilePageContent() {
     try {
       const isMobile = typeof window !== 'undefined' && /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent)
 
+      // Get Firebase ID token for server-side auth
+      const { getAuth } = await import('firebase/auth')
+      const auth = getAuth()
+      const idToken = await auth.currentUser?.getIdToken()
+      if (!idToken) {
+        throw new Error('Unable to get authentication token. Please sign in again.')
+      }
+
       const res = await fetch('/api/kyc/submit', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: user.uid, isMobile }),
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({ isMobile }),
       })
 
       const data = await res.json()
@@ -105,7 +117,6 @@ function ProfilePageContent() {
 
       if (data.sessionId && data.verificationUrl) {
         if (isMobile) {
-          // Redirection for mobile flow
           window.location.href = data.verificationUrl
         } else {
           setActiveSessionId(data.sessionId)

@@ -5,30 +5,50 @@
  * the verification URL. The client opens this URL (redirect) and the
  * user completes ID scan, facial match, and liveness on Didit's hosted page.
  *
- * Auth: expects { userId } in the JSON body (client is already Firebase-authed).
+ * Auth: requires Firebase ID token in Authorization: Bearer header.
  */
 export const dynamic = 'force-dynamic'
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createKycSession } from '@/lib/didit'
-import { saveKycRecord } from '@/lib/firestore-admin'
+import { saveKycRecord, verifyIdToken } from '@/lib/firestore-admin'
 
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}))
-    const userId: string = body?.userId?.trim()
-    const isMobile: boolean = !!body?.isMobile
 
-    if (!userId) {
+    // Authenticate via Firebase ID token
+    const authHeader = req.headers.get('authorization')
+    const idToken = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null
+    if (!idToken) {
       return NextResponse.json(
-        { error: 'userId is required.' },
-        { status: 400 },
+        { error: 'Authorization header with Bearer token is required.' },
+        { status: 401 },
+      )
+    }
+    const decoded = await verifyIdToken(idToken)
+    if (!decoded) {
+      return NextResponse.json(
+        { error: 'Invalid or expired authentication token.' },
+        { status: 401 },
       )
     }
 
-    // Create the Didit KYC session for this user using the request's origin
-    const origin = req.nextUrl.origin
-    const session = await createKycSession(userId, isMobile, origin)
+    // Use the authenticated UID — ignore any userId from body to prevent spoofing
+    const userId = decoded.uid
+    const isMobile: boolean = !!body?.isMobile
+
+    // Determine the public origin for production / reverse-proxy deployments
+    const host = req.headers.get('x-forwarded-host') || req.headers.get('host')
+    const proto = req.headers.get('x-forwarded-proto') || 'https'
+    const publicOrigin =
+      process.env.NEXT_PUBLIC_APP_URL ||
+      process.env.APP_URL ||
+      process.env.RENDER_EXTERNAL_URL ||
+      process.env.VERCEL_URL ||
+      (host && !host.includes('localhost') && !host.includes('127.0.0.1') ? `${proto}://${host}` : req.nextUrl.origin)
+
+    const session = await createKycSession(userId, isMobile, publicOrigin)
 
     // Store the Didit session ID together with the authenticated user's ID
     await saveKycRecord(

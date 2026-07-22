@@ -112,8 +112,9 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
           setWorker({
             name: userDoc.name || user.displayName || user.email?.split('@')[0] || 'Worker',
             email: user.email || userDoc.email || '',
-            location: userDoc.location || 'Nairobi, Kenya',
-            accountState: 'active',
+            location: userDoc.location || localData.location || 'Nairobi, Kenya',
+            // Security-critical fields — ALWAYS from Firestore, never from localStorage
+            accountState: userDoc.accountState || 'active',
             kycVerified: userDoc.kycVerified ?? false,
             qualityScore: userDoc.qualityScore ?? 100,
             jobsCompleted: userDoc.jobsCompleted ?? 0,
@@ -123,7 +124,6 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
             skills: userDoc.skills || localData.skills || ['Data Entry', 'Transcription', 'Swahili Translation'],
             languages: userDoc.languages || localData.languages || ['English', 'Swahili'],
             preferredPayoutMethod: userDoc.preferredPayoutMethod || localData.preferredPayoutMethod || 'M-Pesa',
-            ...localData,
           })
           setWallet({
             pendingUsd: userDoc.wallet?.pendingUsd ?? 0,
@@ -272,7 +272,9 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
         const updated = { ...prev, ...fields }
         if (typeof window !== 'undefined') {
           const key = user?.uid ? `afterworks_profile_${user.uid}` : 'afterworks_profile_demo'
-          localStorage.setItem(key, JSON.stringify(updated))
+          // Strip security-critical fields before caching to localStorage
+          const { kycVerified, accountState, qualityScore, jobsCompleted, ...safeToCache } = updated
+          localStorage.setItem(key, JSON.stringify(safeToCache))
         }
         return updated
       })

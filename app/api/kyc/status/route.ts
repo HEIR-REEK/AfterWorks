@@ -2,22 +2,39 @@ export const dynamic = 'force-dynamic'
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getKycSessionStatus } from '@/lib/didit';
-import { updateUserProfile, saveKycRecord } from '@/lib/firestore-admin'; // Use server-side admin SDK
+import { updateUserProfile, saveKycRecord, verifyIdToken } from '@/lib/firestore-admin';
 
 export async function GET(req: NextRequest) {
   try {
+    // Authenticate via Firebase ID token
+    const authHeader = req.headers.get('authorization')
+    const idToken = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null
+    if (!idToken) {
+      return NextResponse.json(
+        { error: 'Authorization header with Bearer token is required.' },
+        { status: 401 },
+      )
+    }
+    const decoded = await verifyIdToken(idToken)
+    if (!decoded) {
+      return NextResponse.json(
+        { error: 'Invalid or expired authentication token.' },
+        { status: 401 },
+      )
+    }
+
     const sessionId =
       req.nextUrl.searchParams.get('sessionId') ||
       req.nextUrl.searchParams.get('session_id') ||
       req.nextUrl.searchParams.get('sessionToken') ||
       req.nextUrl.searchParams.get('session_token')
-    const userId =
-      req.nextUrl.searchParams.get('userId') ||
-      req.nextUrl.searchParams.get('vendor_data')
 
-    if (!sessionId || !userId) {
+    // Use authenticated UID — prevent spoofing
+    const userId = decoded.uid
+
+    if (!sessionId) {
       return NextResponse.json(
-        { error: 'Session ID and User ID are required.' },
+        { error: 'Session ID is required.' },
         { status: 400 },
       )
     }

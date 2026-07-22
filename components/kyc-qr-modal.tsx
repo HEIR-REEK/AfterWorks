@@ -103,10 +103,10 @@ export function KycQrModal({
                 <ShieldCheck className="size-6" />
               </div>
               <h3 className="mt-3 text-lg font-semibold tracking-tight text-foreground sm:text-xl">
-                Verify Your Identity
+                Identity Verification
               </h3>
               <p className="mt-1 text-xs text-muted-foreground max-w-xs">
-                Scan the QR code below with your phone camera to complete Document & Facial liveness check.
+                Please complete verification on your mobile phone.
               </p>
             </div>
 
@@ -126,9 +126,12 @@ export function KycQrModal({
             </div>
 
             {/* Polling Status Indicator */}
-            <div className="mt-5 flex items-center justify-center gap-2 rounded-xl bg-primary/10 px-4 py-2 text-xs font-medium text-primary">
-              <Loader2 className="size-3.5 animate-spin" />
-              <span>Waiting for phone completion...</span>
+            <div className="mt-5 flex flex-col items-center justify-center gap-1 rounded-xl bg-primary/10 px-4 py-3 text-xs font-medium text-primary">
+              <div className="flex items-center gap-2">
+                <Loader2 className="size-3.5 animate-spin" />
+                <span className="text-sm font-semibold">Waiting for verification...</span>
+              </div>
+              <span className="text-primary/70 mt-1">This page will update automatically.</span>
             </div>
 
             {/* Fallback Direct Link */}

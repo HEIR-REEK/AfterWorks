@@ -411,7 +411,9 @@ function ProfilePageContent() {
                   {worker.kycVerified ? <ShieldCheck className="size-6" /> : <ShieldAlert className="size-6" />}
                 </div>
                 <div>
-                  <h3 className="text-base font-semibold">Didit KYC Identity Verification</h3>
+                  <h3 className="text-base font-semibold">
+                    {worker.kycVerified ? '✓ Identity Verified' : 'Identity Verification'}
+                  </h3>
                   <p className="text-xs text-muted-foreground">
                     {worker.kycVerified ? 'Level 2 Biometric Verified' : 'Verification Required'}
                   </p>
@@ -421,26 +423,32 @@ function ProfilePageContent() {
 
             <div className="mt-5 rounded-xl border border-border bg-muted/40 p-4 text-xs space-y-2">
               <div className="flex justify-between">
-                <span className="text-muted-foreground">Verification Method:</span>
-                <span className="font-semibold text-foreground">Didit Protocol (National ID / Passport)</span>
+                <span className="text-muted-foreground">Provider:</span>
+                <span className="font-semibold text-foreground">{worker.kycProvider || 'Didit'}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-muted-foreground">Status:</span>
+                <span className="text-muted-foreground">Verification Level:</span>
+                <span className="font-semibold text-foreground">{worker.kycLevel || (worker.kycVerified ? 'Level 2 (Identity)' : 'None')}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">KYC Status:</span>
                 <span
                   className={cn(
                     'font-semibold',
                     worker.kycVerified ? 'text-success' : 'text-warning',
                   )}
                 >
-                  {worker.kycVerified ? 'Verified & Active' : 'Action Required'}
+                  {worker.kycStatus || (worker.kycVerified ? 'Approved' : 'Action Required')}
                 </span>
               </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Payout Limit:</span>
-                <span className="font-semibold text-foreground">
-                  {worker.kycVerified ? 'Unlimited Instant Payouts' : '$50 / week'}
-                </span>
-              </div>
+              {worker.kycVerified && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Verification Date:</span>
+                  <span className="font-semibold text-foreground">
+                    {worker.kycVerifiedAt ? new Date(worker.kycVerifiedAt).toLocaleDateString() : 'N/A'}
+                  </span>
+                </div>
+              )}
             </div>
           </div>
 

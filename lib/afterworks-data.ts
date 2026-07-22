@@ -73,6 +73,10 @@ export type WorkerProfile = {
   bankName?: string
   bankBranch?: string
   bankAccountNumber?: string
+  kycVerifiedAt?: string
+  kycProvider?: string
+  kycLevel?: string
+  kycStatus?: string
 }
 
 export type Wallet = {

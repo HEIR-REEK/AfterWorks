@@ -17,7 +17,7 @@ import {
   type Wallet,
   type WorkerProfile,
 } from '@/lib/afterworks-data'
-import { getUserDocument } from '@/lib/firestore'
+import { subscribeToUserDocument, getUserDocument } from '@/lib/firestore'
 
 import { useAuth } from '@/components/firebase-auth-provider'
 
@@ -102,56 +102,66 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
       }
 
       try {
-        const userDoc = await getUserDocument(user.uid)
+        const unsubscribe = subscribeToUserDocument(user.uid, (userDoc) => {
+          // Local storage cached edits fallback
+          const localSaved = typeof window !== 'undefined' ? localStorage.getItem(`afterworks_profile_${user.uid}`) : null
+          const localData = localSaved ? JSON.parse(localSaved) : {}
 
-        // Local storage cached edits fallback
-        const localSaved = typeof window !== 'undefined' ? localStorage.getItem(`afterworks_profile_${user.uid}`) : null
-        const localData = localSaved ? JSON.parse(localSaved) : {}
+          if (userDoc) {
+            setWorker({
+              name: userDoc.name || user.displayName || user.email?.split('@')[0] || 'Worker',
+              email: user.email || userDoc.email || '',
+              location: userDoc.location || localData.location || 'Nairobi, Kenya',
+              // Security-critical fields — ALWAYS from Firestore, never from localStorage
+              accountState: userDoc.accountState || 'active',
+              kycVerified: userDoc.kycVerified ?? false,
+              kycVerifiedAt: userDoc.kycVerifiedAt,
+              kycProvider: userDoc.kycProvider,
+              kycLevel: userDoc.kycLevel,
+              kycStatus: userDoc.kycStatus,
+              qualityScore: userDoc.qualityScore ?? 100,
+              jobsCompleted: userDoc.jobsCompleted ?? 0,
+              memberSince: userDoc.memberSince || 'Jul 2026',
+              phone: userDoc.phone || userDoc.wallet?.payoutNumber || localData.phone || '+254 700 000 000',
+              bio: userDoc.bio || localData.bio || 'Digital task professional specializing in transcription, translation, and data validation.',
+              skills: userDoc.skills || localData.skills || ['Data Entry', 'Transcription', 'Swahili Translation'],
+              languages: userDoc.languages || localData.languages || ['English', 'Swahili'],
+              preferredPayoutMethod: userDoc.preferredPayoutMethod || localData.preferredPayoutMethod || 'M-Pesa',
+            })
+            setWallet({
+              pendingUsd: userDoc.wallet?.pendingUsd ?? 0,
+              availableUsd: userDoc.wallet?.availableUsd ?? 0,
+              payoutNumber: userDoc.wallet?.payoutNumber ?? userDoc.phone ?? localData.phone ?? '',
+            })
+          } else {
+            // No Firestore document yet — use Firebase Auth details + defaults
+            setWorker({
+              name: user.displayName || user.email?.split('@')[0] || 'Worker',
+              email: user.email || '',
+              location: 'Nairobi, Kenya',
+              accountState: 'active',
+              kycVerified: false,
+              qualityScore: 100,
+              jobsCompleted: 0,
+              memberSince: new Date().toLocaleString('en-US', { month: 'short', year: 'numeric' }),
+              phone: localData.phone || '',
+              bio: localData.bio || 'Verified worker account.',
+              skills: localData.skills || [],
+              languages: localData.languages || [],
+              preferredPayoutMethod: localData.preferredPayoutMethod || 'M-Pesa',
+            })
+            setWallet({
+              pendingUsd: 0,
+              availableUsd: 0,
+              payoutNumber: '',
+            })
+          }
+          setProfileLoaded(true)
+        })
 
-        if (userDoc) {
-          setWorker({
-            name: userDoc.name || user.displayName || user.email?.split('@')[0] || 'Worker',
-            email: user.email || userDoc.email || '',
-            location: userDoc.location || localData.location || 'Nairobi, Kenya',
-            // Security-critical fields — ALWAYS from Firestore, never from localStorage
-            accountState: userDoc.accountState || 'active',
-            kycVerified: userDoc.kycVerified ?? false,
-            qualityScore: userDoc.qualityScore ?? 100,
-            jobsCompleted: userDoc.jobsCompleted ?? 0,
-            memberSince: userDoc.memberSince || 'Jul 2026',
-            phone: userDoc.phone || userDoc.wallet?.payoutNumber || localData.phone || '+254 700 000 000',
-            bio: userDoc.bio || localData.bio || 'Digital task professional specializing in transcription, translation, and data validation.',
-            skills: userDoc.skills || localData.skills || ['Data Entry', 'Transcription', 'Swahili Translation'],
-            languages: userDoc.languages || localData.languages || ['English', 'Swahili'],
-            preferredPayoutMethod: userDoc.preferredPayoutMethod || localData.preferredPayoutMethod || 'M-Pesa',
-          })
-          setWallet({
-            pendingUsd: userDoc.wallet?.pendingUsd ?? 0,
-            availableUsd: userDoc.wallet?.availableUsd ?? 0,
-            payoutNumber: userDoc.wallet?.payoutNumber ?? userDoc.phone ?? localData.phone ?? '',
-          })
-        } else {
-          // No Firestore document yet — use Firebase Auth details + defaults
-          setWorker({
-            name: user.displayName || user.email?.split('@')[0] || 'Worker',
-            email: user.email || '',
-            location: 'Nairobi, Kenya',
-            accountState: 'active',
-            kycVerified: false,
-            qualityScore: 100,
-            jobsCompleted: 0,
-            memberSince: new Date().toLocaleString('en-US', { month: 'short', year: 'numeric' }),
-            phone: localData.phone || '',
-            bio: localData.bio || 'Verified worker account.',
-            skills: localData.skills || ['Data Entry', 'Transcription'],
-            languages: localData.languages || ['English', 'Swahili'],
-            preferredPayoutMethod: localData.preferredPayoutMethod || 'M-Pesa',
-            ...localData,
-          })
-        }
-      } catch (error) {
-        console.error('Failed to load user data from Firestore:', error)
-      } finally {
+        return () => unsubscribe()
+      } catch (err) {
+        console.error('Failed to load user profile:', err)
         setProfileLoaded(true)
       }
     }

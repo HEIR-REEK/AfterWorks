@@ -19,6 +19,7 @@ import {
   getDoc,
   updateDoc,
   serverTimestamp,
+  onSnapshot,
   type Firestore,
 } from 'firebase/firestore'
 
@@ -41,6 +42,10 @@ export type UserProfile = {
   zipCode?: string
   bankName?: string
   bankBranch?: string
+  kycVerifiedAt?: string
+  kycProvider?: string
+  kycLevel?: string
+  kycStatus?: string
 }
 
 export type WalletData = {
@@ -148,6 +153,37 @@ export async function getUserDocument(uid: string): Promise<UserDocument | null>
     console.error('[Firestore] getUserDocument failed for uid:', uid, err)
     return null
   }
+}
+
+/**
+ * Subscribes to the user document in real-time.
+ * Returns an unsubscribe function.
+ */
+export function subscribeToUserDocument(
+  uid: string,
+  onUpdate: (data: UserDocument | null) => void
+): () => void {
+  const db = getDB()
+  if (!db) {
+    onUpdate(null)
+    return () => {}
+  }
+
+  return onSnapshot(
+    doc(db, 'users', uid),
+    (snap) => {
+      if (!snap.exists()) {
+        onUpdate(null)
+      } else {
+        const data = snap.data() as Omit<UserDocument, 'uid'>
+        onUpdate({ uid, ...data })
+      }
+    },
+    (err) => {
+      console.error('[Firestore] subscribeToUserDocument failed for uid:', uid, err)
+      onUpdate(null)
+    }
+  )
 }
 
 /**

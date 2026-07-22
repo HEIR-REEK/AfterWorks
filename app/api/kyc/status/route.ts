@@ -56,15 +56,9 @@ export async function GET(req: NextRequest) {
     const isRejected = statusLower === 'declined' || statusLower === 'rejected' || statusLower === 'failed'
 
     if (isApproved) {
-      await updateUserProfile(userId, { 
-        kycVerified: true, 
-        accountState: 'active' 
-      })
+      console.log(`[KYC Status API] Polled status is approved for ${userId}, but awaiting webhook to officially verify profile.`)
     } else if (isRejected) {
-      await updateUserProfile(userId, { 
-        kycVerified: false, 
-        accountState: 'kyc_rejected' 
-      })
+      console.log(`[KYC Status API] Polled status is rejected for ${userId}, but awaiting webhook to officially reject profile.`)
     }
 
     return NextResponse.json({

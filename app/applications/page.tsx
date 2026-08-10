@@ -44,14 +44,12 @@ function reviewCountdown(iso: string): string {
 }
 
 function ApplicationRow({ app }: { app: Application }) {
-  const { getJob, submitWork, advanceApplication } = useAfterWorks()
+  const { getJob, submitWork } = useAfterWorks()
   const job = getJob(app.jobId)
   if (!job) return null
 
   const activeIndex = pipelineIndex(app.status)
-  const canSimulate = ['under_review', 'approved', 'submitted_for_review'].includes(
-    app.status,
-  )
+
 
   return (
     <div className="rounded-2xl border border-border bg-card p-5">
@@ -142,14 +140,7 @@ function ApplicationRow({ app }: { app: Application }) {
               Submit work
             </Button>
           )}
-          {canSimulate && (
-            <Button size="sm" variant="outline" onClick={() => advanceApplication(app.id)}>
-              {app.status === 'under_review' && 'Simulate approval'}
-              {app.status === 'approved' && 'Start work'}
-              {app.status === 'submitted_for_review' && 'Simulate QA pass'}
-              <ArrowRight className="size-3.5" />
-            </Button>
-          )}
+
         </div>
       </div>
     </div>
@@ -171,8 +162,7 @@ export default function ApplicationsPage() {
       <header>
         <h1 className="text-2xl font-semibold tracking-tight">My applications</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Track every application from review through QA to payment. Use the simulate
-          buttons to preview the lifecycle.
+          Track every application from review through QA to payment.
         </p>
       </header>
 

@@ -9,8 +9,8 @@ import {
   type ReactNode,
 } from 'react'
 import {
-  seedApplications,
   seedJobs,
+  seedWorker,
   type Application,
   type ApplicationStatus,
   type Job,
@@ -35,8 +35,6 @@ type AfterWorksContextValue = {
   getApplicationForJob: (jobId: string) => Application | undefined
   applyToJob: (jobId: string) => ApplyResult
   submitWork: (applicationId: string) => void
-  // Prototype-only simulator to walk an application through the QA lifecycle.
-  advanceApplication: (applicationId: string) => void
   // Refresh wallet data from Firestore
   refreshWallet: () => Promise<void>
   // Update worker profile details (persisted to Firestore + local state)
@@ -71,7 +69,7 @@ const BLANK_WALLET: Wallet = {
 
 export function AfterWorksProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth()
-  const [worker, setWorker] = useState<WorkerProfile>(BLANK_WORKER)
+  const [worker, setWorker] = useState<WorkerProfile>(() => seedWorker())
   const [wallet, setWallet] = useState<Wallet>(BLANK_WALLET)
   const [profileLoaded, setProfileLoaded] = useState(false)
   const [jobs] = useState<Job[]>(() => seedJobs())
@@ -102,12 +100,12 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
         const localSaved = typeof window !== 'undefined' ? localStorage.getItem('afterworks_profile_demo') : null
         if (localSaved) {
           try {
-            setWorker({ ...BLANK_WORKER, ...JSON.parse(localSaved) })
+            setWorker({ ...seedWorker(), ...JSON.parse(localSaved) })
           } catch {
-            setWorker(BLANK_WORKER)
+            setWorker(seedWorker())
           }
         } else {
-          setWorker(BLANK_WORKER)
+          setWorker(seedWorker())
         }
         setWallet({
           pendingUsd: 0,
@@ -253,29 +251,7 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
       )
     }
 
-    // Prototype simulator: advance an application to its next lifecycle state.
-    function advanceApplication(applicationId: string) {
-      setApplications((prev) =>
-        prev.map((a) => {
-          if (a.id !== applicationId) return a
-          switch (a.status) {
-            case 'under_review': {
-              return push(a, 'approved')
-            }
-            case 'approved':
-              return push(a, 'in_progress')
-            case 'submitted_for_review': {
-              // QA approves -> payment queued to pending balance (spec 6.1).
-              const job = jobs.find((j) => j.id === a.jobId)
-              if (job) setWallet((w) => ({ ...w, pendingUsd: w.pendingUsd + job.payAmountUsd }))
-              return push(a, 'completed')
-            }
-            default:
-              return a
-          }
-        }),
-      )
-    }
+
 
     // Refresh wallet from Firestore
     async function refreshWallet() {
@@ -337,7 +313,6 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
       getApplicationForJob,
       applyToJob,
       submitWork,
-      advanceApplication,
       refreshWallet,
       updateProfile,
     }

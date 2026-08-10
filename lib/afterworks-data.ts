@@ -677,13 +677,11 @@ export function seedApplications(): Application[] {
     {
       id: 'app-seed-1',
       jobId: 'job-data-entry',
-      status: 'in_progress',
+      status: 'under_review',
       appliedAt: applied.toISOString(),
       reviewExpiresAt: daysFromNow(1),
       history: [
         { status: 'under_review', at: applied.toISOString() },
-        { status: 'approved', at: applied.toISOString() },
-        { status: 'in_progress', at: new Date().toISOString() },
       ],
     },
   ]

@@ -85,6 +85,10 @@ export type WorkerProfile = {
   bankName?: string
   bankBranch?: string
   bankAccountNumber?: string
+  school?: string
+  course?: string
+  jobExperience?: string
+  career?: string
   kycVerifiedAt?: string
   kycRejectedAt?: string
   kycOnHoldAt?: string
@@ -103,7 +107,7 @@ export type Wallet = {
   payoutNumber: string
 }
 
-// Approx display rate; spec says KES shown at withdrawal-time rate.
+// Approx display rate; spec says KES shown at payment-time rate.
 export const USD_TO_KES = 129
 
 export function formatUsd(amount: number): string {

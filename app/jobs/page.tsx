@@ -41,14 +41,14 @@ export default function JobsPage() {
         </p>
       </header>
 
-      {(!worker.kycVerified || !worker.phone || !worker.country) && (
+      {(!worker.kycVerified || !worker.phone || !worker.country || !worker.school || !worker.course || !worker.jobExperience || !worker.career) && (
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-xl border border-warning/50 bg-warning/10 p-4 shadow-sm">
           <div className="flex gap-3">
             <AlertCircle className="size-5 text-warning shrink-0 mt-0.5" />
             <div className="flex flex-col gap-1">
               <h3 className="text-sm font-semibold text-warning-foreground">Action Required: Update your profile</h3>
               <p className="text-xs text-muted-foreground leading-relaxed">
-                You must update your profile and complete Didit KYC verification to unlock all jobs and withdraw funds.
+                You must update your profile and complete Didit KYC verification to unlock all jobs and receive payments.
               </p>
             </div>
           </div>

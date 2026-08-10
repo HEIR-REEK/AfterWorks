@@ -162,6 +162,10 @@ function ProfilePageContent() {
     bankAccountNumber: worker.bankAccountNumber || '',
     skillsStr: (worker.skills || []).join(', '),
     languagesStr: (worker.languages || []).join(', '),
+    school: worker.school || '',
+    course: worker.course || '',
+    jobExperience: worker.jobExperience || '',
+    career: worker.career || '',
   })
 
   // Open edit modal & sync form data
@@ -179,6 +183,10 @@ function ProfilePageContent() {
       bankAccountNumber: worker.bankAccountNumber || '',
       skillsStr: (worker.skills || []).join(', '),
       languagesStr: (worker.languages || []).join(', '),
+      school: worker.school || '',
+      course: worker.course || '',
+      jobExperience: worker.jobExperience || '',
+      career: worker.career || '',
     })
     setIsEditing(true)
   }
@@ -209,6 +217,10 @@ function ProfilePageContent() {
       bankName: formData.preferredPayoutMethod === 'Bank Transfer' ? formData.bankName : '',
       bankBranch: formData.preferredPayoutMethod === 'Bank Transfer' ? formData.bankBranch : '',
       bankAccountNumber: formData.preferredPayoutMethod === 'Bank Transfer' ? formData.bankAccountNumber.trim() : '',
+      school: formData.school.trim(),
+      course: formData.course.trim(),
+      jobExperience: formData.jobExperience.trim(),
+      career: formData.career.trim(),
       skills: skills.length > 0 ? skills : worker.skills,
       languages: languages.length > 0 ? languages : worker.languages,
     })
@@ -731,7 +743,7 @@ function ProfilePageContent() {
                       <ShieldCheck className="size-4 text-primary" />
                       Didit KYC Verification
                     </label>
-                    <span className="text-xs text-muted-foreground">Required to withdraw funds.</span>
+                    <span className="text-xs text-muted-foreground">Required to receive payments.</span>
                   </div>
                   {!worker.kycVerified ? (
                     <Button type="button" disabled={startingKyc} onClick={handleStartKyc} size="sm" variant="default" className="h-8 gap-1.5">
@@ -750,6 +762,58 @@ function ProfilePageContent() {
                     <p>{kycError}</p>
                   </div>
                 )}
+              </div>
+
+              <div className="space-y-4 rounded-xl border border-border bg-muted/20 p-4">
+                <h4 className="text-sm font-semibold flex items-center gap-2">
+                  <Briefcase className="size-4 text-primary" />
+                  Professional Details
+                </h4>
+                
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-medium text-muted-foreground">School / University</label>
+                    <input
+                      type="text"
+                      value={formData.school}
+                      onChange={(e) => setFormData({ ...formData, school: e.target.value })}
+                      className="h-10 w-full rounded-lg border border-input bg-card px-3 text-sm outline-none focus:ring-2 focus:ring-primary"
+                      placeholder="e.g. University of Nairobi"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-medium text-muted-foreground">Course of Study</label>
+                    <input
+                      type="text"
+                      value={formData.course}
+                      onChange={(e) => setFormData({ ...formData, course: e.target.value })}
+                      className="h-10 w-full rounded-lg border border-input bg-card px-3 text-sm outline-none focus:ring-2 focus:ring-primary"
+                      placeholder="e.g. Computer Science"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-muted-foreground">Job Experience</label>
+                  <textarea
+                    rows={2}
+                    value={formData.jobExperience}
+                    onChange={(e) => setFormData({ ...formData, jobExperience: e.target.value })}
+                    className="w-full rounded-lg border border-input bg-card p-3 text-sm outline-none focus:ring-2 focus:ring-primary resize-none"
+                    placeholder="e.g. 2 years as a data entry specialist"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-muted-foreground">Career Goals</label>
+                  <input
+                    type="text"
+                    value={formData.career}
+                    onChange={(e) => setFormData({ ...formData, career: e.target.value })}
+                    className="h-10 w-full rounded-lg border border-input bg-card px-3 text-sm outline-none focus:ring-2 focus:ring-primary"
+                    placeholder="e.g. To become a Senior Data Analyst"
+                  />
+                </div>
               </div>
 
               <div className="space-y-1.5">

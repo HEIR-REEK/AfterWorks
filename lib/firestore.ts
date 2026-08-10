@@ -61,6 +61,10 @@ export type UserProfile = {
   bankName?: string
   bankBranch?: string
   bankAccountNumber?: string
+  school?: string
+  course?: string
+  jobExperience?: string
+  career?: string
   kycVerifiedAt?: string
   kycRejectedAt?: string
   kycOnHoldAt?: string

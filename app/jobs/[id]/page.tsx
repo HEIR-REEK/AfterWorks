@@ -254,7 +254,7 @@ export default function JobDetailPage({
 
               {!application && !isClosed && (
                 <p className="mt-3 text-center text-xs text-muted-foreground">
-                  No fee to apply. Your saved profile & CV are attached automatically.
+                  No fee to apply. Your saved professional details are attached automatically.
                 </p>
               )}
             </div>

@@ -49,7 +49,14 @@ function ProfilePageContent() {
   const [isQrModalOpen, setIsQrModalOpen] = useState(false)
   const [kycFailureReason, setKycFailureReason] = useState<string | null>(null)
 
-  // 1. Handle return from KYC callback — verify server-side before trusting
+  // 1. Auto-open edit modal for new users
+  useEffect(() => {
+    if (searchParams.get('new') === '1') {
+      setIsEditing(true)
+    }
+  }, [searchParams])
+
+  // 2. Handle return from KYC callback — verify server-side before trusting
   useEffect(() => {
     if (searchParams.get('kyc') !== 'success') return
     const sessionId = searchParams.get('sid')

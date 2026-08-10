@@ -17,6 +17,8 @@ import {
   createUserWithEmailAndPassword,
   updateProfile,
   signOut as fbSignOut,
+  GoogleAuthProvider,
+  signInWithPopup,
   type Auth,
   type User,
 } from 'firebase/auth'
@@ -37,6 +39,7 @@ type AuthContextValue = {
   configured: boolean
   signIn: (email: string, password: string) => Promise<AuthResult>
   signUp: (email: string, password: string, name: string) => Promise<AuthResult>
+  signInWithGoogle: () => Promise<AuthResult>
   signOut: () => Promise<void>
 }
 
@@ -128,7 +131,21 @@ export function FirebaseAuthProvider({
       if (authRef.current) await fbSignOut(authRef.current)
     }
 
-    return { user, loading, configured, signIn, signUp, signOut }
+    async function signInWithGoogle(): Promise<AuthResult> {
+      if (!authRef.current) return { ok: false, error: 'Auth is not configured.' }
+      try {
+        const provider = new GoogleAuthProvider()
+        const cred = await signInWithPopup(authRef.current, provider)
+        const name = cred.user.displayName || cred.user.email?.split('@')[0] || 'Worker'
+        await createUserDocument(cred.user.uid, name, cred.user.email || '')
+        setUser({ ...cred.user })
+        return { ok: true }
+      } catch (err) {
+        return { ok: false, error: friendlyError((err as { code?: string })?.code ?? '') }
+      }
+    }
+
+    return { user, loading, configured, signIn, signUp, signInWithGoogle, signOut }
   }, [user, loading, configured])
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

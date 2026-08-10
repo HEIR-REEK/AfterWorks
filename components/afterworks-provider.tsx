@@ -75,7 +75,24 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
   const [wallet, setWallet] = useState<Wallet>(BLANK_WALLET)
   const [profileLoaded, setProfileLoaded] = useState(false)
   const [jobs] = useState<Job[]>(() => seedJobs())
-  const [applications, setApplications] = useState<Application[]>(() => seedApplications())
+  const [applications, setApplications] = useState<Application[]>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('afterworks_applications')
+      if (saved) {
+        try {
+          return JSON.parse(saved)
+        } catch {
+          // fallback to seed
+        }
+      }
+    }
+    return seedApplications()
+  })
+
+  // ── Persist applications to localStorage ───────────────────────────────────
+  useEffect(() => {
+    localStorage.setItem('afterworks_applications', JSON.stringify(applications))
+  }, [applications])
 
   // ── Load real user profile + wallet from Firestore when user changes ───────
   useEffect(() => {

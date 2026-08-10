@@ -59,6 +59,13 @@ export function JobCard({ job }: { job: Job }) {
         </span>
       </div>
 
+      {job.trainingRequired && (
+        <div className="mt-3 inline-flex w-fit items-center gap-1.5 rounded-md bg-accent px-2 py-1 text-xs font-medium text-accent-foreground relative z-10 pointer-events-none">
+          <GraduationCap className="size-3.5" />
+          Training required — $10
+        </div>
+      )}
+
       <div className="mt-4 flex flex-col gap-4 border-t border-border pt-4 relative z-10">
         <div className="flex items-end justify-between pointer-events-none">
           <p className="font-mono text-xl font-semibold text-foreground">
@@ -72,7 +79,7 @@ export function JobCard({ job }: { job: Job }) {
         <div className="relative z-20">
           <Button render={<Link href={`/training/${job.id}`} />} variant="secondary" size="sm" className="w-full gap-2">
             <GraduationCap className="size-4" />
-            Training & Assessment
+            {job.trainingRequired ? 'Training & Assessment' : 'Take Assessment'}
           </Button>
         </div>
       </div>

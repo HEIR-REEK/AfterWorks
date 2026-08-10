@@ -93,7 +93,8 @@ export function KycQrModal({
   // ── Polling loop ─────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!isOpen || !sessionId || !userId) return
-    if (modalStatus !== 'pending') return
+    // Keep polling while we're still waiting (both 'pending' and 'in_progress')
+    if (modalStatus !== 'pending' && modalStatus !== 'in_progress') return
 
     pollCountRef.current = 0
 
@@ -175,7 +176,7 @@ export function KycQrModal({
 
     return () => clearInterval(interval)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, sessionId, userId, modalStatus])
+  }, [isOpen, sessionId, userId])
 
   // Reset when modal reopens
   useEffect(() => {

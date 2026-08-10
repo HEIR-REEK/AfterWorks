@@ -68,6 +68,8 @@ export function normaliseStatus(raw: string | undefined | null): DiditSessionSta
     case 'onhold':
     case 'under_review':
     case 'manual_review':
+    case 'inreview':
+    case 'review':
       return 'OnHold'
     case 'abandoned':
       return 'Abandoned'

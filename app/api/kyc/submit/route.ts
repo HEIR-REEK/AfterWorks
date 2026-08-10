@@ -17,8 +17,7 @@ export const dynamic = 'force-dynamic'
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createKycSession } from '@/lib/didit'
-import { saveKycRecord, verifyIdToken, getUserProfile, getKycRecord } from '@/lib/firestore-admin'
-import { isTerminalStatus, isApprovedStatus } from '@/lib/didit'
+import { saveKycRecord, verifyIdToken, getUserProfile } from '@/lib/firestore-admin'
 
 export async function POST(req: NextRequest) {
   try {
@@ -54,33 +53,7 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    // ── Guard: user has an active (non-terminal) session ─────────────────────
-    // Avoids creating duplicate Didit sessions while one is still in-flight.
-    const existingRecord = await getKycRecord(userId)
-    if (existingRecord) {
-      const activeNonTerminal =
-        !isTerminalStatus(existingRecord.status) &&
-        existingRecord.status !== 'Resubmission'
 
-      if (activeNonTerminal) {
-        console.log(
-          `[KYC submit] uid=${userId} has an active session (${existingRecord.status}) — ` +
-            'returning existing session.',
-        )
-        // Note: We cannot reconstruct the verification URL after the fact from
-        // Didit's API, so we instruct the client to use the session ID for polling.
-        return NextResponse.json({
-          sessionId: existingRecord.sessionId,
-          sessionToken: existingRecord.sessionToken,
-          verificationUrl: null, // Client should poll status
-          reusingSession: true,
-          message:
-            'A verification session is already in progress. Please complete it or wait for it to expire.',
-        })
-      }
-    }
-
-    // ── Determine public origin for callback URL ───────────────────────────
     const host = req.headers.get('x-forwarded-host') || req.headers.get('host')
     const proto = req.headers.get('x-forwarded-proto') || 'https'
     const publicOrigin =

@@ -2,7 +2,6 @@ import Link from 'next/link'
 import { Clock, GraduationCap, MapPin, Users } from 'lucide-react'
 import {
   formatDuration,
-  formatKes,
   formatUsd,
   type Job,
 } from '@/lib/afterworks-data'
@@ -72,7 +71,6 @@ export function JobCard({ job }: { job: Job }) {
           <p className="font-mono text-xl font-semibold text-foreground">
             {formatUsd(job.payAmountUsd)}
           </p>
-          <p className="text-xs text-muted-foreground">≈ {formatKes(job.payAmountUsd)}</p>
         </div>
         <span className="text-xs font-medium text-primary opacity-0 transition-opacity group-hover:opacity-100">
           View details →

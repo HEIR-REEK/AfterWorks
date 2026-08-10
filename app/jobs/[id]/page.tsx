@@ -20,7 +20,6 @@ import {
   APPLICATION_LABELS,
   APPLICATION_TONE,
   formatDuration,
-  formatKes,
   formatUsd,
   Application,
 } from '../../../lib/afterworks-data'
@@ -157,7 +156,6 @@ export default function JobDetailPage({
             <p className="mt-1 font-mono text-3xl font-semibold">
               {formatUsd(job.payAmountUsd)}
             </p>
-            <p className="text-sm text-muted-foreground">≈ {formatKes(job.payAmountUsd)}</p>
 
             <dl className="mt-5 flex flex-col gap-3 text-sm">
               <div className="flex items-center justify-between">

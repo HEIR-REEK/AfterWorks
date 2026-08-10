@@ -19,6 +19,7 @@ import {
   signOut as fbSignOut,
   GoogleAuthProvider,
   signInWithPopup,
+  getAdditionalUserInfo,
   type Auth,
   type User,
 } from 'firebase/auth'
@@ -31,7 +32,7 @@ export type FirebaseConfig = {
   appId: string
 }
 
-type AuthResult = { ok: true } | { ok: false; error: string }
+type AuthResult = { ok: true; isNewUser?: boolean } | { ok: false; error: string }
 
 type AuthContextValue = {
   user: User | null
@@ -121,7 +122,7 @@ export function FirebaseAuthProvider({
         // Persist the user's profile + empty wallet to Firestore
         await createUserDocument(cred.user.uid, name || email.split('@')[0], email)
         setUser({ ...cred.user })
-        return { ok: true }
+        return { ok: true, isNewUser: true }
       } catch (err) {
         return { ok: false, error: friendlyError((err as { code?: string })?.code ?? '') }
       }
@@ -139,7 +140,8 @@ export function FirebaseAuthProvider({
         const name = cred.user.displayName || cred.user.email?.split('@')[0] || 'Worker'
         await createUserDocument(cred.user.uid, name, cred.user.email || '')
         setUser({ ...cred.user })
-        return { ok: true }
+        const additionalInfo = getAdditionalUserInfo(cred)
+        return { ok: true, isNewUser: additionalInfo?.isNewUser ?? false }
       } catch (err) {
         return { ok: false, error: friendlyError((err as { code?: string })?.code ?? '') }
       }

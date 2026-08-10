@@ -50,17 +50,17 @@ const AfterWorksContext = createContext<AfterWorksContextValue | null>(null)
 const BLANK_WORKER: WorkerProfile = {
   name: 'Amara Okoro',
   email: 'amara.okoro@afterworks.io',
-  location: 'Nairobi, Kenya',
+  location: '',
   accountState: 'active',
-  kycVerified: true,
-  qualityScore: 98,
-  jobsCompleted: 14,
-  memberSince: 'Mar 2025',
-  phone: '+254 712 345 678',
-  bio: 'Experienced data annotator, Swahili/English translator & audio transcription specialist with 2+ years in digital micro-tasking.',
-  skills: ['Swahili Transcription', 'Data Entry', 'Image Bounding Box', 'Medical Glossary', 'Content Moderation'],
-  languages: ['English (Native/Fluent)', 'Swahili (Native)', 'Kikuyu (Fluent)'],
-  preferredPayoutMethod: 'M-Pesa',
+  kycVerified: false,
+  qualityScore: 100,
+  jobsCompleted: 0,
+  memberSince: '',
+  phone: '',
+  bio: '',
+  skills: [],
+  languages: [],
+  preferredPayoutMethod: '',
 }
 
 const BLANK_WALLET: Wallet = {
@@ -77,21 +77,21 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
   const [jobs] = useState<Job[]>(() => seedJobs())
   const [applications, setApplications] = useState<Application[]>(() => {
     if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('afterworks_applications')
+      const saved = localStorage.getItem('afterworks_applications_v2')
       if (saved) {
         try {
           return JSON.parse(saved)
         } catch {
-          // fallback to seed
+          // fallback to empty
         }
       }
     }
-    return seedApplications()
+    return []
   })
 
   // ── Persist applications to localStorage ───────────────────────────────────
   useEffect(() => {
-    localStorage.setItem('afterworks_applications', JSON.stringify(applications))
+    localStorage.setItem('afterworks_applications_v2', JSON.stringify(applications))
   }, [applications])
 
   // ── Load real user profile + wallet from Firestore when user changes ───────
@@ -110,9 +110,9 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
           setWorker(BLANK_WORKER)
         }
         setWallet({
-          pendingUsd: 22,
-          availableUsd: 46,
-          payoutNumber: '+254 712 345 678',
+          pendingUsd: 0,
+          availableUsd: 0,
+          payoutNumber: '',
         })
         setProfileLoaded(true)
         return
@@ -128,7 +128,7 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
             setWorker({
               name: userDoc.name || user.displayName || user.email?.split('@')[0] || 'Worker',
               email: user.email || userDoc.email || '',
-              location: userDoc.location || localData.location || 'Nairobi, Kenya',
+              location: userDoc.location || localData.location || '',
               // Security-critical fields — ALWAYS from Firestore, never from localStorage
               accountState: userDoc.accountState || 'active',
               kycVerified: userDoc.kycVerified ?? false,
@@ -142,12 +142,12 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
               kycFailedChecks: userDoc.kycFailedChecks ?? null,
               qualityScore: userDoc.qualityScore ?? 100,
               jobsCompleted: userDoc.jobsCompleted ?? 0,
-              memberSince: userDoc.memberSince || 'Jul 2026',
-              phone: userDoc.phone || userDoc.wallet?.payoutNumber || localData.phone || '+254 700 000 000',
-              bio: userDoc.bio || localData.bio || 'Digital task professional specializing in transcription, translation, and data validation.',
-              skills: userDoc.skills || localData.skills || ['Data Entry', 'Transcription', 'Swahili Translation'],
-              languages: userDoc.languages || localData.languages || ['English', 'Swahili'],
-              preferredPayoutMethod: userDoc.preferredPayoutMethod || localData.preferredPayoutMethod || 'M-Pesa',
+              memberSince: userDoc.memberSince || '',
+              phone: userDoc.phone || userDoc.wallet?.payoutNumber || localData.phone || '',
+              bio: userDoc.bio || localData.bio || '',
+              skills: userDoc.skills || localData.skills || [],
+              languages: userDoc.languages || localData.languages || [],
+              preferredPayoutMethod: userDoc.preferredPayoutMethod || localData.preferredPayoutMethod || '',
             })
             setWallet({
               pendingUsd: userDoc.wallet?.pendingUsd ?? 0,
@@ -159,17 +159,17 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
             setWorker({
               name: user.displayName || user.email?.split('@')[0] || 'Worker',
               email: user.email || '',
-              location: 'Nairobi, Kenya',
+              location: '',
               accountState: 'active',
               kycVerified: false,
               qualityScore: 100,
               jobsCompleted: 0,
-              memberSince: new Date().toLocaleString('en-US', { month: 'short', year: 'numeric' }),
+              memberSince: '',
               phone: localData.phone || '',
-              bio: localData.bio || 'Verified worker account.',
+              bio: localData.bio || '',
               skills: localData.skills || [],
               languages: localData.languages || [],
-              preferredPayoutMethod: localData.preferredPayoutMethod || 'M-Pesa',
+              preferredPayoutMethod: localData.preferredPayoutMethod || '',
             })
             setWallet({
               pendingUsd: 0,

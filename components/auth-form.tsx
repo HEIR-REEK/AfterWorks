@@ -34,9 +34,10 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
       : await signIn(email.trim(), password)
     setSubmitting(false)
     if (result.ok) {
-      if (isSignUp) {
-        // After registration, send user to sign-in with a success flag
-        router.push('/sign-in?registered=1')
+      if ('isNewUser' in result && result.isNewUser) {
+        // New user! Send them straight to profile for setup and KYC
+        router.push('/profile?new=1')
+        router.refresh()
       } else {
         router.push('/')
         router.refresh()
@@ -52,8 +53,13 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
     const result = await signInWithGoogle()
     setSubmitting(false)
     if (result.ok) {
-      router.push('/')
-      router.refresh()
+      if ('isNewUser' in result && result.isNewUser) {
+        router.push('/profile?new=1')
+        router.refresh()
+      } else {
+        router.push('/')
+        router.refresh()
+      }
     } else {
       setError(result.error)
     }

@@ -23,6 +23,24 @@ import {
   type Firestore,
 } from 'firebase/firestore'
 
+/**
+ * All possible values for a user's accountState field.
+ *
+ *  active            – Normal operating state (includes KYC-verified users).
+ *  kyc_rejected      – Verification failed; user must re-apply.
+ *  kyc_resubmission  – Some checks failed; user must redo specific steps.
+ *  kyc_on_hold       – Flagged for manual compliance review.
+ *  kyc_abandoned     – User started KYC but didn't finish.
+ *  kyc_expired       – The KYC session expired before completion.
+ */
+export type AccountState =
+  | 'active'
+  | 'kyc_rejected'
+  | 'kyc_resubmission'
+  | 'kyc_on_hold'
+  | 'kyc_abandoned'
+  | 'kyc_expired'
+
 export type UserProfile = {
   uid: string
   name: string
@@ -32,7 +50,7 @@ export type UserProfile = {
   qualityScore: number
   jobsCompleted: number
   kycVerified: boolean
-  accountState: 'active'
+  accountState: AccountState
   phone?: string
   bio?: string
   skills?: string[]
@@ -42,10 +60,17 @@ export type UserProfile = {
   zipCode?: string
   bankName?: string
   bankBranch?: string
+  bankAccountNumber?: string
   kycVerifiedAt?: string
+  kycRejectedAt?: string
+  kycOnHoldAt?: string
   kycProvider?: string
   kycLevel?: string
   kycStatus?: string
+  /** Human-readable reason if KYC was declined, on-hold, or resubmission needed. */
+  kycRejectionReason?: string | null
+  /** Names of verification sub-checks that failed (e.g. ['liveness', 'document']). */
+  kycFailedChecks?: string[] | null
 }
 
 export type WalletData = {

@@ -47,6 +47,7 @@ function ProfilePageContent() {
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
   const [activeVerificationUrl, setActiveVerificationUrl] = useState<string | null>(null)
   const [isQrModalOpen, setIsQrModalOpen] = useState(false)
+  const [kycFailureReason, setKycFailureReason] = useState<string | null>(null)
 
   // 1. Handle return from KYC callback — verify server-side before trusting
   useEffect(() => {
@@ -421,35 +422,64 @@ function ProfilePageContent() {
               </div>
             </div>
 
-            <div className="mt-5 rounded-xl border border-border bg-muted/40 p-4 text-xs space-y-2">
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Provider:</span>
-                <span className="font-semibold text-foreground">{worker.kycProvider || 'Didit'}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Verification Level:</span>
-                <span className="font-semibold text-foreground">{worker.kycLevel || (worker.kycVerified ? 'Level 2 (Identity)' : 'None')}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">KYC Status:</span>
-                <span
-                  className={cn(
-                    'font-semibold',
-                    worker.kycVerified ? 'text-success' : 'text-warning',
-                  )}
-                >
-                  {worker.kycStatus || (worker.kycVerified ? 'Approved' : 'Action Required')}
-                </span>
-              </div>
-              {worker.kycVerified && (
+              <div className="mt-5 rounded-xl border border-border bg-muted/40 p-4 text-xs space-y-2">
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">Verification Date:</span>
-                  <span className="font-semibold text-foreground">
-                    {worker.kycVerifiedAt ? new Date(worker.kycVerifiedAt).toLocaleDateString() : 'N/A'}
+                  <span className="text-muted-foreground">Provider:</span>
+                  <span className="font-semibold text-foreground">{worker.kycProvider || 'Didit'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Verification Level:</span>
+                  <span className="font-semibold text-foreground">{worker.kycLevel || (worker.kycVerified ? 'Level 2 (Identity)' : 'None')}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">KYC Status:</span>
+                  <span
+                    className={cn(
+                      'font-semibold capitalize',
+                      worker.kycVerified ? 'text-success' :
+                      worker.accountState === 'kyc_rejected' ? 'text-destructive' :
+                      worker.accountState === 'kyc_on_hold' ? 'text-blue-500' :
+                      worker.accountState === 'kyc_resubmission' ? 'text-warning' :
+                      'text-warning',
+                    )}
+                  >
+                    {worker.kycStatus ||
+                      (worker.kycVerified ? 'Approved' :
+                       worker.accountState === 'kyc_rejected' ? 'Declined' :
+                       worker.accountState === 'kyc_on_hold' ? 'Under Review' :
+                       worker.accountState === 'kyc_resubmission' ? 'Resubmission Required' :
+                       worker.accountState === 'kyc_abandoned' ? 'Abandoned' :
+                       worker.accountState === 'kyc_expired' ? 'Expired' :
+                       'Action Required')}
                   </span>
                 </div>
-              )}
-            </div>
+                {worker.kycVerified && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Verified On:</span>
+                    <span className="font-semibold text-foreground">
+                      {worker.kycVerifiedAt ? new Date(worker.kycVerifiedAt).toLocaleDateString() : 'N/A'}
+                    </span>
+                  </div>
+                )}
+                {!worker.kycVerified && worker.kycRejectionReason && (
+                  <div className="flex flex-col gap-1 pt-1 border-t border-border">
+                    <span className="text-muted-foreground">Reason:</span>
+                    <span className="font-medium text-destructive text-[11px] leading-relaxed">{worker.kycRejectionReason}</span>
+                  </div>
+                )}
+                {!worker.kycVerified && worker.kycFailedChecks && worker.kycFailedChecks.length > 0 && (
+                  <div className="flex flex-col gap-1">
+                    <span className="text-muted-foreground">Failed Checks:</span>
+                    <div className="flex flex-wrap gap-1">
+                      {worker.kycFailedChecks.map((c) => (
+                        <span key={c} className="rounded-md bg-destructive/10 px-1.5 py-0.5 text-[10px] font-medium text-destructive capitalize">
+                          {c.replace(/_/g, ' ')}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
           </div>
 
           <div className="mt-6 flex flex-col gap-3 pt-2">
@@ -459,13 +489,25 @@ function ProfilePageContent() {
                 <p>{kycError}</p>
               </div>
             )}
+            {kycFailureReason && (
+              <div className="flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2.5 text-xs text-warning">
+                <AlertCircle className="size-4 shrink-0 mt-0.5" />
+                <p>{kycFailureReason}</p>
+              </div>
+            )}
             <div className="flex items-center justify-between">
               <p className="text-xs text-muted-foreground">
                 {worker.kycVerified
                   ? 'Your identity is fully verified on the Didit decentralized network.'
+                  : worker.accountState === 'kyc_on_hold'
+                  ? 'Your identity is under manual review. No action needed.'
                   : 'Complete verification to unlock premium high-paying tasks.'}
               </p>
-              {!worker.kycVerified ? (
+              {worker.accountState === 'kyc_on_hold' ? (
+                <span className="inline-flex items-center gap-1 rounded-full bg-blue-500/15 px-2 py-0.5 text-xs font-semibold text-blue-500">
+                  Under Review
+                </span>
+              ) : !worker.kycVerified ? (
                 <Button
                   onClick={handleStartKyc}
                   disabled={startingKyc}
@@ -473,7 +515,9 @@ function ProfilePageContent() {
                   className="shrink-0 gap-1.5"
                 >
                   <ShieldCheck className="size-4" />
-                  {startingKyc ? 'Starting...' : 'Verify Now'}
+                  {startingKyc ? 'Starting...' :
+                   ['kyc_rejected', 'kyc_resubmission', 'kyc_abandoned', 'kyc_expired'].includes(worker.accountState)
+                    ? 'Retry Verification' : 'Verify Now'}
                 </Button>
               ) : (
                 <Button
@@ -797,6 +841,17 @@ function ProfilePageContent() {
           setToastMessage('Biometric KYC Verified successfully!')
           setShowToast(true)
           setTimeout(() => setShowToast(false), 5000)
+        }}
+        onFailed={(reason) => {
+          const messages: Record<string, string> = {
+            declined: 'Verification was declined. Please review the details and try again.',
+            resubmission: 'Additional verification steps are required. Start a new session to resubmit.',
+            on_hold: 'Your verification is under manual review. You will be notified of the outcome.',
+            expired: 'The verification session expired. Please start a new session.',
+            timed_out: 'Status check timed out. Refresh your profile to see if verification completed.',
+          }
+          setKycFailureReason(messages[reason] ?? 'Verification could not be completed.')
+          setIsQrModalOpen(false)
         }}
       />
     </div>

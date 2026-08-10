@@ -54,11 +54,23 @@ export type Application = {
   history: { status: ApplicationStatus; at: string }[]
 }
 
+/**
+ * All possible values for a user's accountState.
+ * Mirrors AccountState from lib/firestore.ts — kept in sync manually.
+ */
+export type AccountState =
+  | 'active'
+  | 'kyc_rejected'
+  | 'kyc_resubmission'
+  | 'kyc_on_hold'
+  | 'kyc_abandoned'
+  | 'kyc_expired'
+
 export type WorkerProfile = {
   name: string
   email: string
   location: string
-  accountState: 'active'
+  accountState: AccountState
   kycVerified: boolean
   qualityScore: number // 0-100
   jobsCompleted: number
@@ -74,9 +86,15 @@ export type WorkerProfile = {
   bankBranch?: string
   bankAccountNumber?: string
   kycVerifiedAt?: string
+  kycRejectedAt?: string
+  kycOnHoldAt?: string
   kycProvider?: string
   kycLevel?: string
   kycStatus?: string
+  /** Human-readable reason if KYC was declined or flagged. */
+  kycRejectionReason?: string | null
+  /** Names of sub-checks that failed, e.g. ['liveness', 'document']. */
+  kycFailedChecks?: string[] | null
 }
 
 export type Wallet = {

@@ -16,14 +16,26 @@ function getAdminApp(): admin.app.App {
   const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON
   if (serviceAccountJson) {
     try {
-      const serviceAccount = JSON.parse(serviceAccountJson) as admin.ServiceAccount
+      // Handle potential Base64 encoding (very robust for Render/Vercel)
+      const isBase64 = !serviceAccountJson.trim().startsWith('{')
+      const rawString = isBase64
+        ? Buffer.from(serviceAccountJson, 'base64').toString('utf8')
+        : serviceAccountJson
+
+      // Handle environment variable escaping quirks (e.g., \\n instead of \n)
+      const parsedJson = JSON.parse(rawString)
+      if (parsedJson.private_key) {
+        parsedJson.private_key = parsedJson.private_key.replace(/\\n/g, '\n')
+      }
+
+      const serviceAccount = parsedJson as admin.ServiceAccount
       return admin.initializeApp({
         credential: admin.credential.cert(serviceAccount),
         projectId:
           (serviceAccount as unknown as { project_id: string }).project_id || projectId,
       })
     } catch (err) {
-      console.warn('[Admin] Could not parse FIREBASE_SERVICE_ACCOUNT_JSON:', err)
+      console.warn('[Admin] Could not parse FIREBASE_SERVICE_ACCOUNT_JSON. Is it valid JSON or Base64? Error:', err)
     }
   }
 

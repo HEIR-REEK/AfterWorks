@@ -40,6 +40,7 @@ import { Button } from '@/components/ui/button'
 
 type ModalStatus =
   | 'pending'
+  | 'in_progress'
   | 'approved'
   | 'declined'
   | 'resubmission'
@@ -57,6 +58,7 @@ type StatusApiResponse = {
   diditApproved?: boolean
   rejectionReason?: string | null
   failedChecks?: string[] | null
+  status?: string
 }
 
 type KycQrModalProps = {
@@ -159,6 +161,10 @@ export function KycQrModal({
           setModalStatus('expired')
           onFailed?.('expired')
           return
+        }
+
+        if (data.status === 'InProgress' && modalStatus === 'pending') {
+          setModalStatus('in_progress')
         }
 
         // Still pending / in-progress — continue polling
@@ -369,6 +375,30 @@ export function KycQrModal({
               </a>
             </div>
           </>
+        )}
+
+        {/* ── In Progress (Phone Connected) ── */}
+        {modalStatus === 'in_progress' && (
+          <div className="flex flex-col items-center text-center py-6 animate-in zoom-in-95 fade-in">
+            <div className="flex size-16 items-center justify-center rounded-full bg-primary/10 text-primary">
+              <Smartphone className="size-8" />
+            </div>
+            <h3 className="mt-5 text-xl font-bold tracking-tight text-foreground">
+              Phone Connected
+            </h3>
+            <p className="mt-2 text-sm text-muted-foreground max-w-[260px] leading-relaxed">
+              Continue the identity verification process on your phone.
+            </p>
+            
+            <div className="mt-6 flex items-center justify-center gap-2 rounded-xl bg-muted/50 px-4 py-3 text-sm font-medium text-foreground w-full">
+              <Loader2 className="size-4 animate-spin text-primary" />
+              Verification in progress…
+            </div>
+            
+            <div className="mt-2 text-[10px] text-muted-foreground">
+              Do not close this window.
+            </div>
+          </div>
         )}
       </div>
     </div>

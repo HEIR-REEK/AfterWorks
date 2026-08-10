@@ -23,10 +23,6 @@ export const metadata: Metadata = {
   description:
     'AfterWorks connects verified workers with real, paid microwork. Browse jobs, track your applications, and get paid to your mobile money — no fees to apply.',
   generator: 'v0.app',
-  icons: {
-    icon: '/logo.png',
-    apple: '/logo.png',
-  },
 }
 
 export const viewport: Viewport = {

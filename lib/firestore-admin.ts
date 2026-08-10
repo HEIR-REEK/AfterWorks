@@ -59,6 +59,12 @@ function getAdminApp(): admin.app.App {
     }
   }
 
+  // If we reach here, neither JSON nor PATH was successfully loaded.
+  console.error(
+    '[Admin] CRITICAL: FIREBASE_SERVICE_ACCOUNT_JSON is not set or failed to load. ' +
+    'Falling back to Application Default Credentials, which will likely crash on Render.',
+  )
+
   // 3. Application Default Credentials (GCP / Cloud Run)
   return admin.initializeApp({
     credential: admin.credential.applicationDefault(),

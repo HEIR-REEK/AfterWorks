@@ -156,7 +156,7 @@ function ProfilePageContent() {
     zipCode: worker.zipCode || '',
     location: worker.location || '',
     bio: worker.bio || '',
-    preferredPayoutMethod: worker.preferredPayoutMethod || 'M-Pesa',
+    preferredPayoutMethod: worker.preferredPayoutMethod || '',
     bankName: worker.bankName || '',
     bankBranch: worker.bankBranch || '',
     bankAccountNumber: worker.bankAccountNumber || '',
@@ -173,7 +173,7 @@ function ProfilePageContent() {
       zipCode: worker.zipCode || '',
       location: worker.location || '',
       bio: worker.bio || '',
-      preferredPayoutMethod: worker.preferredPayoutMethod || 'M-Pesa',
+      preferredPayoutMethod: worker.preferredPayoutMethod || '',
       bankName: worker.bankName || '',
       bankBranch: worker.bankBranch || '',
       bankAccountNumber: worker.bankAccountNumber || '',
@@ -340,7 +340,7 @@ function ProfilePageContent() {
               <CreditCard className="size-3.5 text-primary" />
               Payout
             </div>
-            <span className="mt-1 text-sm font-semibold sm:text-base">{worker.preferredPayoutMethod || 'M-Pesa'}</span>
+            <span className="mt-1 text-sm font-semibold sm:text-base">{worker.preferredPayoutMethod || '-'}</span>
           </div>
         </div>
       </section>

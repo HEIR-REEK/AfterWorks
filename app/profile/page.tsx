@@ -63,12 +63,12 @@ function ProfilePageContent() {
         if (!idToken) return
 
         const res = await fetch(
-          `/api/kyc/status?sessionId=${encodeURIComponent(sessionId!)}`,
+          `/api/kyc/status?sessionId=${encodeURIComponent(sessionId!)}&t=${Date.now()}`,
           { headers: { Authorization: `Bearer ${idToken}` } }
         )
         const data = await res.json()
-        if (data.isApproved) {
-          await updateProfile({ kycVerified: true })
+        if (data.isApproved || data.diditApproved) {
+          await updateProfile({ kycVerified: true, accountState: 'active' })
           setToastMessage('Identity verification complete! Your profile is verified.')
           setShowToast(true)
           setTimeout(() => setShowToast(false), 5000)
@@ -837,7 +837,7 @@ function ProfilePageContent() {
         verificationUrl={activeVerificationUrl}
         userId={user?.uid}
         onVerified={() => {
-          updateProfile({ kycVerified: true })
+          updateProfile({ kycVerified: true, accountState: 'active' })
           setToastMessage('Biometric KYC Verified successfully!')
           setShowToast(true)
           setTimeout(() => setShowToast(false), 5000)

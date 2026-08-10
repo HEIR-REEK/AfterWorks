@@ -111,13 +111,32 @@ function KycCallbackContent() {
 
             const idToken = await auth.currentUser?.getIdToken()
             if (!idToken) {
-              // Not authenticated — show a neutral state so the user can log in
+              // Not authenticated on this device (e.g. phone during a cross-device flow)
+              if (isCrossDevice) {
+                // We cannot verify server-side without auth, but we can look at the URL
+                // cosmetically so the user knows they can close their phone tab.
+                const s = urlStatus
+                if (['approved', 'verified', 'completed', 'success'].includes(s)) {
+                  setOutcome('approved')
+                } else if (['declined', 'rejected', 'failed'].includes(s)) {
+                  setOutcome('declined')
+                } else if (s === 'resubmission') {
+                  setOutcome('resubmission')
+                } else if (s === 'on_hold') {
+                  setOutcome('on_hold')
+                } else {
+                  // Default for cross-device: assume success/pending and tell them to check desktop
+                  setOutcome('approved')
+                }
+                return
+              }
+              // Normal flow but unauthenticated — show abandoned
               setOutcome('abandoned')
               return
             }
 
             const res = await fetch(
-              `/api/kyc/status?sessionId=${encodeURIComponent(sessionId)}`,
+              `/api/kyc/status?sessionId=${encodeURIComponent(sessionId)}&t=${Date.now()}`,
               { headers: { Authorization: `Bearer ${idToken}` } },
             )
 

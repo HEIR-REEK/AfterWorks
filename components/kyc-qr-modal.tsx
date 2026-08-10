@@ -113,7 +113,7 @@ export function KycQrModal({
         if (!idToken) return
 
         const res = await fetch(
-          `/api/kyc/status?sessionId=${encodeURIComponent(sessionId)}`,
+          `/api/kyc/status?sessionId=${encodeURIComponent(sessionId)}&t=${Date.now()}`,
           { headers: { Authorization: `Bearer ${idToken}` } },
         )
 

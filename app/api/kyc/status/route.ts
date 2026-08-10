@@ -18,7 +18,7 @@ export const dynamic = 'force-dynamic'
 
 import { NextRequest, NextResponse } from 'next/server'
 import { getKycSessionStatus } from '@/lib/didit'
-import { saveKycRecord, verifyIdToken, getUserProfile } from '@/lib/firestore-admin'
+import { saveKycRecord, verifyIdToken, getUserProfile, updateUserProfile } from '@/lib/firestore-admin'
 
 export async function GET(req: NextRequest) {
   try {
@@ -65,7 +65,6 @@ export async function GET(req: NextRequest) {
       failedChecks: didit.failed_checks,
     })
 
-    // ── Firestore profile (always the authoritative source for business logic) –
     const userProfile = await getUserProfile(userId)
     const firestoreVerified = userProfile?.kycVerified === true
     const firestoreAccountState = (userProfile?.accountState as string | undefined) ?? 'active'
@@ -73,14 +72,64 @@ export async function GET(req: NextRequest) {
     const firestoreOnHold = firestoreAccountState === 'kyc_on_hold'
     const firestoreResubmission = firestoreAccountState === 'kyc_resubmission'
 
-    // Didit says approved but webhook hasn't fired yet — tell the client to keep polling
-    const awaitingWebhook = didit.is_approved && !firestoreVerified
+    // ── Self-healing: Sync Didit status to Profile if Webhook was missed ──
+    const nowIso = new Date().toISOString()
+    let awaitingWebhook = false
+
+    if (didit.is_approved && !firestoreVerified) {
+      console.log(`[KYC status] Auto-syncing Approved state for uid=${userId} (webhook missed or delayed)`)
+      await updateUserProfile(userId, {
+        kycVerified: true,
+        accountState: 'active',
+        kycStatus: didit.raw_status,
+        kycVerifiedAt: nowIso,
+        kycProvider: 'Didit',
+        kycLevel: 'Identity',
+        kycRejectionReason: null,
+        kycFailedChecks: null,
+      })
+    } else if (didit.is_rejected && !firestoreRejected) {
+      console.log(`[KYC status] Auto-syncing Declined state for uid=${userId}`)
+      await updateUserProfile(userId, {
+        kycVerified: false,
+        accountState: 'kyc_rejected',
+        kycStatus: didit.raw_status,
+        kycRejectedAt: nowIso,
+        kycRejectionReason: didit.rejection_reason ?? null,
+        kycFailedChecks: didit.failed_checks ?? null,
+      })
+    } else if (didit.needs_resubmission && !firestoreResubmission) {
+      console.log(`[KYC status] Auto-syncing Resubmission state for uid=${userId}`)
+      await updateUserProfile(userId, {
+        kycVerified: false,
+        accountState: 'kyc_resubmission',
+        kycStatus: didit.raw_status,
+        kycRejectionReason: didit.rejection_reason ?? null,
+        kycFailedChecks: didit.failed_checks ?? null,
+      })
+    } else if (didit.is_on_hold && !firestoreOnHold) {
+      console.log(`[KYC status] Auto-syncing OnHold state for uid=${userId}`)
+      await updateUserProfile(userId, {
+        kycVerified: false,
+        accountState: 'kyc_on_hold',
+        kycStatus: didit.raw_status,
+        kycOnHoldAt: nowIso,
+      })
+    } else if (didit.status === 'Pending' || didit.status === 'InProgress') {
+      // If we are still processing, we wait.
+      awaitingWebhook = didit.is_approved && !firestoreVerified
+    }
+
+    // Re-evaluate what we just synced so the client gets accurate boolean flags
+    const finalIsApproved = didit.is_approved || firestoreVerified
+    const finalIsRejected = didit.is_rejected || firestoreRejected
+    const finalIsOnHold = didit.is_on_hold || firestoreOnHold
+    const finalNeedsResubmission = didit.needs_resubmission || firestoreResubmission
 
     // ── Structured log ───────────────────────────────────────────────────────
     console.log(
       `[KYC status] uid=${userId} session=${sessionId} ` +
-        `didit=${didit.status} firestoreVerified=${firestoreVerified} ` +
-        `awaitingWebhook=${awaitingWebhook}`,
+        `didit=${didit.status} finalVerified=${finalIsApproved}`,
     )
 
     return NextResponse.json({
@@ -89,12 +138,12 @@ export async function GET(req: NextRequest) {
       rawStatus: didit.raw_status,
 
       // Granular boolean flags — client picks whichever fits its UI
-      isApproved: firestoreVerified,             // ONLY true once Firestore confirms
-      isRejected: firestoreRejected,
-      isOnHold: firestoreOnHold,
-      needsResubmission: firestoreResubmission,
+      isApproved: finalIsApproved,
+      isRejected: finalIsRejected,
+      isOnHold: finalIsOnHold,
+      needsResubmission: finalNeedsResubmission,
 
-      // Didit's live read (before webhook settles)
+      // Didit's live read
       diditApproved: didit.is_approved,
       diditRejected: didit.is_rejected,
       diditExpired: didit.is_expired,

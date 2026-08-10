@@ -12,18 +12,26 @@ function getAdminApp(): admin.app.App {
 
   const projectId = process.env.FIREBASE_PROJECT_ID
 
-  // 1. Prefer inline JSON (Render / cloud deployments — set via env var)
-  const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON
-  if (serviceAccountJson) {
+  const rawEnv = process.env.FIREBASE_SERVICE_ACCOUNT_JSON
+  if (rawEnv) {
     try {
-      // Handle potential Base64 encoding (very robust for Render/Vercel)
-      const isBase64 = !serviceAccountJson.trim().startsWith('{')
-      const rawString = isBase64
-        ? Buffer.from(serviceAccountJson, 'base64').toString('utf8')
-        : serviceAccountJson
+      // 1. Aggressively clean up the string (Render users often accidentally include quotes)
+      let cleanStr = rawEnv.trim()
+      if ((cleanStr.startsWith("'") && cleanStr.endsWith("'")) || 
+          (cleanStr.startsWith('"') && !cleanStr.endsWith('}'))) {
+        cleanStr = cleanStr.substring(1, cleanStr.length - 1)
+      }
 
-      // Handle environment variable escaping quirks (e.g., \\n instead of \n)
-      const parsedJson = JSON.parse(rawString)
+      // 2. Detect Base64 (doesn't start with '{')
+      const isBase64 = !cleanStr.trim().startsWith('{')
+      
+      // 3. Decode or use raw
+      const rawJsonString = isBase64
+        ? Buffer.from(cleanStr, 'base64').toString('utf8')
+        : cleanStr
+
+      // 4. Handle \n escaping quirks
+      const parsedJson = JSON.parse(rawJsonString)
       if (parsedJson.private_key) {
         parsedJson.private_key = parsedJson.private_key.replace(/\\n/g, '\n')
       }
@@ -31,11 +39,11 @@ function getAdminApp(): admin.app.App {
       const serviceAccount = parsedJson as admin.ServiceAccount
       return admin.initializeApp({
         credential: admin.credential.cert(serviceAccount),
-        projectId:
-          (serviceAccount as unknown as { project_id: string }).project_id || projectId,
+        projectId: (serviceAccount as unknown as { project_id: string }).project_id || projectId,
       })
     } catch (err) {
-      console.warn('[Admin] Could not parse FIREBASE_SERVICE_ACCOUNT_JSON. Is it valid JSON or Base64? Error:', err)
+      console.warn('[Admin] Failed to parse FIREBASE_SERVICE_ACCOUNT_JSON. Error:', err)
+      console.warn('[Admin] The value started with:', rawEnv.substring(0, 15) + '...')
     }
   }
 

@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@didit-protocol/sdk-web": "^0.2.1",
+    "@emailjs/browser": "^4.4.1",
     "@prisma/client": "^5.11.0",
     "@supabase/ssr": "^0.12.0",
     "@supabase/supabase-js": "^2.110.0",

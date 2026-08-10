@@ -1,11 +1,12 @@
 import Link from 'next/link'
-import { Clock, GraduationCap, MapPin, Users } from 'lucide-react'
+import { Clock, GraduationCap, MapPin, Users, ArrowRight } from 'lucide-react'
 import {
   formatDuration,
   formatUsd,
   type Job,
 } from '@/lib/afterworks-data'
 import { StatusBadge } from '@/components/status-badge'
+import { Button } from '@/components/ui/button'
 
 function closingLabel(closesAt: string): { text: string; urgent: boolean } {
   const ms = new Date(closesAt).getTime() - Date.now()
@@ -22,11 +23,10 @@ export function JobCard({ job }: { job: Job }) {
   const almostFull = !isClosed && job.slotsRemaining <= 3
 
   return (
-    <Link
-      href={`/jobs/${job.id}`}
-      className="group flex flex-col rounded-xl border border-border bg-card p-5 transition-colors hover:border-primary/40"
-    >
-      <div className="flex items-start justify-between gap-3">
+    <div className="group flex flex-col rounded-xl border border-border bg-card p-5 transition-colors hover:border-primary/40 relative">
+      <Link href={`/jobs/${job.id}`} className="absolute inset-0 z-0" aria-label="View job details" />
+      
+      <div className="flex items-start justify-between gap-3 relative z-10 pointer-events-none">
         <StatusBadge tone="neutral">{job.category}</StatusBadge>
         {isClosed ? (
           <StatusBadge tone="danger">Slots full</StatusBadge>
@@ -37,14 +37,14 @@ export function JobCard({ job }: { job: Job }) {
         )}
       </div>
 
-      <h3 className="mt-3 text-pretty text-base font-semibold leading-snug text-foreground group-hover:text-primary">
+      <h3 className="mt-3 text-pretty text-base font-semibold leading-snug text-foreground group-hover:text-primary relative z-10 pointer-events-none">
         {job.title}
       </h3>
-      <p className="mt-1.5 line-clamp-2 text-sm leading-relaxed text-muted-foreground">
+      <p className="mt-1.5 line-clamp-2 text-sm leading-relaxed text-muted-foreground relative z-10 pointer-events-none">
         {job.description}
       </p>
 
-      <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
+      <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground relative z-10 pointer-events-none">
         <span className="inline-flex items-center gap-1.5">
           <Clock className="size-3.5" />
           {formatDuration(job.estimatedMinutes)}
@@ -59,23 +59,23 @@ export function JobCard({ job }: { job: Job }) {
         </span>
       </div>
 
-      {job.trainingRequired && (
-        <div className="mt-3 inline-flex w-fit items-center gap-1.5 rounded-md bg-accent px-2 py-1 text-xs font-medium text-accent-foreground">
-          <GraduationCap className="size-3.5" />
-          Training required — $10
-        </div>
-      )}
-
-      <div className="mt-4 flex items-end justify-between border-t border-border pt-4">
-        <div>
+      <div className="mt-4 flex flex-col gap-4 border-t border-border pt-4 relative z-10">
+        <div className="flex items-end justify-between pointer-events-none">
           <p className="font-mono text-xl font-semibold text-foreground">
             {formatUsd(job.payAmountUsd)}
           </p>
+          <span className="text-xs font-medium text-primary opacity-0 transition-opacity group-hover:opacity-100 flex items-center gap-1">
+            View details <ArrowRight className="size-3" />
+          </span>
         </div>
-        <span className="text-xs font-medium text-primary opacity-0 transition-opacity group-hover:opacity-100">
-          View details →
-        </span>
+        
+        <div className="relative z-20">
+          <Button render={<Link href={`/training/${job.id}`} />} variant="secondary" size="sm" className="w-full gap-2">
+            <GraduationCap className="size-4" />
+            Training & Assessment
+          </Button>
+        </div>
       </div>
-    </Link>
+    </div>
   )
 }

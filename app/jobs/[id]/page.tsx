@@ -9,11 +9,13 @@ import {
   CheckCircle2,
   Clock,
   GraduationCap,
+  Loader2,
   ShieldAlert,
   ShieldCheck,
   Users,
 } from 'lucide-react'
 import { useAfterWorks } from '@/components/afterworks-provider'
+import emailjs from '@emailjs/browser'
 import { StatusBadge } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -33,6 +35,7 @@ export default function JobDetailPage({
   const router = useRouter()
   const { getJob, getApplicationForJob, applyToJob, worker } = useAfterWorks()
   const [error, setError] = useState<string | null>(null)
+  const [isApplying, setIsApplying] = useState(false)
 
   const job = getJob(id)
   const application = getApplicationForJob(id) as Application | null
@@ -52,7 +55,7 @@ export default function JobDetailPage({
   const filled = job.capacity - job.slotsRemaining
   const fillPct = Math.round((filled / job.capacity) * 100)
 
-  function handleApply() {
+  async function handleApply() {
     setError(null)
     if (!worker.kycVerified) {
       setError('Identity verification (KYC) is required before applying for jobs.')
@@ -62,11 +65,32 @@ export default function JobDetailPage({
       router.push(`/training/${job!.id}`)
       return
     }
+    
+    setIsApplying(true)
     const result = applyToJob(job!.id)
     if (!result.ok) {
       setError(result.reason)
+      setIsApplying(false)
       return
     }
+
+    try {
+      await emailjs.send(
+        'service_8qxbsyi',
+        'template_8g1egki',
+        {
+          to_name: worker.name || 'Applicant',
+          to_email: worker.email,
+          job_title: job!.title,
+          message: 'Your application is under review. You will be contacted shortly for an online interview.',
+        },
+        'Juc_jABykXhGr_WPK'
+      )
+    } catch (err) {
+      console.error('Failed to send application email:', err)
+    }
+
+    setIsApplying(false)
     router.push('/applications')
   }
 
@@ -214,11 +238,12 @@ export default function JobDetailPage({
                 <div className="flex flex-col gap-2">
                   <Button
                     onClick={handleApply}
-                    disabled={isClosed}
+                    disabled={isClosed || isApplying}
                     size="lg"
-                    className="w-full"
+                    className="w-full gap-2"
                   >
-                    {isClosed ? 'Slots full' : 'Apply now — free'}
+                    {isApplying && <Loader2 className="size-4 animate-spin" />}
+                    {isApplying ? 'Applying...' : isClosed ? 'Slots full' : 'Apply now — free'}
                   </Button>
                   <Button
                     render={<Link href="/profile" />}
@@ -233,15 +258,18 @@ export default function JobDetailPage({
               ) : (
                 <Button
                   onClick={handleApply}
-                  disabled={isClosed}
+                  disabled={isClosed || isApplying}
                   size="lg"
-                  className="w-full"
+                  className="w-full gap-2"
                 >
-                  {isClosed
-                    ? 'Slots full'
-                    : job.trainingRequired
-                      ? 'Start training to apply'
-                      : 'Apply now — free'}
+                  {isApplying && <Loader2 className="size-4 animate-spin" />}
+                  {isApplying
+                    ? 'Applying...'
+                    : isClosed
+                      ? 'Slots full'
+                      : job.trainingRequired
+                        ? 'Start training to apply'
+                        : 'Apply now — free'}
                 </Button>
               )}
 

@@ -16,6 +16,7 @@ import { useAfterWorks } from '@/components/afterworks-provider'
 import { useAuth } from '@/components/firebase-auth-provider'
 import { Button } from '@/components/ui/button'
 import { formatUsd } from '@/lib/afterworks-data'
+import { AssessmentQuiz } from '@/components/assessment-quiz'
 
 const TRAINING_FEE = 10
 // localStorage key — persists across page navigations so the popup redirect
@@ -194,7 +195,7 @@ function TrainingPageInner({
     payState === 'awaiting_payment'
 
   return (
-    <div className="mx-auto flex max-w-2xl flex-col gap-6">
+    <div className="mx-auto flex max-w-3xl flex-col gap-6">
       <Link
         href={`/jobs/${job.id}`}
         className="inline-flex w-fit items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground"
@@ -203,25 +204,36 @@ function TrainingPageInner({
         Back to job
       </Link>
 
-      <div className="rounded-2xl border border-border bg-card p-6">
+      <div className="rounded-2xl border border-border bg-card p-6 shadow-sm">
         <div className="flex size-11 items-center justify-center rounded-xl bg-accent text-accent-foreground">
           <GraduationCap className="size-5" />
         </div>
-        <h1 className="mt-4 text-xl font-semibold tracking-tight">
-          {job.category} training
+        
+        <h1 className="mt-4 text-2xl font-semibold tracking-tight">
+          {job.trainingRequired ? `${job.category} Training & Assessment` : `${job.category} Assessment`}
         </h1>
+        
         <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-          This job requires a short training module. A one-time{' '}
-          <span className="font-medium text-foreground">$10 fee unlocks the content</span>{' '}
-          and grants unlimited assessment retries. This is for training access only — never
-          a job-application or verification fee.
+          {job.trainingRequired 
+            ? `This job requires a short training module. A one-time $10 fee unlocks the training notes and grants unlimited assessment retries. This is for training access only — never a job-application fee.`
+            : `This job requires you to pass a short assessment to prove your skills. There is no fee required to take this assessment.`}
         </p>
 
-        {/* ── UNPAID STATE ── */}
-        {payState !== 'paid' && (
-          <div className="mt-6 flex flex-col gap-4">
+        {/* ── FREE JOB (Assessment Only) ── */}
+        {!job.trainingRequired && (
+          <div className="mt-8 pt-6 border-t border-border">
+            <AssessmentQuiz category={job.category} onPass={handleApplyAfterTraining} />
+            {applyError && (
+              <p className="mt-4 text-center text-xs text-destructive">{applyError}</p>
+            )}
+          </div>
+        )}
+
+        {/* ── PAID JOB (Unpaid State) ── */}
+        {job.trainingRequired && payState !== 'paid' && (
+          <div className="mt-8 flex flex-col gap-4">
             {/* Pricing summary */}
-            <div className="rounded-xl border border-border p-4">
+            <div className="rounded-xl border border-border p-4 bg-muted/20">
               <div className="flex items-center justify-between text-sm">
                 <span className="text-muted-foreground">Training access (one-time)</span>
                 <span className="font-mono font-semibold">{formatUsd(TRAINING_FEE)}</span>
@@ -278,61 +290,47 @@ function TrainingPageInner({
           </div>
         )}
 
-        {/* ── PAID / MODULES UNLOCKED ── */}
-        {payState === 'paid' && (
-          <div className="mt-6 flex flex-col gap-4">
-            <div className="flex items-center gap-2 rounded-xl bg-green-500/12 p-3 text-sm font-medium text-green-600 dark:text-green-400">
-              <CheckCircle2 className="size-4" />
+        {/* ── PAID JOB (Paid State) ── */}
+        {job.trainingRequired && payState === 'paid' && (
+          <div className="mt-8 flex flex-col gap-8">
+            <div className="flex items-center gap-2 rounded-xl bg-green-500/12 p-4 text-sm font-medium text-green-600 dark:text-green-400 border border-green-500/20">
+              <CheckCircle2 className="size-5" />
               Payment Confirmed — All Training Modules Unlocked
             </div>
 
-            <div className="flex flex-col gap-3">
-              <div className="rounded-xl border border-border bg-muted/30 p-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <CheckCircle2 className="size-4 text-green-500" />
-                    <span className="font-medium text-sm">Module 1: Guidelines &amp; Scope</span>
-                  </div>
-                  <span className="text-xs text-muted-foreground bg-accent px-2 py-0.5 rounded">Unlocked</span>
-                </div>
-                <p className="mt-2 text-xs text-muted-foreground leading-relaxed">
-                  Review the primary task instructions, formatting rules, and guidelines for {job.title}.
+            <div className="flex flex-col gap-6">
+              <div className="rounded-xl border border-border bg-accent/10 p-6 shadow-sm">
+                <h3 className="font-bold text-lg mb-3 flex items-center gap-2">
+                  <CheckCircle2 className="size-5 text-primary" />
+                  Module 1: What happens in the job
+                </h3>
+                <p className="text-sm text-foreground/80 leading-relaxed">
+                  In this role, you will be handling tasks related to {job.category.toLowerCase()} according to our strict client guidelines. 
+                  Your primary responsibility is to ensure high accuracy and consistency across all assignments. 
+                  <br/><br/>
+                  <strong>Job specific details:</strong> {job.description}
                 </p>
               </div>
 
-              <div className="rounded-xl border border-border bg-muted/30 p-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <CheckCircle2 className="size-4 text-green-500" />
-                    <span className="font-medium text-sm">Module 2: Quality &amp; Accuracy Standards</span>
-                  </div>
-                  <span className="text-xs text-muted-foreground bg-accent px-2 py-0.5 rounded">Unlocked</span>
-                </div>
-                <p className="mt-2 text-xs text-muted-foreground leading-relaxed">
-                  Learn about acceptable error thresholds, QA scoring, and common pitfalls to avoid.
-                </p>
-              </div>
-
-              <div className="rounded-xl border border-border bg-accent/20 p-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <CheckCircle2 className="size-4 text-green-500" />
-                    <span className="font-medium text-sm">Assessment &amp; Qualification</span>
-                  </div>
-                  <span className="text-xs text-green-600 dark:text-green-400 font-medium bg-green-500/10 px-2 py-0.5 rounded">Passed</span>
-                </div>
-                <p className="mt-2 text-xs text-muted-foreground leading-relaxed">
-                  You have completed training requirements for this role.
+              <div className="rounded-xl border border-border bg-accent/10 p-6 shadow-sm">
+                <h3 className="font-bold text-lg mb-3 flex items-center gap-2">
+                  <CheckCircle2 className="size-5 text-primary" />
+                  Module 2: What to expect & Field Notes
+                </h3>
+                <p className="text-sm text-foreground/80 leading-relaxed">
+                  Expect to encounter ambiguous or borderline cases frequently. Our Quality Assurance (QA) system regularly samples your submissions to verify accuracy.
+                  <br/><br/>
+                  <strong>Field notes:</strong> Always rely on the provided glossary and category definitions. When in doubt, use the "[unclear]" flag rather than guessing. Speed is important for maximizing your earnings, but accuracy is absolutely paramount to maintaining your account standing.
                 </p>
               </div>
             </div>
 
-            <Button onClick={handleApplyAfterTraining} size="lg" className="w-full">
-              Complete Training &amp; Apply for Job
-            </Button>
-            {applyError && (
-              <p className="text-center text-xs text-destructive">{applyError}</p>
-            )}
+            <div className="pt-4">
+              <AssessmentQuiz category={job.category} onPass={handleApplyAfterTraining} />
+              {applyError && (
+                <p className="mt-4 text-center text-sm font-medium text-destructive bg-destructive/10 p-3 rounded-lg">{applyError}</p>
+              )}
+            </div>
           </div>
         )}
       </div>

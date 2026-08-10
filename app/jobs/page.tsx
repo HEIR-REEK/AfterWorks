@@ -19,7 +19,7 @@ const categories: (JobCategory | 'All')[] = [
 ]
 
 export default function JobsPage() {
-  const { jobs, worker } = useAfterWorks()
+  const { jobs, worker, profileLoaded } = useAfterWorks()
   const [category, setCategory] = useState<(typeof categories)[number]>('All')
   const [hideFull, setHideFull] = useState(true)
 
@@ -41,7 +41,7 @@ export default function JobsPage() {
         </p>
       </header>
 
-      {(!worker.kycVerified || !worker.phone || !worker.country || !worker.school || !worker.course || !worker.jobExperience || !worker.career) && (
+      {profileLoaded && (!worker.kycVerified || !worker.phone || !worker.country || !worker.school || !worker.course || !worker.jobExperience || !worker.career) && (
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-xl border border-warning/50 bg-warning/10 p-4 shadow-sm">
           <div className="flex gap-3">
             <AlertCircle className="size-5 text-warning shrink-0 mt-0.5" />

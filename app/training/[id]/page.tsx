@@ -18,6 +18,7 @@ import { useAuth } from '@/components/firebase-auth-provider'
 import { Button } from '@/components/ui/button'
 import { formatUsd } from '@/lib/afterworks-data'
 import { AssessmentQuiz } from '@/components/assessment-quiz'
+import { TrainingModules } from '@/components/training-modules'
 
 const TRAINING_FEE = 10
 // localStorage key — persists across page navigations so the popup redirect
@@ -40,7 +41,7 @@ function TrainingPageInner({
   const { id } = params
   const router = useRouter()
   const searchParams = useSearchParams()
-  const { getJob, worker, applyToJob, refreshWallet } = useAfterWorks()
+  const { getJob, worker, applyToJob, refreshWallet, getApplicationForJob } = useAfterWorks()
   const { user } = useAuth()
 
   const userEmail = (worker?.email && worker.email.trim().length > 0)
@@ -211,6 +212,24 @@ function TrainingPageInner({
     )
   }
 
+  const application = getApplicationForJob(job.id)
+  if (application) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-4 py-24 text-center mx-auto max-w-md">
+        <div className="rounded-full bg-success/10 p-5 mb-2">
+          <CheckCircle2 className="size-10 text-success" />
+        </div>
+        <h2 className="text-2xl font-bold tracking-tight">You've already applied</h2>
+        <p className="text-sm text-muted-foreground leading-relaxed">
+          You have already completed the assessment and applied for this job. Your application is currently under review.
+        </p>
+        <Button render={<Link href="/applications" />} size="lg" className="mt-6 w-full sm:w-auto px-8">
+          View Applications
+        </Button>
+      </div>
+    )
+  }
+
   // ── Render helpers ───────────────────────────────────────────────────────
   const isLoading =
     payState === 'initializing' ||
@@ -322,30 +341,7 @@ function TrainingPageInner({
             </div>
 
             <div className="flex flex-col gap-6">
-              <div className="rounded-xl border border-border bg-accent/10 p-6 shadow-sm">
-                <h3 className="font-bold text-lg mb-3 flex items-center gap-2">
-                  <CheckCircle2 className="size-5 text-primary" />
-                  Module 1: What happens in the job
-                </h3>
-                <p className="text-sm text-foreground/80 leading-relaxed">
-                  In this role, you will be handling tasks related to {job.category.toLowerCase()} according to our strict client guidelines. 
-                  Your primary responsibility is to ensure high accuracy and consistency across all assignments. 
-                  <br/><br/>
-                  <strong>Job specific details:</strong> {job.description}
-                </p>
-              </div>
-
-              <div className="rounded-xl border border-border bg-accent/10 p-6 shadow-sm">
-                <h3 className="font-bold text-lg mb-3 flex items-center gap-2">
-                  <CheckCircle2 className="size-5 text-primary" />
-                  Module 2: What to expect & Field Notes
-                </h3>
-                <p className="text-sm text-foreground/80 leading-relaxed">
-                  Expect to encounter ambiguous or borderline cases frequently. Our Quality Assurance (QA) system regularly samples your submissions to verify accuracy.
-                  <br/><br/>
-                  <strong>Field notes:</strong> Always rely on the provided glossary and category definitions. When in doubt, use the "[unclear]" flag rather than guessing. Speed is important for maximizing your earnings, but accuracy is absolutely paramount to maintaining your account standing.
-                </p>
-              </div>
+              <TrainingModules job={job} />
             </div>
 
             <div className="pt-4">

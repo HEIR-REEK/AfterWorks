@@ -1,5 +1,8 @@
+'use client'
+
 import Link from 'next/link'
-import { Clock, GraduationCap, MapPin, Users, ArrowRight } from 'lucide-react'
+import { Clock, GraduationCap, MapPin, Users, ArrowRight, CheckCircle2 } from 'lucide-react'
+import { useAfterWorks } from '@/components/afterworks-provider'
 import {
   formatDuration,
   formatUsd,
@@ -18,6 +21,10 @@ function closingLabel(closesAt: string): { text: string; urgent: boolean } {
 }
 
 export function JobCard({ job }: { job: Job }) {
+  const { getApplicationForJob } = useAfterWorks()
+  const application = getApplicationForJob(job.id)
+  const hasApplied = !!application
+
   const closing = closingLabel(job.closesAt)
   const isClosed = job.status !== 'open' || job.slotsRemaining <= 0
   const almostFull = !isClosed && job.slotsRemaining <= 3
@@ -77,10 +84,17 @@ export function JobCard({ job }: { job: Job }) {
         </div>
         
         <div className="relative z-20">
-          <Button render={<Link href={`/training/${job.id}`} />} variant="secondary" size="sm" className="w-full gap-2">
-            <GraduationCap className="size-4" />
-            {job.trainingRequired ? 'Training & Assessment' : 'Take Assessment'}
-          </Button>
+          {hasApplied ? (
+            <div className="flex items-center justify-center gap-2 rounded-md bg-muted/50 px-3 py-1.5 text-sm font-medium text-muted-foreground w-full border border-border">
+              <CheckCircle2 className="size-4" />
+              Already applied
+            </div>
+          ) : (
+            <Button render={<Link href={`/training/${job.id}`} />} variant="secondary" size="sm" className="w-full gap-2">
+              <GraduationCap className="size-4" />
+              {job.trainingRequired ? 'Training & Assessment' : 'Take Assessment'}
+            </Button>
+          )}
         </div>
       </div>
     </div>

@@ -147,7 +147,7 @@ export function AssessmentQuiz({ category, onPass }: { category: JobCategory, on
     })
     
     setSubmitted(true)
-    if (score >= 12) { // 80% to pass (12 out of 15)
+    if (score >= 10) { // pass mark 10 out of 15
       setPassed(true)
     }
   }
@@ -158,7 +158,7 @@ export function AssessmentQuiz({ category, onPass }: { category: JobCategory, on
         <CheckCircle2 className="size-16 text-success" />
         <h3 className="text-2xl font-bold text-success-foreground">Assessment Passed!</h3>
         <p className="text-muted-foreground text-center max-w-md">
-          You have successfully demonstrated your skills for {category} tasks by scoring at least 80%.
+          You have successfully demonstrated your skills for {category} tasks by scoring at least 10/15.
         </p>
         <Button onClick={onPass} size="lg" className="mt-4 px-8">
           Proceed to Application
@@ -179,7 +179,7 @@ export function AssessmentQuiz({ category, onPass }: { category: JobCategory, on
           </div>
           <div className="flex items-center gap-2 bg-accent/50 px-3 py-1.5 rounded-lg text-sm font-medium">
             <AlertCircle className="size-4 text-primary" />
-            <span>Pass mark: 12/15 (80%)</span>
+            <span>Pass mark: 10/15</span>
           </div>
         </div>
 

@@ -61,37 +61,9 @@ export default function JobDetailPage({
       setError('Identity verification (KYC) is required before applying for jobs.')
       return
     }
-    if (job!.trainingRequired) {
-      router.push(`/training/${job!.id}`)
-      return
-    }
     
     setIsApplying(true)
-    const result = applyToJob(job!.id)
-    if (!result.ok) {
-      setError(result.reason)
-      setIsApplying(false)
-      return
-    }
-
-    try {
-      await emailjs.send(
-        'service_8qxbsyi',
-        'template_8g1egki',
-        {
-          to_name: worker.name || 'Applicant',
-          to_email: worker.email,
-          job_title: job!.title,
-          message: 'Your application is under review. You will be contacted shortly for an online interview.',
-        },
-        'Juc_jABykXhGr_WPK'
-      )
-    } catch (err) {
-      console.error('Failed to send application email:', err)
-    }
-
-    setIsApplying(false)
-    router.push('/applications')
+    router.push(`/training/${job!.id}`)
   }
 
   return (
@@ -243,7 +215,7 @@ export default function JobDetailPage({
                     className="w-full gap-2"
                   >
                     {isApplying && <Loader2 className="size-4 animate-spin" />}
-                    {isApplying ? 'Applying...' : isClosed ? 'Slots full' : 'Apply now — free'}
+                    {isApplying ? 'Redirecting...' : isClosed ? 'Slots full' : 'Take Assessment to Apply'}
                   </Button>
                   <Button
                     render={<Link href="/profile" />}
@@ -264,12 +236,12 @@ export default function JobDetailPage({
                 >
                   {isApplying && <Loader2 className="size-4 animate-spin" />}
                   {isApplying
-                    ? 'Applying...'
+                    ? 'Redirecting...'
                     : isClosed
                       ? 'Slots full'
                       : job.trainingRequired
                         ? 'Start training to apply'
-                        : 'Apply now — free'}
+                        : 'Take Assessment to Apply'}
                 </Button>
               )}
 

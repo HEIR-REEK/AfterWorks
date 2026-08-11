@@ -13,6 +13,7 @@ import {
   XCircle,
 } from 'lucide-react'
 import { useAfterWorks } from '@/components/afterworks-provider'
+import emailjs from '@emailjs/browser'
 import { useAuth } from '@/components/firebase-auth-provider'
 import { Button } from '@/components/ui/button'
 import { formatUsd } from '@/lib/afterworks-data'
@@ -73,6 +74,7 @@ function TrainingPageInner({
   const [payState, setPayState] = useState<PayState>('idle')
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [applyError, setApplyError] = useState<string | null>(null)
+  const [isApplying, setIsApplying] = useState(false)
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const job = getJob(id)
@@ -168,12 +170,33 @@ function TrainingPageInner({
   }
 
   // ── Apply after training ─────────────────────────────────────────────────
-  function handleApplyAfterTraining() {
+  async function handleApplyAfterTraining() {
+    if (isApplying) return
+    setIsApplying(true)
     const result = applyToJob(job!.id)
     if (!result.ok) {
       setApplyError(result.reason)
+      setIsApplying(false)
       return
     }
+
+    try {
+      await emailjs.send(
+        'service_8qxbsyi',
+        'template_8g1egki',
+        {
+          to_name: worker.name || 'Applicant',
+          to_email: worker.email,
+          job_title: job!.title,
+          message: 'Your application is under review. You will be contacted shortly for an online interview.',
+        },
+        'Juc_jABykXhGr_WPK'
+      )
+    } catch (err) {
+      console.error('Failed to send application email:', err)
+    }
+
+    setIsApplying(false)
     router.push('/applications')
   }
 

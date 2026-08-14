@@ -5,8 +5,7 @@ import { Clock, GraduationCap, MapPin, Users, ArrowRight, CheckCircle2 } from 'l
 import { useAfterWorks } from '@/components/afterworks-provider'
 import {
   formatDuration,
-  formatKes,
-  getTrainingFeeKes,
+  formatUsd,
   type Job,
 } from '@/lib/afterworks-data'
 import { StatusBadge } from '@/components/status-badge'
@@ -26,7 +25,6 @@ export function JobCard({ job }: { job: Job }) {
   const application = getApplicationForJob(job.id)
   const hasApplied = !!application
   const isPaid = isJobPaid(job.id)
-  const trainingFeeKes = getTrainingFeeKes()
 
   const closing = closingLabel(job.closesAt)
   const isClosed = job.status !== 'open' || job.slotsRemaining <= 0
@@ -74,14 +72,14 @@ export function JobCard({ job }: { job: Job }) {
           isPaid ? 'bg-success/15 text-success' : 'bg-primary/10 text-primary border border-primary/20'
         }`}>
           <GraduationCap className="size-3.5" />
-          {isPaid ? 'Training Unlocked ✓' : 'Paystack Payment Required — $10'}
+          {isPaid ? 'Training Unlocked ✓' : 'Payment Required — $10'}
         </div>
       )}
 
       <div className="mt-4 flex flex-col gap-4 border-t border-border pt-4 relative z-10">
         <div className="flex items-end justify-between pointer-events-none">
           <p className="font-mono text-xl font-semibold text-foreground">
-            {formatKes(job.payAmountUsd)}
+            {formatUsd(job.payAmountUsd)}
           </p>
           <span className="text-xs font-medium text-primary opacity-0 transition-opacity group-hover:opacity-100 flex items-center gap-1">
             View details <ArrowRight className="size-3" />
@@ -97,7 +95,7 @@ export function JobCard({ job }: { job: Job }) {
           ) : job.trainingRequired && !isPaid ? (
             <Button render={<Link href={`/training/${job.id}`} />} variant="default" size="sm" className="w-full gap-2">
               <GraduationCap className="size-4" />
-              Pay KES {trainingFeeKes.toLocaleString()} to Unlock Training
+              Pay 10$ to Unlock Training
             </Button>
           ) : (
             <Button render={<Link href={`/training/${job.id}`} />} variant="secondary" size="sm" className="w-full gap-2">

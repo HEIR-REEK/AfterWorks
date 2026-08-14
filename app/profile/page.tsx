@@ -31,7 +31,7 @@ import {
   AlertCircle,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { formatKes } from '@/lib/afterworks-data'
+import { formatUsd } from '@/lib/afterworks-data'
 import { KENYAN_BANKS } from '@/lib/banks'
 
 function ProfilePageContent() {
@@ -553,7 +553,7 @@ function ProfilePageContent() {
                   </div>
                   <div className="flex items-center justify-between gap-4 sm:justify-end">
                     <span className="text-xs font-semibold text-primary">
-                      {job ? `${formatKes(job.payAmountUsd)}` : ''}
+                      {job ? `${formatUsd(job.payAmountUsd)}` : ''}
                     </span>
                     <span className="inline-flex rounded-full bg-primary/10 px-2.5 py-0.5 text-xs font-medium text-primary capitalize">
                       {app.status.replace(/_/g, ' ')}

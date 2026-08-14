@@ -112,7 +112,7 @@ function PaystackCheckoutSection({
       })
     } catch (err: any) {
       setPayState('error')
-      setErrorMsg(err?.message || 'Could not launch Paystack checkout. Please check public key configuration.')
+      setErrorMsg(err?.message || 'Could not launch checkout. Please check payment configuration.')
     }
   }
 
@@ -123,10 +123,14 @@ function PaystackCheckoutSection({
         <div className="rounded-full bg-warning/15 p-3 mb-3 text-warning">
           <Lock className="size-6" />
         </div>
-        <h3 className="text-base font-semibold text-foreground">Training &amp; Assessment Locked for this Job Card</h3>
-        <p className="mt-1 text-xs text-muted-foreground max-w-md leading-relaxed">
-          Each job card requires its own payment detection. Complete payment via Paystack below to unlock training and assessment specifically for this job card.
-        </p>
+        <div className="flex flex-col gap-1">
+          <h2 className="text-xl font-bold tracking-tight text-foreground sm:text-2xl">
+            Training Access Checkout
+          </h2>
+          <p className="mt-1 text-xs text-muted-foreground max-w-md leading-relaxed">
+            Each job card requires its own payment detection. Complete payment below to unlock training and assessment specifically for this job card.
+          </p>
+        </div>
       </div>
 
       {/* Pricing summary */}
@@ -134,12 +138,12 @@ function PaystackCheckoutSection({
         <div className="flex items-center justify-between text-sm">
           <span className="font-medium text-foreground">Job Card Training Access Fee</span>
           <div className="flex flex-col items-end">
-            <span className="font-mono font-bold text-lg text-primary">KES {amountKes.toLocaleString()}</span>
+            <span className="font-mono font-bold text-lg text-primary">10$</span>
           </div>
         </div>
 
         <p className="text-xs text-muted-foreground leading-relaxed border-t border-border/50 pt-2.5">
-          Payment is charged in <strong>Kenyan Shillings (KES {amountKes.toLocaleString()})</strong> via Paystack. Supports <strong>M-Pesa / Mobile Money</strong>, <strong>Bank Transfers</strong>, and <strong>Cards</strong>.
+          Payment is charged in <strong>Kenyan Shillings (KES {amountKes.toLocaleString()})</strong>. Supports <strong>M-Pesa / Mobile Money</strong>, <strong>Bank Transfers</strong>, and <strong>Cards</strong>.
         </p>
       </div>
 
@@ -155,14 +159,14 @@ function PaystackCheckoutSection({
       {payState === 'awaiting_payment' && (
         <div className="flex items-center gap-2 rounded-xl border border-border bg-muted/50 p-3 text-sm text-muted-foreground">
           <Loader2 className="size-4 animate-spin text-primary" />
-          Waiting for payment detection from Paystack…
+          Waiting for payment detection…
         </div>
       )}
 
       {payState === 'verifying' && (
         <div className="flex items-center gap-2 rounded-xl border border-border bg-muted/50 p-3 text-sm text-muted-foreground">
           <Loader2 className="size-4 animate-spin text-primary" />
-          Verifying payment status with Paystack…
+          Verifying payment status…
         </div>
       )}
 
@@ -176,18 +180,18 @@ function PaystackCheckoutSection({
         {isLoading ? (
           <>
             <Loader2 className="size-5 animate-spin" />
-            {payState === 'initializing' ? 'Redirecting to Paystack…' : 'Detecting payment…'}
+            {payState === 'initializing' ? 'Redirecting to checkout…' : 'Detecting payment…'}
           </>
         ) : (
           <>
             <CreditCard className="size-5" />
-            Pay KES {amountKes.toLocaleString()} with Paystack
+            Pay 10$ for training and assessment
           </>
         )}
       </Button>
 
       <p className="text-center text-xs text-muted-foreground">
-        Paystack automatically supports M-Pesa, Mobile Money, Bank Transfer &amp; Card. Training unlocks instantly upon payment detection.
+        M-Pesa, Mobile Money, Bank Transfer &amp; Card are supported. Training unlocks instantly upon payment detection.
       </p>
     </div>
   )
@@ -371,7 +375,7 @@ function TrainingPageInner({
             isPaid ? 'bg-success/15 text-success font-semibold' : 'bg-primary/10 text-primary font-bold ring-1 ring-primary/30'
           }`}>
             <span className="flex size-5 items-center justify-center rounded-full bg-background text-[10px] shadow-xs">1</span>
-            <span>1. Paystack Payment</span>
+            <span>1. Complete Payment</span>
           </div>
 
           <div className={`flex flex-col items-center gap-1 text-center p-2 rounded-lg ${
@@ -394,7 +398,7 @@ function TrainingPageInner({
         
         <p className="mt-4 text-sm leading-relaxed text-muted-foreground">
           {job.trainingRequired 
-            ? `Follow the required sequence: Each job card with training & assessment requires its own independent payment via Paystack. Paying for one job card does not open other job cards. Once payment is detected for this job card, its training modules unlock, followed by the skill assessment quiz and application.`
+            ? `Follow the required sequence: Each job card with training & assessment requires its own independent payment. Paying for one job card does not open other job cards. Once payment is detected for this job card, its training modules unlock, followed by the skill assessment quiz and application.`
             : `This job card requires you to pass a short assessment to prove your skills. There is no training fee required for this category.`}
         </p>
 
@@ -433,7 +437,7 @@ function TrainingPageInner({
           <div className="mt-8 flex flex-col gap-8">
             <div className="flex items-center gap-2 rounded-xl bg-success/15 p-4 text-sm font-medium text-success border border-success/30">
               <CheckCircle2 className="size-5 shrink-0" />
-              <span>Payment Detected &amp; Confirmed via Paystack — Training &amp; Assessment Unlocked!</span>
+              <span>Payment Detected &amp; Confirmed — Training &amp; Assessment Unlocked!</span>
             </div>
 
             {/* Step 2: Training Modules */}

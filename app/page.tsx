@@ -15,6 +15,7 @@ import {
   APPLICATION_LABELS,
   APPLICATION_TONE,
   formatKes,
+  formatUsd,
 } from '@/lib/afterworks-data'
 
 export default function DashboardPage() {
@@ -28,13 +29,13 @@ export default function DashboardPage() {
   const stats = [
     {
       label: 'Available balance',
-      value: formatKes(wallet.availableUsd),
-      sub: 'M-Pesa ready',
+      value: formatUsd(wallet.availableUsd),
+      sub: `≈ ${formatKes(wallet.availableUsd)}`,
       icon: WalletIcon,
     },
     {
       label: 'Pending (clearing)',
-      value: formatKes(wallet.pendingUsd),
+      value: formatUsd(wallet.pendingUsd),
       sub: 'Clears in 48–72h',
       icon: CheckCircle2,
     },
@@ -125,7 +126,7 @@ export default function DashboardPage() {
                       {job.title}
                     </p>
                     <p className="mt-0.5 font-mono text-xs text-muted-foreground">
-                      {formatKes(job.payAmountUsd)}
+                      {formatUsd(job.payAmountUsd)}
                     </p>
                   </div>
                   <StatusBadge tone={APPLICATION_TONE[app.status]}>

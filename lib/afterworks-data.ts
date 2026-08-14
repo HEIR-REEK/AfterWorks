@@ -123,7 +123,14 @@ export function formatUsd(amount: number): string {
  * Configurable via NEXT_PUBLIC_PAYSTACK_TRAINING_AMOUNT or PAYSTACK_TRAINING_AMOUNT.
  * Default fallback: 10 ($10 USD).
  */
-export function getTrainingFeeUsd(): number {
+export function getTrainingFeeUsd(overrideAmount?: number | string | null): number {
+  if (overrideAmount !== undefined && overrideAmount !== null && overrideAmount !== '') {
+    const num = Number(overrideAmount)
+    if (!isNaN(num) && num > 0) {
+      return num >= 100 ? num / 100 : num
+    }
+  }
+
   const envVal =
     (typeof process !== 'undefined' &&
       (process.env.NEXT_PUBLIC_PAYSTACK_TRAINING_AMOUNT ||
@@ -139,8 +146,8 @@ export function getTrainingFeeUsd(): number {
   return 10
 }
 
-export function getTrainingFeeCents(): number {
-  return Math.round(getTrainingFeeUsd() * 100)
+export function getTrainingFeeCents(overrideAmount?: number | string | null): number {
+  return Math.round(getTrainingFeeUsd(overrideAmount) * 100)
 }
 
 export function formatKes(usd: number): string {

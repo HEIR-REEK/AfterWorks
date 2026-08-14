@@ -21,9 +21,7 @@ import { Button } from '@/components/ui/button'
 import { AssessmentQuiz } from '@/components/assessment-quiz'
 import { TrainingModules } from '@/components/training-modules'
 import {
-  formatUsd,
   formatKes,
-  getTrainingFeeUsd,
   getTrainingFeeKes,
   getPaystackAmountSubunits,
 } from '@/lib/afterworks-data'
@@ -61,7 +59,6 @@ function PaystackCheckoutSection({
   errorMsg: string | null
   setErrorMsg: (msg: string | null) => void
 }) {
-  const amountUsd = getTrainingFeeUsd()
   const amountKes = getTrainingFeeKes()
   const amountSubunits = getPaystackAmountSubunits()
 
@@ -137,8 +134,7 @@ function PaystackCheckoutSection({
         <div className="flex items-center justify-between text-sm">
           <span className="font-medium text-foreground">Job Card Training Access Fee</span>
           <div className="flex flex-col items-end">
-            <span className="font-mono font-bold text-lg text-primary">{formatUsd(amountUsd)}</span>
-            <span className="text-xs text-muted-foreground font-medium">({amountKes.toLocaleString()} KES)</span>
+            <span className="font-mono font-bold text-lg text-primary">KES {amountKes.toLocaleString()}</span>
           </div>
         </div>
 
@@ -185,7 +181,7 @@ function PaystackCheckoutSection({
         ) : (
           <>
             <CreditCard className="size-5" />
-            Pay {formatUsd(amountUsd)} (KES {amountKes.toLocaleString()}) with Paystack
+            Pay KES {amountKes.toLocaleString()} with Paystack
           </>
         )}
       </Button>

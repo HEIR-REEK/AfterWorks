@@ -14,7 +14,7 @@ import { Button } from '@/components/ui/button'
 import {
   APPLICATION_LABELS,
   APPLICATION_TONE,
-  formatUsd,
+  formatKes,
   type Application,
   type ApplicationStatus,
 } from '@/lib/afterworks-data'
@@ -62,7 +62,7 @@ function ApplicationRow({ app }: { app: Application }) {
             {job.title}
           </Link>
           <p className="mt-1 text-xs text-muted-foreground">
-            {job.category} · <span className="font-mono">{formatUsd(job.payAmountUsd)}</span>
+            {job.category} · <span className="font-mono">{formatKes(job.payAmountUsd)}</span>
           </p>
         </div>
         <StatusBadge tone={APPLICATION_TONE[app.status]}>

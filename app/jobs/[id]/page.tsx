@@ -22,8 +22,8 @@ import {
   APPLICATION_LABELS,
   APPLICATION_TONE,
   formatDuration,
-  formatUsd,
-  getTrainingFeeUsd,
+  formatKes,
+  getTrainingFeeKes,
   Application,
 } from '../../../lib/afterworks-data'
 
@@ -41,7 +41,7 @@ export default function JobDetailPage({
   const job = getJob(id)
   const application = getApplicationForJob(id) as Application | null
   const isPaid = job ? isJobPaid(job.id) : false
-  const trainingFeeUsd = getTrainingFeeUsd()
+  const trainingFeeKes = getTrainingFeeKes()
 
   if (!job) {
     return (
@@ -135,12 +135,12 @@ export default function JobDetailPage({
                 <li className="flex items-start gap-2.5 text-muted-foreground">
                   <GraduationCap className="mt-0.5 size-4 shrink-0 text-primary" />
                   <div>
-                    <span>Step 1: Pay {formatUsd(trainingFeeUsd)} via Paystack → Step 2: Access Training → Step 3: Skill Assessment → Step 4: Apply for Job Card</span>
+                    <span>Step 1: Pay KES {trainingFeeKes.toLocaleString()} via Paystack → Step 2: Access Training → Step 3: Skill Assessment → Step 4: Apply for Job Card</span>
                     <p className="mt-1 text-xs text-muted-foreground">
                       {isPaid ? (
                         <strong className="text-success font-medium">✓ Payment confirmed. Training &amp; assessment unlocked for this job card!</strong>
                       ) : (
-                        <span>Each job card requires its own separate {formatUsd(trainingFeeUsd)} Paystack payment. Completing payment unlocks training &amp; assessment for this specific job card only.</span>
+                        <span>Each job card requires its own separate KES {trainingFeeKes.toLocaleString()} Paystack payment. Completing payment unlocks training &amp; assessment for this specific job card only.</span>
                       )}
                     </p>
                   </div>
@@ -162,7 +162,7 @@ export default function JobDetailPage({
               Payment on completion
             </p>
             <p className="mt-1 font-mono text-3xl font-semibold">
-              {formatUsd(job.payAmountUsd)}
+              {formatKes(job.payAmountUsd)}
             </p>
 
             <dl className="mt-5 flex flex-col gap-3 text-sm">
@@ -199,7 +199,7 @@ export default function JobDetailPage({
                 <span>
                   {isPaid
                     ? 'Payment detected! Training modules & assessment are unlocked.'
-                    : `This job card requires payment detection via Paystack (${formatUsd(trainingFeeUsd)}) before training and assessment open.`}
+                    : `This job card requires payment detection via Paystack (KES ${trainingFeeKes.toLocaleString()}) before training and assessment open.`}
                 </span>
               </div>
             )}
@@ -257,7 +257,7 @@ export default function JobDetailPage({
                       : job.trainingRequired
                         ? isPaid
                           ? 'Continue Training & Assessment'
-                          : `Pay ${formatUsd(trainingFeeUsd)} via Paystack to Unlock Training`
+                          : `Pay KES ${trainingFeeKes.toLocaleString()} via Paystack to Unlock Training`
                         : 'Take Assessment to Apply'}
                 </Button>
               )}

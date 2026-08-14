@@ -253,3 +253,26 @@ export async function getKycRecord(uid: string): Promise<KycRecord | null> {
     return null
   }
 }
+
+/**
+ * Records a completed Paystack training payment in Firestore using Admin SDK.
+ */
+export async function recordPaidTrainingAdmin(
+  uid: string,
+  jobId: string,
+): Promise<void> {
+  try {
+    const app = getAdminApp()
+    const db = admin.firestore(app)
+    const userRef = db.collection('users').doc(uid)
+    await userRef.set(
+      {
+        paidTrainings: admin.firestore.FieldValue.arrayUnion(jobId),
+      },
+      { merge: true },
+    )
+    console.log(`[FirestoreAdmin] Recorded paid training for uid=${uid}, jobId=${jobId}`)
+  } catch (err) {
+    console.error('[FirestoreAdmin] recordPaidTrainingAdmin failed for uid:', uid, err)
+  }
+}

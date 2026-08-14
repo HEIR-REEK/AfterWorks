@@ -33,12 +33,13 @@ export default function JobDetailPage({
 }) {
   const { id } = params
   const router = useRouter()
-  const { getJob, getApplicationForJob, applyToJob, worker } = useAfterWorks()
+  const { getJob, getApplicationForJob, isJobPaid, worker } = useAfterWorks()
   const [error, setError] = useState<string | null>(null)
   const [isApplying, setIsApplying] = useState(false)
 
   const job = getJob(id)
   const application = getApplicationForJob(id) as Application | null
+  const isPaid = job ? isJobPaid(job.id) : false
 
   if (!job) {
     return (
@@ -113,30 +114,39 @@ export default function JobDetailPage({
           </div>
 
           <div className="rounded-2xl border border-border bg-card p-6">
-            <h2 className="text-sm font-semibold">Requirements</h2>
+            <h2 className="text-sm font-semibold">Requirements & Flow</h2>
             <ul className="mt-3 flex flex-col gap-3 text-sm">
               <li className="flex items-center gap-2.5 text-muted-foreground">
                 {worker.kycVerified ? (
                   <>
                     <ShieldCheck className="size-4 shrink-0 text-success" />
-                    <span>Verified account (KYC) — <strong className="text-success font-medium">Verified</strong></span>
+                    <span>Identity Verification (KYC) — <strong className="text-success font-medium">Verified</strong></span>
                   </>
                 ) : (
                   <>
                     <ShieldAlert className="size-4 shrink-0 text-warning" />
-                    <span>Identity verification (KYC) — <strong className="text-warning font-medium">Action required</strong></span>
+                    <span>Identity Verification (KYC) — <strong className="text-warning font-medium">Action required</strong></span>
                   </>
                 )}
               </li>
               {job.trainingRequired ? (
-                <li className="flex items-center gap-2.5 text-muted-foreground">
-                  <GraduationCap className="size-4 shrink-0 text-primary" />
-                  Category training required — one-time $10 for content access
+                <li className="flex items-start gap-2.5 text-muted-foreground">
+                  <GraduationCap className="mt-0.5 size-4 shrink-0 text-primary" />
+                  <div>
+                    <span>Step 1: Pay $10 via Paystack → Step 2: Access Training → Step 3: Skill Assessment → Step 4: Apply for Job Card</span>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {isPaid ? (
+                        <strong className="text-success font-medium">✓ Payment confirmed. Training &amp; assessment unlocked for this job card!</strong>
+                      ) : (
+                        <span>Each job card requires its own separate $10 Paystack payment. Completing payment unlocks training &amp; assessment for this specific job card only.</span>
+                      )}
+                    </p>
+                  </div>
                 </li>
               ) : (
                 <li className="flex items-center gap-2.5 text-muted-foreground">
                   <GraduationCap className="size-4 shrink-0 text-muted-foreground" />
-                  No training required for this job
+                  No training fee required for this job card category
                 </li>
               )}
             </ul>
@@ -180,11 +190,14 @@ export default function JobDetailPage({
             </div>
 
             {job.trainingRequired && (
-              <div className="mt-4 flex items-start gap-2 rounded-lg bg-accent p-3 text-xs text-accent-foreground">
+              <div className={`mt-4 flex items-start gap-2 rounded-lg p-3 text-xs ${
+                isPaid ? 'bg-success/15 text-success border border-success/30' : 'bg-accent text-accent-foreground'
+              }`}>
                 <GraduationCap className="mt-0.5 size-4 shrink-0" />
                 <span>
-                  This job needs training. Applying takes you to the $10 training first —
-                  paid from your wallet if you have a balance.
+                  {isPaid
+                    ? 'Payment detected! Training modules & assessment are unlocked.'
+                    : 'This job card requires payment detection via Paystack ($10) before training and assessment open.'}
                 </span>
               </div>
             )}
@@ -240,7 +253,9 @@ export default function JobDetailPage({
                     : isClosed
                       ? 'Slots full'
                       : job.trainingRequired
-                        ? 'Start training to apply'
+                        ? isPaid
+                          ? 'Continue Training & Assessment'
+                          : 'Pay $10 via Paystack to Unlock Training'
                         : 'Take Assessment to Apply'}
                 </Button>
               )}

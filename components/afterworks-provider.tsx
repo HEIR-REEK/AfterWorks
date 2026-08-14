@@ -30,9 +30,12 @@ type AfterWorksContextValue = {
   wallet: Wallet
   jobs: Job[]
   applications: Application[]
+  paidTrainings: string[]
   profileLoaded: boolean
   getJob: (id: string) => Job | undefined
   getApplicationForJob: (jobId: string) => Application | undefined
+  isJobPaid: (jobId: string) => boolean
+  markJobAsPaid: (jobId: string) => Promise<void>
   applyToJob: (jobId: string) => ApplyResult
   submitWork: (applicationId: string) => void
   // Refresh wallet data from Firestore
@@ -73,6 +76,19 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
   const [wallet, setWallet] = useState<Wallet>(BLANK_WALLET)
   const [profileLoaded, setProfileLoaded] = useState(false)
   const [jobs] = useState<Job[]>(() => seedJobs())
+  const [paidTrainings, setPaidTrainings] = useState<string[]>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('afterworks_paid_trainings_v1')
+      if (saved) {
+        try {
+          return JSON.parse(saved)
+        } catch {
+          // ignore
+        }
+      }
+    }
+    return []
+  })
   const [applications, setApplications] = useState<Application[]>(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('afterworks_applications_v2')
@@ -92,7 +108,12 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
     localStorage.setItem('afterworks_applications_v2', JSON.stringify(applications))
   }, [applications])
 
-  // ── Load real user profile + wallet from Firestore when user changes ───────
+  // ── Persist paidTrainings to localStorage ──────────────────────────────────
+  useEffect(() => {
+    localStorage.setItem('afterworks_paid_trainings_v1', JSON.stringify(paidTrainings))
+  }, [paidTrainings])
+
+  // ── Load real user profile + wallet + paidTrainings from Firestore ───────
   useEffect(() => {
     async function loadUserData() {
       if (!user) {
@@ -152,6 +173,9 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
               availableUsd: userDoc.wallet?.availableUsd ?? 0,
               payoutNumber: userDoc.wallet?.payoutNumber ?? userDoc.phone ?? localData.phone ?? '',
             })
+            if (userDoc.paidTrainings && Array.isArray(userDoc.paidTrainings)) {
+              setPaidTrainings((prev) => Array.from(new Set([...prev, ...userDoc.paidTrainings!])))
+            }
           } else {
             // No Firestore document yet — use Firebase Auth details + defaults
             setWorker({
@@ -210,6 +234,29 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
       return applications.find((a) => a.jobId === jobId)
     }
 
+    function isJobPaid(jobId: string): boolean {
+      if (paidTrainings.includes(jobId)) return true
+      if (typeof window !== 'undefined') {
+        if (localStorage.getItem(`aw_training_paid_${jobId}`) === 'true') return true
+      }
+      return false
+    }
+
+    async function markJobAsPaid(jobId: string): Promise<void> {
+      setPaidTrainings((prev) => Array.from(new Set([...prev, jobId])))
+      if (typeof window !== 'undefined') {
+        localStorage.setItem(`aw_training_paid_${jobId}`, 'true')
+      }
+      if (user?.uid) {
+        try {
+          const { recordPaidTrainingInFirestore } = await import('@/lib/firestore')
+          await recordPaidTrainingInFirestore(user.uid, jobId)
+        } catch (err) {
+          console.error('Failed to save paid training to Firestore:', err)
+        }
+      }
+    }
+
     function applyToJob(jobId: string): ApplyResult {
       if (!worker.kycVerified) {
         return {
@@ -250,8 +297,6 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
         ),
       )
     }
-
-
 
     // Refresh wallet from Firestore
     async function refreshWallet() {
@@ -308,15 +353,18 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
       wallet,
       jobs,
       applications,
+      paidTrainings,
       profileLoaded,
       getJob,
       getApplicationForJob,
+      isJobPaid,
+      markJobAsPaid,
       applyToJob,
       submitWork,
       refreshWallet,
       updateProfile,
     }
-  }, [worker, wallet, jobs, applications, profileLoaded, setWallet])
+  }, [worker, wallet, jobs, applications, paidTrainings, profileLoaded, user, setWallet])
 
   return (
     <AfterWorksContext.Provider value={value}>

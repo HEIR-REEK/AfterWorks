@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import crypto from 'crypto'
+import { recordPaidTrainingAdmin } from '@/lib/firestore-admin'
 
 export async function POST(req: NextRequest) {
   try {
@@ -37,7 +38,13 @@ export async function POST(req: NextRequest) {
     if (event.event === 'charge.success') {
       const data = event.data
       console.log('Paystack Webhook: Charge succeeded for ref', data.reference)
-      // Successfully processed charge event
+      
+      const jobId = data.metadata?.jobId
+      const userId = data.metadata?.userId || data.metadata?.uid
+
+      if (jobId && userId) {
+        await recordPaidTrainingAdmin(userId, jobId)
+      }
     }
 
     return NextResponse.json({ status: true, message: 'Webhook received' }, { status: 200 })
@@ -46,3 +53,4 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }
+

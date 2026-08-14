@@ -41,7 +41,7 @@ function TrainingPageInner({
   const { id } = params
   const router = useRouter()
   const searchParams = useSearchParams()
-  const { getJob, worker, applyToJob, refreshWallet, getApplicationForJob } = useAfterWorks()
+  const { getJob, worker, applyToJob, refreshWallet, getApplicationForJob, isJobPaid, markJobAsPaid } = useAfterWorks()
   const { user } = useAuth()
 
   const userEmail = (worker?.email && worker.email.trim().length > 0)
@@ -55,11 +55,18 @@ function TrainingPageInner({
     publicKey: process.env.NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY || '',
     currency: 'KES',
     metadata: {
+      userId: user?.uid || '',
+      jobId: id,
       custom_fields: [
         {
           display_name: 'Job ID',
           variable_name: 'jobId',
           value: id
+        },
+        {
+          display_name: 'User ID',
+          variable_name: 'userId',
+          value: user?.uid || ''
         },
         {
           display_name: 'Purpose',
@@ -79,7 +86,6 @@ function TrainingPageInner({
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const job = getJob(id)
-
   const paidStorageKey = `aw_training_paid_${id}`
 
   // ── Verify a reference and unlock training ──────────────────────────────
@@ -90,7 +96,7 @@ function TrainingPageInner({
       const data = await res.json()
       if (data.paid) {
         localStorage.removeItem(LS_REF_KEY)
-        localStorage.setItem(paidStorageKey, 'true')
+        await markJobAsPaid(id)
         setPayState('paid')
         // Refresh wallet after successful payment
         await refreshWallet()
@@ -106,12 +112,12 @@ function TrainingPageInner({
       setPayState('error')
       setErrorMsg('Could not verify payment. Please refresh the page.')
     }
-  }, [refreshWallet, paidStorageKey])
+  }, [id, markJobAsPaid, refreshWallet])
 
   // ── On mount: check if paid previously or returning from Paystack ────────
   useEffect(() => {
-    // Check if training has already been unlocked & paid
-    if (typeof window !== 'undefined' && localStorage.getItem(paidStorageKey) === 'true') {
+    // Check if training has already been unlocked & paid via context or localStorage
+    if (isJobPaid(id)) {
       setPayState('paid')
       return
     }
@@ -128,7 +134,7 @@ function TrainingPageInner({
       // Verify returning reference from Paystack
       verifyReference(urlRef)
     }
-  }, [searchParams, verifyReference, paidStorageKey])
+  }, [id, searchParams, isJobPaid, verifyReference])
 
   // ── Poll for payment while awaiting ─────────────────────────────────────
   useEffect(() => {
@@ -162,7 +168,11 @@ function TrainingPageInner({
 
     initializePayment({
       onSuccess: (reference: any) => {
-        verifyReference(reference.reference || reference.trxref || reference)
+        const refStr = reference.reference || reference.trxref || reference
+        if (typeof refStr === 'string') {
+          localStorage.setItem(LS_REF_KEY, refStr)
+        }
+        verifyReference(refStr)
       },
       onClose: () => {
         setPayState('idle')
@@ -219,9 +229,9 @@ function TrainingPageInner({
         <div className="rounded-full bg-success/10 p-5 mb-2">
           <CheckCircle2 className="size-10 text-success" />
         </div>
-        <h2 className="text-2xl font-bold tracking-tight">You've already applied</h2>
+        <h2 className="text-2xl font-bold tracking-tight">You&apos;ve already applied</h2>
         <p className="text-sm text-muted-foreground leading-relaxed">
-          You have already completed the assessment and applied for this job. Your application is currently under review.
+          You have already completed the training &amp; assessment and applied for this job card. Your application is currently under review.
         </p>
         <Button render={<Link href="/applications" />} size="lg" className="mt-6 w-full sm:w-auto px-8">
           View Applications
@@ -235,6 +245,8 @@ function TrainingPageInner({
     payState === 'initializing' ||
     payState === 'verifying' ||
     payState === 'awaiting_payment'
+
+  const isPaid = !job.trainingRequired || payState === 'paid' || isJobPaid(job.id)
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-6">
@@ -255,10 +267,37 @@ function TrainingPageInner({
           {job.trainingRequired ? `${job.category} Training & Assessment` : `${job.category} Assessment`}
         </h1>
         
-        <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+        {/* Step Progression Bar */}
+        <div className="mt-6 grid grid-cols-4 gap-2 rounded-xl bg-muted/40 p-3 text-xs font-medium border border-border">
+          <div className={`flex flex-col items-center gap-1 text-center p-2 rounded-lg ${
+            isPaid ? 'bg-success/15 text-success font-semibold' : 'bg-primary/10 text-primary font-bold ring-1 ring-primary/30'
+          }`}>
+            <span className="flex size-5 items-center justify-center rounded-full bg-background text-[10px] shadow-xs">1</span>
+            <span>1. Paystack Payment</span>
+          </div>
+
+          <div className={`flex flex-col items-center gap-1 text-center p-2 rounded-lg ${
+            isPaid ? 'bg-accent/80 text-foreground font-semibold' : 'text-muted-foreground opacity-60'
+          }`}>
+            <span className="flex size-5 items-center justify-center rounded-full bg-background text-[10px] shadow-xs">2</span>
+            <span>2. Get Trained</span>
+          </div>
+
+          <div className="flex flex-col items-center gap-1 text-center p-2 rounded-lg text-muted-foreground opacity-60">
+            <span className="flex size-5 items-center justify-center rounded-full bg-background text-[10px] shadow-xs">3</span>
+            <span>3. Assessment</span>
+          </div>
+
+          <div className="flex flex-col items-center gap-1 text-center p-2 rounded-lg text-muted-foreground opacity-60">
+            <span className="flex size-5 items-center justify-center rounded-full bg-background text-[10px] shadow-xs">4</span>
+            <span>4. Apply Job Card</span>
+          </div>
+        </div>
+        
+        <p className="mt-4 text-sm leading-relaxed text-muted-foreground">
           {job.trainingRequired 
-            ? `This job requires a short training module. A one-time $10 fee unlocks the training notes and grants unlimited assessment retries. This is for training access only — never a job-application fee.`
-            : `This job requires you to pass a short assessment to prove your skills. There is no fee required to take this assessment.`}
+            ? `Follow the required sequence: Each job card with training & assessment requires its own independent $10 payment via Paystack. Paying for one job card does not open other job cards. Once payment is detected for this job card, its training modules unlock, followed by the skill assessment quiz and application.`
+            : `This job card requires you to pass a short assessment to prove your skills. There is no training fee required for this category.`}
         </p>
 
         {/* ── FREE JOB (Assessment Only) ── */}
@@ -271,17 +310,28 @@ function TrainingPageInner({
           </div>
         )}
 
-        {/* ── PAID JOB (Unpaid State) ── */}
-        {job.trainingRequired && payState !== 'paid' && (
-          <div className="mt-8 flex flex-col gap-4">
-            {/* Pricing summary */}
-            <div className="rounded-xl border border-border p-4 bg-muted/20">
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">Training access (one-time)</span>
-                <span className="font-mono font-semibold">{formatUsd(TRAINING_FEE)}</span>
+        {/* ── PAID JOB (Unpaid State - Locked Gate) ── */}
+        {job.trainingRequired && !isPaid && (
+          <div className="mt-8 flex flex-col gap-6">
+            {/* Lock Notice */}
+            <div className="flex flex-col items-center justify-center rounded-xl border border-warning/40 bg-warning/5 p-6 text-center shadow-xs">
+              <div className="rounded-full bg-warning/15 p-3 mb-3 text-warning">
+                <Lock className="size-6" />
               </div>
-              <p className="mt-2 text-xs text-muted-foreground">
-                You will be redirected to Paystack&apos;s secure checkout page to complete your payment.
+              <h3 className="text-base font-semibold text-foreground">Training & Assessment Locked for this Job Card</h3>
+              <p className="mt-1 text-xs text-muted-foreground max-w-md leading-relaxed">
+                Each job card requires its own payment detection. Complete the $10 Paystack payment below to unlock training and assessment specifically for this job card.
+              </p>
+            </div>
+
+            {/* Pricing summary */}
+            <div className="rounded-xl border border-border p-5 bg-muted/20">
+              <div className="flex items-center justify-between text-sm">
+                <span className="font-medium text-foreground">Job Card Training Access Fee (Individual)</span>
+                <span className="font-mono font-bold text-base text-primary">{formatUsd(TRAINING_FEE)}</span>
+              </div>
+              <p className="mt-2 text-xs text-muted-foreground leading-relaxed">
+                Payment is integrated and tracked per job card via Paystack. Paying for this job card unlocks training &amp; assessment for this card only.
               </p>
             </div>
 
@@ -296,15 +346,15 @@ function TrainingPageInner({
             {/* Status banners */}
             {payState === 'awaiting_payment' && (
               <div className="flex items-center gap-2 rounded-xl border border-border bg-muted/50 p-3 text-sm text-muted-foreground">
-                <Loader2 className="size-4 animate-spin" />
-                Waiting for payment confirmation from Paystack…
+                <Loader2 className="size-4 animate-spin text-primary" />
+                Waiting for payment detection from Paystack…
               </div>
             )}
 
             {payState === 'verifying' && (
               <div className="flex items-center gap-2 rounded-xl border border-border bg-muted/50 p-3 text-sm text-muted-foreground">
-                <Loader2 className="size-4 animate-spin" />
-                Verifying your payment…
+                <Loader2 className="size-4 animate-spin text-primary" />
+                Verifying payment status with Paystack…
               </div>
             )}
 
@@ -312,13 +362,13 @@ function TrainingPageInner({
             <Button
               onClick={handlePay}
               size="lg"
-              className="w-full"
+              className="w-full font-semibold"
               disabled={isLoading}
             >
               {isLoading ? (
                 <>
                   <Loader2 className="mr-2 size-4 animate-spin" />
-                  {payState === 'initializing' ? 'Redirecting to Paystack…' : 'Processing…'}
+                  {payState === 'initializing' ? 'Redirecting to Paystack…' : 'Detecting payment…'}
                 </>
               ) : (
                 `Pay ${formatUsd(TRAINING_FEE)} with Paystack`
@@ -326,25 +376,42 @@ function TrainingPageInner({
             </Button>
 
             <p className="text-center text-xs text-muted-foreground">
-              Content unlocks once payment is confirmed. Closing this page won&apos;t lose your
-              access — your access is saved automatically.
+              Payment is tracked automatically. Training & assessment unlock instantly upon Paystack detection.
             </p>
           </div>
         )}
 
-        {/* ── PAID JOB (Paid State) ── */}
-        {job.trainingRequired && payState === 'paid' && (
+        {/* ── PAID JOB (Paid State - Unlocked Sequence: Training -> Assessment -> Apply) ── */}
+        {job.trainingRequired && isPaid && (
           <div className="mt-8 flex flex-col gap-8">
-            <div className="flex items-center gap-2 rounded-xl bg-green-500/12 p-4 text-sm font-medium text-green-600 dark:text-green-400 border border-green-500/20">
-              <CheckCircle2 className="size-5" />
-              Payment Confirmed — All Training Modules Unlocked
+            <div className="flex items-center gap-2 rounded-xl bg-success/15 p-4 text-sm font-medium text-success border border-success/30">
+              <CheckCircle2 className="size-5 shrink-0" />
+              <span>Payment Detected &amp; Confirmed via Paystack — Training &amp; Assessment Unlocked!</span>
             </div>
 
-            <div className="flex flex-col gap-6">
+            {/* Step 2: Training Modules */}
+            <div className="flex flex-col gap-4">
+              <div className="flex items-center justify-between border-b border-border pb-3">
+                <h2 className="text-lg font-bold flex items-center gap-2">
+                  <GraduationCap className="size-5 text-primary" />
+                  Step 2: Training Modules
+                </h2>
+                <span className="text-xs bg-success/15 text-success px-2.5 py-1 rounded-full font-medium">Unlocked</span>
+              </div>
               <TrainingModules job={job} />
             </div>
 
-            <div className="pt-4">
+            {/* Step 3: Assessment Quiz */}
+            <div className="pt-6 border-t border-border flex flex-col gap-4">
+              <div className="flex items-center justify-between border-b border-border pb-3">
+                <h2 className="text-lg font-bold flex items-center gap-2">
+                  <CheckCircle2 className="size-5 text-primary" />
+                  Step 3 &amp; 4: Skill Assessment &amp; Job Card Application
+                </h2>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                After studying the training modules above, complete the assessment quiz below to apply for this job card.
+              </p>
               <AssessmentQuiz category={job.category} onPass={handleApplyAfterTraining} />
               {applyError && (
                 <p className="mt-4 text-center text-sm font-medium text-destructive bg-destructive/10 p-3 rounded-lg">{applyError}</p>

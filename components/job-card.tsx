@@ -21,9 +21,10 @@ function closingLabel(closesAt: string): { text: string; urgent: boolean } {
 }
 
 export function JobCard({ job }: { job: Job }) {
-  const { getApplicationForJob } = useAfterWorks()
+  const { getApplicationForJob, isJobPaid } = useAfterWorks()
   const application = getApplicationForJob(job.id)
   const hasApplied = !!application
+  const isPaid = isJobPaid(job.id)
 
   const closing = closingLabel(job.closesAt)
   const isClosed = job.status !== 'open' || job.slotsRemaining <= 0
@@ -67,9 +68,11 @@ export function JobCard({ job }: { job: Job }) {
       </div>
 
       {job.trainingRequired && (
-        <div className="mt-3 inline-flex w-fit items-center gap-1.5 rounded-md bg-accent px-2 py-1 text-xs font-medium text-accent-foreground relative z-10 pointer-events-none">
+        <div className={`mt-3 inline-flex w-fit items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium relative z-10 pointer-events-none ${
+          isPaid ? 'bg-success/15 text-success' : 'bg-primary/10 text-primary border border-primary/20'
+        }`}>
           <GraduationCap className="size-3.5" />
-          Training required — $10
+          {isPaid ? 'Training Unlocked ✓' : 'Paystack Payment Required — $10'}
         </div>
       )}
 
@@ -89,10 +92,15 @@ export function JobCard({ job }: { job: Job }) {
               <CheckCircle2 className="size-4" />
               Already applied
             </div>
+          ) : job.trainingRequired && !isPaid ? (
+            <Button render={<Link href={`/training/${job.id}`} />} variant="default" size="sm" className="w-full gap-2">
+              <GraduationCap className="size-4" />
+              Pay $10 to Unlock Training
+            </Button>
           ) : (
             <Button render={<Link href={`/training/${job.id}`} />} variant="secondary" size="sm" className="w-full gap-2">
               <GraduationCap className="size-4" />
-              {job.trainingRequired ? 'Training & Assessment' : 'Take Assessment'}
+              {job.trainingRequired ? 'Continue Training & Assessment' : 'Take Assessment'}
             </Button>
           )}
         </div>

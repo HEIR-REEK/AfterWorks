@@ -1,6 +1,9 @@
 export const dynamic = 'force-dynamic'
 
 import { NextRequest, NextResponse } from 'next/server'
+import { recordPaidTrainingAdmin } from '@/lib/firestore-admin'
+
+
 
 export async function GET(
   _req: NextRequest,
@@ -56,6 +59,12 @@ export async function GET(
 
     const tx = data.data
     const paid = tx.status === 'success'
+
+    if (paid && tx.metadata?.jobId && (tx.metadata?.userId || tx.metadata?.uid)) {
+      const jobId = tx.metadata.jobId
+      const userId = tx.metadata.userId || tx.metadata.uid
+      await recordPaidTrainingAdmin(userId, jobId)
+    }
 
     return NextResponse.json({
       paid,

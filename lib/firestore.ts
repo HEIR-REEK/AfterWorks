@@ -85,6 +85,7 @@ export type WalletData = {
 
 export type UserDocument = UserProfile & {
   wallet: WalletData
+  paidTrainings?: string[]
 }
 
 /**
@@ -264,3 +265,30 @@ export async function updateUserProfile(
     console.error('[Firestore] updateUserProfile failed for uid:', uid, err)
   }
 }
+
+/**
+ * Records a completed Paystack training payment for a user in Firestore.
+ */
+export async function recordPaidTrainingInFirestore(
+  uid: string,
+  jobId: string,
+): Promise<void> {
+  const db = getDB()
+  if (!db) return
+
+  try {
+    const { arrayUnion } = await import('firebase/firestore')
+    const userRef = doc(db, 'users', uid)
+    await setDoc(
+      userRef,
+      {
+        paidTrainings: arrayUnion(jobId),
+      },
+      { merge: true },
+    )
+    console.log(`[Firestore] Recorded paid training for uid=${uid}, jobId=${jobId}`)
+  } catch (err) {
+    console.error('[Firestore] recordPaidTrainingInFirestore failed:', err)
+  }
+}
+

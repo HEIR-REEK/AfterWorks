@@ -1,7 +1,7 @@
 export const dynamic = 'force-dynamic'
 
 import { NextRequest, NextResponse } from 'next/server'
-import { getTrainingFeeCents } from '@/lib/afterworks-data'
+import { getPaystackAmountSubunits } from '@/lib/afterworks-data'
 
 
 
@@ -25,10 +25,10 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    // Convert amount in USD or use configured getTrainingFeeCents()
+    // Convert amount in KES subunits (cents) for Paystack Mobile Money/Card/Transfer in KES
     const amountInSmallestUnit = amount && Number(amount) > 0
       ? Math.round(Number(amount) * 100)
-      : getTrainingFeeCents()
+      : getPaystackAmountSubunits()
 
     const callbackUrl = `${req.nextUrl.origin}/training/${metadata?.jobId ?? ''}`
 
@@ -41,7 +41,7 @@ export async function POST(req: NextRequest) {
       body: JSON.stringify({
         email: cleanEmail,
         amount: amountInSmallestUnit,
-        currency: 'USD',
+        currency: 'KES',
         metadata: metadata ?? {},
         callback_url: callbackUrl,
       }),

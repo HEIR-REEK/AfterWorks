@@ -118,6 +118,18 @@ export function formatUsd(amount: number): string {
   }).format(amount)
 }
 
+export function getExchangeRateUsdToKes(): number {
+  const envRate =
+    (typeof process !== 'undefined' &&
+      (process.env.NEXT_PUBLIC_USD_TO_KES_RATE || process.env.USD_TO_KES_RATE)) ||
+    ''
+  if (envRate) {
+    const num = Number(envRate)
+    if (!isNaN(num) && num > 0) return num
+  }
+  return USD_TO_KES
+}
+
 /**
  * Dynamic helper to get configured Paystack training fee in USD dollars.
  * Configurable via NEXT_PUBLIC_PAYSTACK_TRAINING_AMOUNT or PAYSTACK_TRAINING_AMOUNT.
@@ -144,6 +156,31 @@ export function getTrainingFeeUsd(overrideAmount?: number | string | null): numb
     }
   }
   return 10
+}
+
+/**
+ * Returns the exact KES amount to be charged by Paystack for training.
+ * Configurable directly via PAYSTACK_AMOUNT_KES or NEXT_PUBLIC_PAYSTACK_AMOUNT_KES.
+ * Defaults to: (Training Fee USD) * (USD to KES Exchange Rate).
+ */
+export function getTrainingFeeKes(overrideUsd?: number): number {
+  const envKes =
+    (typeof process !== 'undefined' &&
+      (process.env.NEXT_PUBLIC_PAYSTACK_AMOUNT_KES || process.env.PAYSTACK_AMOUNT_KES)) ||
+    ''
+  if (envKes && !overrideUsd) {
+    const num = Number(envKes)
+    if (!isNaN(num) && num > 0) return num
+  }
+  const usd = getTrainingFeeUsd(overrideUsd)
+  return Math.round(usd * getExchangeRateUsdToKes())
+}
+
+/**
+ * Returns the amount in Paystack's required subunit for KES (cents, i.e. KES * 100).
+ */
+export function getPaystackAmountSubunits(overrideUsd?: number): number {
+  return getTrainingFeeKes(overrideUsd) * 100
 }
 
 export function getTrainingFeeCents(overrideAmount?: number | string | null): number {

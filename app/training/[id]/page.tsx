@@ -20,7 +20,13 @@ import { useAuth } from '@/components/firebase-auth-provider'
 import { Button } from '@/components/ui/button'
 import { AssessmentQuiz } from '@/components/assessment-quiz'
 import { TrainingModules } from '@/components/training-modules'
-import { formatUsd, getTrainingFeeUsd } from '@/lib/afterworks-data'
+import {
+  formatUsd,
+  formatKes,
+  getTrainingFeeUsd,
+  getTrainingFeeKes,
+  getPaystackAmountSubunits,
+} from '@/lib/afterworks-data'
 
 // localStorage key — persists across page navigations
 const LS_REF_KEY = 'aw_training_paystack_ref'
@@ -40,8 +46,6 @@ function PaystackCheckoutSection({
   jobId,
   userEmail,
   userId,
-  amountUsd,
-  setAmountUsd,
   onVerifySuccess,
   payState,
   setPayState,
@@ -51,21 +55,20 @@ function PaystackCheckoutSection({
   jobId: string
   userEmail: string
   userId: string
-  amountUsd: number
-  setAmountUsd: (val: number) => void
   onVerifySuccess: (ref: string) => Promise<void>
   payState: PayState
   setPayState: (st: PayState) => void
   errorMsg: string | null
   setErrorMsg: (msg: string | null) => void
 }) {
-  const [showCustomAmount, setShowCustomAmount] = useState(false)
-  const amountCents = Math.round(amountUsd * 100)
+  const amountUsd = getTrainingFeeUsd()
+  const amountKes = getTrainingFeeKes()
+  const amountSubunits = getPaystackAmountSubunits()
 
   const paystackConfig = {
     reference: `aw_training_${new Date().getTime()}`,
     email: userEmail || 'user@afterworks.io',
-    amount: amountCents,
+    amount: amountSubunits,
     publicKey: process.env.NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY || '',
     currency: 'KES',
     metadata: {
@@ -129,63 +132,19 @@ function PaystackCheckoutSection({
         </p>
       </div>
 
-      {/* Pricing summary & test amount selector */}
-      <div className="rounded-xl border border-border p-5 bg-muted/20 flex flex-col gap-4">
+      {/* Pricing summary */}
+      <div className="rounded-xl border border-border p-5 bg-muted/20 flex flex-col gap-3">
         <div className="flex items-center justify-between text-sm">
           <span className="font-medium text-foreground">Job Card Training Access Fee</span>
-          <span className="font-mono font-bold text-lg text-primary">{formatUsd(amountUsd)}</span>
+          <div className="flex flex-col items-end">
+            <span className="font-mono font-bold text-lg text-primary">{formatUsd(amountUsd)}</span>
+            <span className="text-xs text-muted-foreground font-medium">({amountKes.toLocaleString()} KES)</span>
+          </div>
         </div>
 
-        {/* Dynamic Amount / Test Amount Selector */}
-        <div className="pt-3 border-t border-border/60 flex flex-col gap-2">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
-              <SlidersHorizontal className="size-3.5 text-primary" />
-              Test Mode: Select payment amount:
-            </span>
-            <button
-              type="button"
-              onClick={() => setShowCustomAmount(!showCustomAmount)}
-              className="text-[11px] text-primary hover:underline font-medium"
-            >
-              {showCustomAmount ? 'Hide presets' : 'Custom amount'}
-            </button>
-          </div>
-
-          <div className="flex flex-wrap gap-2 items-center">
-            {[0.5, 1, 2, 5, 10].map((preset) => (
-              <button
-                key={preset}
-                type="button"
-                onClick={() => setAmountUsd(preset)}
-                className={`px-3 py-1 text-xs font-medium rounded-lg border transition-all ${
-                  amountUsd === preset
-                    ? 'border-primary bg-primary text-primary-foreground font-bold shadow-xs'
-                    : 'border-border bg-card text-muted-foreground hover:border-primary/40'
-                }`}
-              >
-                ${preset < 1 ? preset.toFixed(2) : preset}
-              </button>
-            ))}
-          </div>
-
-          {showCustomAmount && (
-            <div className="mt-2 flex items-center gap-2">
-              <span className="text-xs text-muted-foreground font-medium">Enter Test Fee ($ USD):</span>
-              <input
-                type="number"
-                step="0.1"
-                min="0.1"
-                value={amountUsd}
-                onChange={(e) => setAmountUsd(Math.max(0.1, Number(e.target.value) || 0.1))}
-                className="w-24 px-2.5 py-1 text-xs rounded-md border border-border bg-card font-mono font-bold"
-              />
-            </div>
-          )}
-          <p className="text-[11px] text-muted-foreground">
-            You can pay as little as <strong>$0.50 or $1.00</strong> to test Paystack integration.
-          </p>
-        </div>
+        <p className="text-xs text-muted-foreground leading-relaxed border-t border-border/50 pt-2.5">
+          Payment is charged in <strong>Kenyan Shillings (KES {amountKes.toLocaleString()})</strong> via Paystack. Supports <strong>M-Pesa / Mobile Money</strong>, <strong>Bank Transfers</strong>, and <strong>Cards</strong>.
+        </p>
       </div>
 
       {/* Error banner */}
@@ -215,24 +174,24 @@ function PaystackCheckoutSection({
       <Button
         onClick={handlePay}
         size="lg"
-        className="w-full font-semibold gap-2"
+        className="w-full font-semibold gap-2 py-6 text-base"
         disabled={isLoading}
       >
         {isLoading ? (
           <>
-            <Loader2 className="size-4 animate-spin" />
+            <Loader2 className="size-5 animate-spin" />
             {payState === 'initializing' ? 'Redirecting to Paystack…' : 'Detecting payment…'}
           </>
         ) : (
           <>
-            <CreditCard className="size-4" />
-            Pay {formatUsd(amountUsd)} with Paystack
+            <CreditCard className="size-5" />
+            Pay {formatUsd(amountUsd)} (KES {amountKes.toLocaleString()}) with Paystack
           </>
         )}
       </Button>
 
       <p className="text-center text-xs text-muted-foreground">
-        Payment is tracked automatically. Training &amp; assessment unlock instantly upon Paystack detection.
+        Paystack automatically supports M-Pesa, Mobile Money, Bank Transfer &amp; Card. Training unlocks instantly upon payment detection.
       </p>
     </div>
   )
@@ -250,18 +209,10 @@ function TrainingPageInner({
   const { user } = useAuth()
 
   const [isMounted, setIsMounted] = useState(false)
-  const urlAmount = searchParams.get('amount') || searchParams.get('fee')
-  const [amountUsd, setAmountUsd] = useState(() => getTrainingFeeUsd(urlAmount))
 
   useEffect(() => {
     setIsMounted(true)
   }, [])
-
-  useEffect(() => {
-    if (urlAmount) {
-      setAmountUsd(getTrainingFeeUsd(urlAmount))
-    }
-  }, [urlAmount])
 
   const userEmail = (worker?.email && worker.email.trim().length > 0)
     ? worker.email
@@ -468,8 +419,6 @@ function TrainingPageInner({
               jobId={job.id}
               userEmail={userEmail}
               userId={user?.uid || ''}
-              amountUsd={amountUsd}
-              setAmountUsd={setAmountUsd}
               onVerifySuccess={verifyReference}
               payState={payState}
               setPayState={setPayState}

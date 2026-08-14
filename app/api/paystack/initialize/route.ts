@@ -1,15 +1,18 @@
 export const dynamic = 'force-dynamic'
 
 import { NextRequest, NextResponse } from 'next/server'
+import { getTrainingFeeCents } from '@/lib/afterworks-data'
+
+
 
 export async function POST(req: NextRequest) {
   try {
     const { email, amount, metadata } = await req.json()
     const cleanEmail = email ? String(email).trim() : ''
 
-    if (!cleanEmail || !amount) {
+    if (!cleanEmail) {
       return NextResponse.json(
-        { error: 'A valid email and payment amount are required.' },
+        { error: 'A valid email is required.' },
         { status: 400 },
       )
     }
@@ -22,11 +25,10 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    // Convert amount in USD (e.g. $10) to smallest subunit (1000 cents)
-    const amountInSmallestUnit =
-      process.env.PAYSTACK_TRAINING_AMOUNT && Number(process.env.PAYSTACK_TRAINING_AMOUNT) >= 1000
-        ? Number(process.env.PAYSTACK_TRAINING_AMOUNT)
-        : Math.round(Number(amount) * 100)
+    // Convert amount in USD or use configured getTrainingFeeCents()
+    const amountInSmallestUnit = amount && Number(amount) > 0
+      ? Math.round(Number(amount) * 100)
+      : getTrainingFeeCents()
 
     const callbackUrl = `${req.nextUrl.origin}/training/${metadata?.jobId ?? ''}`
 

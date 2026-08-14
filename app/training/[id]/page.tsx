@@ -16,11 +16,10 @@ import { useAfterWorks } from '@/components/afterworks-provider'
 import emailjs from '@emailjs/browser'
 import { useAuth } from '@/components/firebase-auth-provider'
 import { Button } from '@/components/ui/button'
-import { formatUsd } from '@/lib/afterworks-data'
 import { AssessmentQuiz } from '@/components/assessment-quiz'
 import { TrainingModules } from '@/components/training-modules'
+import { formatUsd, getTrainingFeeUsd, getTrainingFeeCents } from '@/lib/afterworks-data'
 
-const TRAINING_FEE = 10
 // localStorage key — persists across page navigations so the popup redirect
 // can carry the reference back to this page.
 const LS_REF_KEY = 'aw_training_paystack_ref'
@@ -44,6 +43,8 @@ function TrainingPageInner({
   const { getJob, worker, applyToJob, refreshWallet, getApplicationForJob, isJobPaid, markJobAsPaid } = useAfterWorks()
   const { user } = useAuth()
 
+  const TRAINING_FEE = getTrainingFeeUsd()
+
   const userEmail = (worker?.email && worker.email.trim().length > 0)
     ? worker.email
     : (user?.email || '')
@@ -51,7 +52,7 @@ function TrainingPageInner({
   const paystackConfig = {
     reference: `aw_training_${new Date().getTime()}`,
     email: userEmail,
-    amount: TRAINING_FEE * 100,
+    amount: getTrainingFeeCents(),
     publicKey: process.env.NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY || '',
     currency: 'KES',
     metadata: {

@@ -277,7 +277,7 @@ docker run -p 4000:4000 -e DATABASE_URL=... afterworks:latest
 **Paystack Webhook URL:**
 
 1. Go to Paystack Dashboard → Settings → API Keys & Webhooks
-2. Set **Webhook URL:** `https://your-domain.com/training/webhook`
+2. Set **Webhook URL:** `https://afterworks.onrender.com/api/paystack/webhook`
 3. Make sure `x-paystack-signature` header is enabled (default)
 4. Test webhook delivery (Paystack dashboard has test button)
 

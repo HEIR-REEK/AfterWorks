@@ -118,6 +118,31 @@ export function formatUsd(amount: number): string {
   }).format(amount)
 }
 
+/**
+ * Dynamic helper to get configured Paystack training fee in USD dollars.
+ * Configurable via NEXT_PUBLIC_PAYSTACK_TRAINING_AMOUNT or PAYSTACK_TRAINING_AMOUNT.
+ * Default fallback: 10 ($10 USD).
+ */
+export function getTrainingFeeUsd(): number {
+  const envVal =
+    (typeof process !== 'undefined' &&
+      (process.env.NEXT_PUBLIC_PAYSTACK_TRAINING_AMOUNT ||
+        process.env.PAYSTACK_TRAINING_AMOUNT)) ||
+    ''
+
+  if (envVal) {
+    const num = Number(envVal)
+    if (!isNaN(num) && num > 0) {
+      return num >= 100 ? num / 100 : num
+    }
+  }
+  return 10
+}
+
+export function getTrainingFeeCents(): number {
+  return Math.round(getTrainingFeeUsd() * 100)
+}
+
 export function formatKes(usd: number): string {
   return new Intl.NumberFormat('en-KE', {
     style: 'currency',

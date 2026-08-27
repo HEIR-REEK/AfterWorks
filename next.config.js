@@ -1,10 +1,35 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   env: {
-    // Expose only the public key to the browser bundle.
-    // The secret key (PAYSTACK_SECRET_KEY) must NEVER be prefixed NEXT_PUBLIC_
-    // and is only used in server-side API routes.
-    NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY: process.env.PAYSTACK_PUBLIC_KEY,
+    // Expose keys needed by the client-side Firebase Auth and Paystack SDKs
+    NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY:
+      process.env.PAYSTACK_PUBLIC_KEY || process.env.NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY || '',
+    FIREBASE_WEB_API_KEY:
+      process.env.FIREBASE_WEB_API_KEY ||
+      process.env.NEXT_PUBLIC_FIREBASE_API_KEY ||
+      process.env.FIREBASE_API_KEY ||
+      process.env.NEXT_PUBLIC_FIREBASE_WEB_API_KEY ||
+      '',
+    FIREBASE_AUTH_DOMAIN:
+      process.env.FIREBASE_AUTH_DOMAIN ||
+      process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN ||
+      '',
+    FIREBASE_PROJECT_ID:
+      process.env.FIREBASE_PROJECT_ID ||
+      process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ||
+      '',
+    FIREBASE_APP_ID:
+      process.env.FIREBASE_APP_ID ||
+      process.env.NEXT_PUBLIC_FIREBASE_APP_ID ||
+      '',
+    FIREBASE_STORAGE_BUCKET:
+      process.env.FIREBASE_STORAGE_BUCKET ||
+      process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET ||
+      '',
+    FIREBASE_MESSAGING_SENDER_ID:
+      process.env.FIREBASE_MESSAGING_SENDER_ID ||
+      process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID ||
+      '',
   },
   experimental: {
     serverComponentsExternalPackages: ['firebase-admin'],

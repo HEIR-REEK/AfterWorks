@@ -47,10 +47,9 @@ type AfterWorksContextValue = {
 const AfterWorksContext = createContext<AfterWorksContextValue | null>(null)
 
 /** Default blank worker — used as loading placeholder until real data arrives. */
-/** Default blank worker — used as loading placeholder until real data arrives. */
 const BLANK_WORKER: WorkerProfile = {
-  name: 'Amara Okoro',
-  email: 'amara.okoro@afterworks.io',
+  name: 'Worker',
+  email: '',
   location: '',
   accountState: 'active',
   kycVerified: false,
@@ -61,7 +60,16 @@ const BLANK_WORKER: WorkerProfile = {
   bio: '',
   skills: [],
   languages: [],
-  preferredPayoutMethod: '',
+  preferredPayoutMethod: 'M-Pesa',
+  country: '',
+  zipCode: '',
+  bankName: '',
+  bankBranch: '',
+  bankAccountNumber: '',
+  school: '',
+  course: '',
+  jobExperience: '',
+  career: '',
 }
 
 const BLANK_WALLET: Wallet = {
@@ -72,7 +80,16 @@ const BLANK_WALLET: Wallet = {
 
 export function AfterWorksProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth()
-  const [worker, setWorker] = useState<WorkerProfile>(() => seedWorker())
+  const [worker, setWorker] = useState<WorkerProfile>(() => {
+    if (user) {
+      return {
+        ...BLANK_WORKER,
+        name: user.displayName || user.email?.split('@')[0] || 'Worker',
+        email: user.email || '',
+      }
+    }
+    return BLANK_WORKER
+  })
   const [wallet, setWallet] = useState<Wallet>(BLANK_WALLET)
   const [profileLoaded, setProfileLoaded] = useState(false)
   const [jobs] = useState<Job[]>(() => seedJobs())
@@ -117,38 +134,20 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     async function loadUserData() {
       if (!user) {
-        // Look for local demo override
-        const localSaved = typeof window !== 'undefined' ? localStorage.getItem('afterworks_profile_demo') : null
-        if (localSaved) {
-          try {
-            setWorker({ ...seedWorker(), ...JSON.parse(localSaved) })
-          } catch {
-            setWorker(seedWorker())
-          }
-        } else {
-          setWorker(seedWorker())
-        }
-        setWallet({
-          pendingUsd: 0,
-          availableUsd: 0,
-          payoutNumber: '',
-        })
+        setWorker(BLANK_WORKER)
+        setWallet(BLANK_WALLET)
         setProfileLoaded(true)
         return
       }
 
       try {
         const unsubscribe = subscribeToUserDocument(user.uid, (userDoc) => {
-          // Local storage cached edits fallback
-          const localSaved = typeof window !== 'undefined' ? localStorage.getItem(`afterworks_profile_${user.uid}`) : null
-          const localData = localSaved ? JSON.parse(localSaved) : {}
-
           if (userDoc) {
             setWorker({
               name: userDoc.name || user.displayName || user.email?.split('@')[0] || 'Worker',
               email: user.email || userDoc.email || '',
-              location: userDoc.location || localData.location || '',
-              // Security-critical fields — ALWAYS from Firestore, never from localStorage
+              location: userDoc.location || '',
+              // Security-critical fields — ALWAYS from Firestore
               accountState: userDoc.accountState || 'active',
               kycVerified: userDoc.kycVerified ?? false,
               kycVerifiedAt: userDoc.kycVerifiedAt,
@@ -162,22 +161,31 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
               qualityScore: userDoc.qualityScore ?? 100,
               jobsCompleted: userDoc.jobsCompleted ?? 0,
               memberSince: userDoc.memberSince || '',
-              phone: userDoc.phone || userDoc.wallet?.payoutNumber || localData.phone || '',
-              bio: userDoc.bio || localData.bio || '',
-              skills: userDoc.skills || localData.skills || [],
-              languages: userDoc.languages || localData.languages || [],
-              preferredPayoutMethod: userDoc.preferredPayoutMethod || localData.preferredPayoutMethod || '',
+              phone: userDoc.phone || userDoc.wallet?.payoutNumber || '',
+              bio: userDoc.bio || '',
+              skills: userDoc.skills || [],
+              languages: userDoc.languages || [],
+              preferredPayoutMethod: userDoc.preferredPayoutMethod || 'M-Pesa',
+              country: userDoc.country || '',
+              zipCode: userDoc.zipCode || '',
+              bankName: userDoc.bankName || '',
+              bankBranch: userDoc.bankBranch || '',
+              bankAccountNumber: userDoc.bankAccountNumber || '',
+              school: userDoc.school || '',
+              course: userDoc.course || '',
+              jobExperience: userDoc.jobExperience || '',
+              career: userDoc.career || '',
             })
             setWallet({
               pendingUsd: userDoc.wallet?.pendingUsd ?? 0,
               availableUsd: userDoc.wallet?.availableUsd ?? 0,
-              payoutNumber: userDoc.wallet?.payoutNumber ?? userDoc.phone ?? localData.phone ?? '',
+              payoutNumber: userDoc.wallet?.payoutNumber ?? userDoc.phone ?? '',
             })
             if (userDoc.paidTrainings && Array.isArray(userDoc.paidTrainings)) {
               setPaidTrainings((prev) => Array.from(new Set([...prev, ...userDoc.paidTrainings!])))
             }
           } else {
-            // No Firestore document yet — use Firebase Auth details + defaults
+            // No Firestore document yet — use Firebase Auth details + clean defaults
             setWorker({
               name: user.displayName || user.email?.split('@')[0] || 'Worker',
               email: user.email || '',
@@ -186,12 +194,21 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
               kycVerified: false,
               qualityScore: 100,
               jobsCompleted: 0,
-              memberSince: '',
-              phone: localData.phone || '',
-              bio: localData.bio || '',
-              skills: localData.skills || [],
-              languages: localData.languages || [],
-              preferredPayoutMethod: localData.preferredPayoutMethod || '',
+              memberSince: new Date().toLocaleString('en-US', { month: 'short', year: 'numeric' }),
+              phone: '',
+              bio: '',
+              skills: [],
+              languages: [],
+              preferredPayoutMethod: 'M-Pesa',
+              country: '',
+              zipCode: '',
+              bankName: '',
+              bankBranch: '',
+              bankAccountNumber: '',
+              school: '',
+              course: '',
+              jobExperience: '',
+              career: '',
             })
             setWallet({
               pendingUsd: 0,
@@ -204,7 +221,7 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
 
         return () => unsubscribe()
       } catch (err) {
-        console.error('Failed to load user profile:', err)
+        console.error('Failed to load user profile from Firestore:', err)
         setProfileLoaded(true)
       }
     }

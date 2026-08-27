@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import { Loader2 } from 'lucide-react'
 import { useAuth } from '@/components/firebase-auth-provider'
@@ -13,15 +13,22 @@ export function AppGate({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
   const router = useRouter()
   const { user, loading } = useAuth()
+  const isInitialMount = useRef(true)
 
   const isPublic = PUBLIC_ROUTES.includes(pathname)
 
   useEffect(() => {
     if (loading) return
+
     if (!user && !isPublic) {
       router.replace('/sign-in')
+    } else if (user && isPublic && pathname !== '/kyc/callback' && isInitialMount.current) {
+      // If user directly opened sign-in or sign-up while already authenticated, redirect to dashboard
+      router.replace('/')
     }
-  }, [loading, user, isPublic, router])
+
+    isInitialMount.current = false
+  }, [loading, user, isPublic, pathname, router])
 
   // Auth screens render bare, without the app chrome.
   if (isPublic) return <>{children}</>

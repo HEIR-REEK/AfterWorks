@@ -37,7 +37,7 @@ export type FirebaseConfig = {
   messagingSenderId?: string
 }
 
-type AuthResult = { ok: true; isNewUser?: boolean } | { ok: false; error: string }
+type AuthResult = { ok: true; isNewUser?: boolean; redirected?: boolean } | { ok: false; error: string }
 
 type AuthContextValue = {
   user: User | null
@@ -219,11 +219,12 @@ export function FirebaseAuthProvider({
         try {
           const cred = await signInWithPopup(authRef.current, provider)
           const name = cred.user.displayName || cred.user.email?.split('@')[0] || 'Worker'
-          await createUserDocument(cred.user.uid, name, cred.user.email || '')
+          const docResult = await createUserDocument(cred.user.uid, name, cred.user.email || '')
           const currentUser = authRef.current.currentUser || cred.user
           setUser(currentUser)
           const additionalInfo = getAdditionalUserInfo(cred)
-          return { ok: true, isNewUser: additionalInfo?.isNewUser ?? false }
+          const isNew = Boolean(additionalInfo?.isNewUser || docResult.isNew)
+          return { ok: true, isNewUser: isNew }
         } catch (popupErr: any) {
           // If popup is blocked by browser, attempt redirect flow
           if (
@@ -232,7 +233,7 @@ export function FirebaseAuthProvider({
           ) {
             console.warn('[Firebase Auth] Popup blocked or cancelled, attempting redirect...')
             await signInWithRedirect(authRef.current, provider)
-            return { ok: true }
+            return { ok: true, redirected: true }
           }
           throw popupErr
         }

@@ -56,15 +56,22 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
     setError(null)
     setGoogleSubmitting(true)
     const result = await signInWithGoogle()
-    setGoogleSubmitting(false)
-    if (result.ok) {
-      if ('isNewUser' in result && result.isNewUser) {
-        router.push('/profile?new=1')
-      } else {
-        router.push('/')
-      }
-    } else {
+    if (!result.ok) {
+      setGoogleSubmitting(false)
       setError(result.error)
+      return
+    }
+
+    if ('redirected' in result && result.redirected) {
+      // Browser is redirecting to Google, keep loading state
+      return
+    }
+
+    setGoogleSubmitting(false)
+    if ('isNewUser' in result && result.isNewUser) {
+      router.push('/profile?new=1')
+    } else {
+      router.push('/')
     }
   }
 

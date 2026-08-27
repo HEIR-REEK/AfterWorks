@@ -120,7 +120,7 @@ export async function createUserDocument(
   uid: string,
   name: string,
   email: string,
-): Promise<void> {
+): Promise<{ isNew: boolean }> {
   const defaultDoc: UserDocument = {
     uid,
     name,
@@ -143,22 +143,10 @@ export async function createUserDocument(
     },
   }
 
-  // Always cache locally so the app works immediately and in offline / demo mode
-  if (typeof window !== 'undefined') {
-    try {
-      const existingLocal = localStorage.getItem(`afterworks_user_${uid}`)
-      if (!existingLocal) {
-        localStorage.setItem(`afterworks_user_${uid}`, JSON.stringify(defaultDoc))
-      }
-    } catch {
-      // ignore
-    }
-  }
-
   const db = getDB()
   if (!db) {
-    console.log('[Firestore] Local user document created for uid:', uid)
-    return
+    console.error('[Firestore] Firebase app not initialized — cannot create user document.')
+    return { isNew: false }
   }
 
   try {
@@ -168,7 +156,15 @@ export async function createUserDocument(
     const existing = await getDoc(userRef)
     if (existing.exists()) {
       console.log('[Firestore] User document already exists for uid:', uid)
-      return
+      // If document exists but name or email were empty, populate them
+      const data = existing.data()
+      const updates: Record<string, string> = {}
+      if (!data?.name && name) updates.name = name
+      if (!data?.email && email) updates.email = email
+      if (Object.keys(updates).length > 0) {
+        await setDoc(userRef, updates, { merge: true })
+      }
+      return { isNew: false }
     }
 
     await setDoc(
@@ -180,9 +176,10 @@ export async function createUserDocument(
       { merge: true },
     )
     console.log('[Firestore] User document created for uid:', uid)
+    return { isNew: true }
   } catch (err) {
     console.error('[Firestore] createUserDocument failed:', err)
-    // Don't re-throw — allow sign-up to succeed even if Firestore write fails
+    return { isNew: false }
   }
 }
 

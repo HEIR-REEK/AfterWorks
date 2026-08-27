@@ -10,10 +10,13 @@ import {
   LogOut,
   ShieldCheck,
   User,
+  Wrench,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/components/firebase-auth-provider'
 import { useAfterWorks } from '@/components/afterworks-provider'
+import { useAdmin, clearDemoRole } from '@/components/admin-provider'
+import { useMaintenance } from '@/components/maintenance-provider'
 import logo from '@/components/logo.png'
 
 function initials(nameOrEmail: string) {
@@ -22,24 +25,33 @@ function initials(nameOrEmail: string) {
   return (parts[0]?.[0] ?? '') + (parts[1]?.[0] ?? '')
 }
 
-const nav = [
-  { href: '/', label: 'Dashboard', icon: LayoutDashboard },
-  { href: '/jobs', label: 'Jobs', icon: Briefcase },
-  { href: '/applications', label: 'Applied', icon: ListChecks },
-  { href: '/profile', label: 'Profile', icon: User },
-]
-
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
   const router = useRouter()
   const { user, signOut } = useAuth()
   const { worker } = useAfterWorks()
+  const { isAdmin, demo, demoRole } = useAdmin()
+  const { maintenance } = useMaintenance()
 
-  const displayName = user?.displayName || user?.email || 'Worker'
+  const nav = [
+    { href: '/', label: 'Dashboard', icon: LayoutDashboard },
+    { href: '/jobs', label: 'Jobs', icon: Briefcase },
+    { href: '/applications', label: 'Applied', icon: ListChecks },
+    // Admin entry point — only rendered for admins.
+    ...(isAdmin ? [{ href: '/admin', label: 'Admin', icon: ShieldCheck }] : []),
+    { href: '/profile', label: 'Profile', icon: User },
+  ]
+
+  const displayName = demo
+    ? demoRole === 'admin'
+      ? 'Demo Admin'
+      : 'Amara Okoro'
+    : user?.displayName || user?.email || 'Worker'
   const avatar = initials(displayName).toUpperCase() || 'W'
 
   async function handleSignOut() {
-    await signOut()
+    if (demo) clearDemoRole()
+    else await signOut()
     router.replace('/sign-in')
   }
 
@@ -88,6 +100,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </nav>
 
           <div className="ml-auto flex items-center gap-2 sm:gap-3">
+            {maintenance.enabled && (
+              <span className="hidden items-center gap-1.5 rounded-full bg-warning/20 px-2.5 py-1 text-xs font-medium text-warning-foreground sm:inline-flex">
+                <Wrench className="size-3.5" />
+                Maintenance
+              </span>
+            )}
             {worker?.kycVerified && worker?.phone && worker?.country && (
               <span className="hidden items-center gap-1.5 rounded-full bg-success/12 px-2.5 py-1 text-xs font-medium text-success sm:inline-flex">
                 <ShieldCheck className="size-3.5" />
@@ -120,7 +138,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
       {/* Mobile bottom nav */}
       <nav
-        className="fixed bottom-0 left-0 right-0 z-40 grid grid-cols-4 border-t border-border bg-background/95 backdrop-blur supports-[padding:max(0px)]:pb-[env(safe-area-inset-bottom)] md:hidden"
+        className="fixed bottom-0 left-0 right-0 z-40 grid grid-flow-col auto-cols-fr border-t border-border bg-background/95 backdrop-blur supports-[padding:max(0px)]:pb-[env(safe-area-inset-bottom)] md:hidden"
         aria-label="Primary mobile"
       >
         {nav.map((item) => {

@@ -5,7 +5,18 @@ import type { DiditSessionStatus } from '@/lib/didit'
 
 // ─── Admin SDK initialisation (singleton) ────────────────────────────────────
 
-function getAdminApp(): admin.app.App {
+/**
+ * True when explicit Admin SDK credentials are present in the environment.
+ * Used by /api/admin/* routes to respond with `configured: false` instead of
+ * attempting (and failing) authenticated calls in demo environments.
+ */
+export function firebaseAdminConfigured(): boolean {
+  return Boolean(
+    process.env.FIREBASE_SERVICE_ACCOUNT_JSON || process.env.FIREBASE_SERVICE_ACCOUNT_PATH,
+  )
+}
+
+export function getAdminApp(): admin.app.App {
   if (admin.apps.length > 0) {
     return admin.apps[0] as admin.app.App
   }
@@ -78,6 +89,20 @@ function getAdminApp(): admin.app.App {
     credential: admin.credential.applicationDefault(),
     projectId,
   })
+}
+
+// ─── Firestore access for API routes ─────────────────────────────────────────
+
+/**
+ * Returns the Admin Firestore instance, or null when the SDK is not usable.
+ */
+export function getAdminFirestore(): admin.firestore.Firestore | null {
+  try {
+    return admin.firestore(getAdminApp())
+  } catch (err) {
+    console.error('[FirestoreAdmin] getAdminFirestore failed:', err)
+    return null
+  }
 }
 
 // ─── Token Verification ───────────────────────────────────────────────────────

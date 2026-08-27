@@ -2,10 +2,14 @@ export const dynamic = 'force-dynamic'
 
 import { NextRequest, NextResponse } from 'next/server'
 import { getPaystackAmountSubunits } from '@/lib/afterworks-data'
-
-
+import { maintenanceGateResponse } from '@/lib/server-config'
 
 export async function POST(req: NextRequest) {
+  // Maintenance mode blocks new checkout sessions (webhooks still process
+  // payments that were already initiated).
+  const maintenance = await maintenanceGateResponse()
+  if (maintenance) return maintenance
+
   try {
     const { email, amount, metadata } = await req.json()
     const cleanEmail = email ? String(email).trim() : ''

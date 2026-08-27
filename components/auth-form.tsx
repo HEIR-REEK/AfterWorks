@@ -4,9 +4,11 @@ import { useState, Suspense } from 'react'
 import Image from 'next/image'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
-import { CheckCircle2, Loader2, ShieldCheck, Eye, EyeOff } from 'lucide-react'
+import { CheckCircle2, Loader2, ShieldCheck, Eye, EyeOff, Shield, User, Wrench } from 'lucide-react'
 import { Button } from './ui/button'
 import { useAuth } from './firebase-auth-provider'
+import { useMaintenance } from './maintenance-provider'
+import { setDemoRole, type DemoRole } from '@/lib/admin-data'
 import logo from '@/components/logo.png'
 
 // Inner component that reads search params (must be inside Suspense)
@@ -14,12 +16,20 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
   const router = useRouter()
   const searchParams = useSearchParams()
   const { signIn, signUp, signInWithGoogle, configured } = useAuth()
+  const { maintenance } = useMaintenance()
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
+
+  // Demo mode (Firebase not configured): pick a role and explore the app.
+  function enterDemo(role: DemoRole) {
+    setDemoRole(role)
+    router.push(role === 'admin' ? '/admin' : '/')
+    router.refresh()
+  }
 
   const isSignUp = mode === 'sign-up'
   // Show a success banner on sign-in page when coming from sign-up
@@ -95,10 +105,51 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
         </div>
       )}
 
+      {/* Maintenance notice — sign-in stays reachable so admins can get in */}
+      {maintenance.enabled && (
+        <div className="mb-5 flex items-start gap-3 rounded-lg border border-warning/40 bg-warning/10 px-4 py-3 text-sm text-warning-foreground">
+          <Wrench className="mt-0.5 size-4 shrink-0" />
+          <span>
+            AfterWorks is currently <strong>down for maintenance</strong>. You can
+            sign in, but jobs and wallets are paused until we are back.
+          </span>
+        </div>
+      )}
+
       {!configured && (
         <div className="mb-5 rounded-lg border border-warning/40 bg-warning/10 px-4 py-3 text-sm text-warning-foreground">
           Firebase is not fully configured yet. Add your Firebase web config
           (apiKey, authDomain, projectId, appId) to enable sign in.
+        </div>
+      )}
+
+      {!configured && (
+        <div className="mb-5 rounded-xl border border-border bg-card p-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Demo mode
+          </p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Explore AfterWorks with seeded data — including the admin panel and
+            maintenance mode.
+          </p>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            <button
+              type="button"
+              onClick={() => enterDemo('admin')}
+              className="flex items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+            >
+              <Shield className="size-4" />
+              Enter as Admin
+            </button>
+            <button
+              type="button"
+              onClick={() => enterDemo('worker')}
+              className="flex items-center justify-center gap-2 rounded-lg border border-border bg-background px-4 py-2.5 text-sm font-medium text-foreground transition-colors hover:border-primary/40"
+            >
+              <User className="size-4" />
+              Enter as Worker
+            </button>
+          </div>
         </div>
       )}
 

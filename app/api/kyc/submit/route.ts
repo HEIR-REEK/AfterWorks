@@ -18,8 +18,13 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { createKycSession } from '@/lib/didit'
 import { saveKycRecord, verifyIdToken, getUserProfile } from '@/lib/firestore-admin'
+import { maintenanceGateResponse } from '@/lib/server-config'
 
 export async function POST(req: NextRequest) {
+  // Maintenance mode blocks new verification sessions.
+  const maintenance = await maintenanceGateResponse()
+  if (maintenance) return maintenance
+
   try {
     const body = await req.json().catch(() => ({}))
 

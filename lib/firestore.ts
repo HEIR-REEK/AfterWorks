@@ -267,6 +267,46 @@ export async function updateUserProfile(
 }
 
 /**
+ * Mirrors a job application into the top-level `applications` collection so
+ * the admin panel can list and act on it. Best-effort: errors are logged and
+ * swallowed — the worker's local tracker remains the source of truth in the
+ * prototype.
+ */
+export async function mirrorApplicationToFirestore(
+  uid: string,
+  applicationId: string,
+  app: {
+    jobId: string
+    status: string
+    appliedAt: string
+    reviewExpiresAt: string
+    history: { status: string; at: string }[]
+  },
+): Promise<void> {
+  const db = getDB()
+  if (!db) return
+
+  try {
+    const { doc: docFn, setDoc: setDocFn } = await import('firebase/firestore')
+    await setDocFn(
+      docFn(db, 'applications', applicationId),
+      {
+        userId: uid,
+        jobId: app.jobId,
+        status: app.status,
+        appliedAt: app.appliedAt,
+        reviewExpiresAt: app.reviewExpiresAt,
+        history: app.history,
+      },
+      { merge: true },
+    )
+    console.log(`[Firestore] Mirrored application ${applicationId} for uid=${uid}`)
+  } catch (err) {
+    console.error('[Firestore] mirrorApplicationToFirestore failed:', err)
+  }
+}
+
+/**
  * Records a completed Paystack training payment for a user in Firestore.
  */
 export async function recordPaidTrainingInFirestore(

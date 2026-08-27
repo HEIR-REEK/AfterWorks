@@ -18,6 +18,7 @@ import {
   type WorkerProfile,
 } from '@/lib/afterworks-data'
 import { subscribeToUserDocument, getUserDocument } from '@/lib/firestore'
+import { loadDemoJobsOverride, DEMO_DATA_EVENT } from '@/lib/admin-data'
 
 import { useAuth } from '@/components/firebase-auth-provider'
 
@@ -40,6 +41,10 @@ type AfterWorksContextValue = {
   submitWork: (applicationId: string) => void
   // Refresh wallet data from Firestore
   refreshWallet: () => Promise<void>
+  // Re-fetch jobs (e.g. after the admin panel edits them)
+  reloadJobs: () => Promise<void>
+  // Re-read applications from localStorage (after admin actions in demo mode)
+  reloadApplications: () => void
   // Update worker profile details (persisted to Firestore + local state)
   updateProfile: (updatedFields: Partial<WorkerProfile>) => Promise<void>
 }
@@ -75,7 +80,12 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
   const [worker, setWorker] = useState<WorkerProfile>(() => seedWorker())
   const [wallet, setWallet] = useState<Wallet>(BLANK_WALLET)
   const [profileLoaded, setProfileLoaded] = useState(false)
-  const [jobs] = useState<Job[]>(() => seedJobs())
+  const [jobs, setJobs] = useState<Job[]>(() => {
+    // Demo job overrides (saved by the admin panel) win over the seed data.
+    const override = typeof window !== 'undefined' ? loadDemoJobsOverride() : null
+    if (override?.jobs?.length) return override.jobs
+    return seedJobs()
+  })
   const [paidTrainings, setPaidTrainings] = useState<string[]>(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('afterworks_paid_trainings_v1')
@@ -113,9 +123,77 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
     localStorage.setItem('afterworks_paid_trainings_v1', JSON.stringify(paidTrainings))
   }, [paidTrainings])
 
+  // ── Load jobs: Firestore (via /api/jobs) with demo/local overrides ────────
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadJobs() {
+      try {
+        const res = await fetch('/api/jobs', { cache: 'no-store' })
+        if (res.ok) {
+          const data = (await res.json()) as { source: string; jobs: Job[] }
+          if (cancelled) return
+          if (data.source === 'firestore' && Array.isArray(data.jobs) && data.jobs.length > 0) {
+            // Firestore is the source of truth — clear any stale local override.
+            setJobs(data.jobs)
+            return
+          }
+        }
+      } catch {
+        // network error — fall through to demo overrides / seed data
+      }
+      if (cancelled) return
+      const override = loadDemoJobsOverride()
+      if (override?.jobs?.length) setJobs(override.jobs)
+    }
+
+    void loadJobs()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  // ── React to admin-panel changes (demo mode) ───────────────────────────────
+  useEffect(() => {
+    function handleDemoChange() {
+      const override = loadDemoJobsOverride()
+      if (override?.jobs?.length) setJobs(override.jobs)
+    }
+    // The admin panel can also advance this browser's applications (approve,
+    // QA, etc.) — re-read them so the worker tracker stays in sync.
+    function handleApplicationsChanged() {
+      try {
+        const saved = localStorage.getItem('afterworks_applications_v2')
+        if (saved) setApplications(JSON.parse(saved))
+      } catch {
+        // ignore malformed cache
+      }
+    }
+    window.addEventListener(DEMO_DATA_EVENT, handleDemoChange)
+    window.addEventListener('aw-applications-changed', handleApplicationsChanged)
+    window.addEventListener('storage', handleDemoChange)
+    return () => {
+      window.removeEventListener(DEMO_DATA_EVENT, handleDemoChange)
+      window.removeEventListener('aw-applications-changed', handleApplicationsChanged)
+      window.removeEventListener('storage', handleDemoChange)
+    }
+  }, [])
+
   // ── Load real user profile + wallet + paidTrainings from Firestore ───────
   useEffect(() => {
     async function loadUserData() {
+      // Demo-mode users get the seeded profile — no Firestore involved.
+      if (user && user.uid.startsWith('demo-')) {
+        const seed = seedWorker()
+        setWorker({
+          ...seed,
+          name: user.displayName || seed.name,
+          email: user.email || seed.email,
+        })
+        setProfileLoaded(true)
+        return
+      }
+
       if (!user) {
         // Look for local demo override
         const localSaved = typeof window !== 'undefined' ? localStorage.getItem('afterworks_profile_demo') : null
@@ -284,6 +362,17 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
         history: [{ status: 'under_review', at: now() }],
       }
       setApplications((prev) => [newApp, ...prev])
+
+      // Best-effort mirror to Firestore so the admin panel can see and manage
+      // real applications (silently skipped in demo mode).
+      if (user?.uid && !user.uid.startsWith('demo-')) {
+        import('@/lib/firestore')
+          .then(({ mirrorApplicationToFirestore }) =>
+            mirrorApplicationToFirestore(user.uid, id, newApp),
+          )
+          .catch(() => {})
+      }
+
       return { ok: true, applicationId: id }
     }
 
@@ -296,6 +385,36 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
             : a,
         ),
       )
+    }
+
+    // Re-fetch jobs — used by the admin panel after editing jobs.
+    async function reloadJobs() {
+      try {
+        const res = await fetch('/api/jobs', { cache: 'no-store' })
+        if (res.ok) {
+          const data = (await res.json()) as { source: string; jobs: Job[] }
+          if (data.source === 'firestore' && Array.isArray(data.jobs) && data.jobs.length > 0) {
+            setJobs(data.jobs)
+            return
+          }
+        }
+      } catch {
+        // ignore — keep current jobs
+      }
+      const override = loadDemoJobsOverride()
+      if (override?.jobs?.length) setJobs(override.jobs)
+    }
+
+    // Re-read applications from localStorage — used after admin actions in
+    // demo mode modify the shared store behind our back.
+    function reloadApplications() {
+      if (typeof window === 'undefined') return
+      try {
+        const saved = localStorage.getItem('afterworks_applications_v2')
+        if (saved) setApplications(JSON.parse(saved))
+      } catch {
+        // ignore malformed cache
+      }
     }
 
     // Refresh wallet from Firestore
@@ -362,6 +481,8 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
       applyToJob,
       submitWork,
       refreshWallet,
+      reloadJobs,
+      reloadApplications,
       updateProfile,
     }
   }, [worker, wallet, jobs, applications, paidTrainings, profileLoaded, user, setWallet])

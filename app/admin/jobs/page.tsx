@@ -11,7 +11,6 @@ import {
   Trash2,
 } from 'lucide-react'
 import { useAdminJobs } from '@/components/admin/data-hooks'
-import { useAfterWorks } from '@/components/afterworks-provider'
 import {
   AdminCard,
   AdminSectionHeader,
@@ -272,8 +271,7 @@ function JobEditor({
 }
 
 export default function AdminJobsPage() {
-  const { jobs, loading, error, demo, mutate } = useAdminJobs()
-  const { reloadJobs } = useAfterWorks()
+  const { jobs, loading, error, mutate } = useAdminJobs()
   const [editorDraft, setEditorDraft] = useState<Draft | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
 
@@ -293,17 +291,13 @@ export default function AdminJobsPage() {
         ? { action: 'update', id: draft.id, job: draft }
         : { action: 'create', job: draft },
     )
-    if (res.ok) {
-      setEditorDraft(null)
-      await reloadJobs()
-    }
+    if (res.ok) setEditorDraft(null)
     return res
   }
 
   async function setStatus(job: Job, status: JobStatus) {
     setBusyId(job.id)
     await mutate({ action: 'set_status', id: job.id, status })
-    await reloadJobs()
     setBusyId(null)
   }
 
@@ -311,7 +305,6 @@ export default function AdminJobsPage() {
     if (!window.confirm(`Delete "${job.title}"? This cannot be undone.`)) return
     setBusyId(job.id)
     await mutate({ action: 'delete', id: job.id })
-    await reloadJobs()
     setBusyId(null)
   }
 
@@ -455,14 +448,6 @@ export default function AdminJobsPage() {
             ))}
           </tbody>
         </AdminTable>
-      )}
-
-      {demo && (
-        <p className="text-xs text-muted-foreground">
-          Demo mode — job edits are stored in this browser and reflected
-          instantly in the worker app. With Firebase configured, jobs are saved
-          to the Firestore `jobs` collection.
-        </p>
       )}
     </div>
   )

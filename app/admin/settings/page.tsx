@@ -27,7 +27,7 @@ import { DEFAULT_MAINTENANCE_MESSAGE } from '@/lib/admin-data'
 import { formatDateTime } from '@/lib/admin-data'
 
 export default function AdminSettingsPage() {
-  const { maintenance, demo, updateMaintenance } = useMaintenance()
+  const { maintenance, updateMaintenance } = useMaintenance()
   const { isAdmin, checking, refresh } = useAdmin()
 
   const [enabled, setEnabled] = useState(maintenance.enabled)
@@ -208,7 +208,6 @@ export default function AdminSettingsPage() {
         <p className="mt-4 border-t border-border/60 pt-3 text-xs text-muted-foreground">
           Last updated: {maintenance.updatedAt ? formatDateTime(maintenance.updatedAt) : 'never'}
           {maintenance.updatedBy ? ` by ${maintenance.updatedBy}` : ''}
-          {demo && ' · stored in this browser (demo mode)'}
         </p>
       </AdminCard>
 
@@ -240,11 +239,9 @@ export default function AdminSettingsPage() {
               </li>
               <li>Admin API routes verify the caller&apos;s Firebase ID token server-side on every request.</li>
             </ul>
-            {!demo && (
-              <Button size="sm" variant="outline" className="mt-3" onClick={() => refresh()}>
-                Re-check my admin status
-              </Button>
-            )}
+            <Button size="sm" variant="outline" className="mt-3" onClick={() => refresh()}>
+              Re-check my admin status
+            </Button>
           </div>
         </div>
       </AdminCard>

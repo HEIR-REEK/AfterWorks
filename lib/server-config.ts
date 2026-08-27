@@ -3,7 +3,7 @@
  *
  * The single source of truth is the Firestore document
  * `site_config/settings` — field `maintenance: MaintenanceConfig`.
- * When Firebase Admin credentials are missing (demo environments) the state
+ * When Firebase Admin credentials are missing the state
  * falls back to the MAINTENANCE_MODE / NEXT_PUBLIC_MAINTENANCE_MODE env vars,
  * so maintenance can still be enforced in deployments without Firestore.
  */

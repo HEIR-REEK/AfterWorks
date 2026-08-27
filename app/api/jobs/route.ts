@@ -2,14 +2,13 @@
  * GET /api/jobs — job listings for the worker app.
  *
  * Reads the Firestore `jobs` collection (managed from the admin panel).
- * When the collection is empty or Firebase is not configured, falls back to
- * the bundled seed jobs so the site always works.
+ * Returns an empty list until an admin publishes jobs.
  */
 export const dynamic = 'force-dynamic'
 
 import { NextResponse } from 'next/server'
 import { getAdminFirestore, firebaseAdminConfigured } from '@/lib/firestore-admin'
-import { seedJobs, type Job, type JobCategory, type JobStatus } from '@/lib/afterworks-data'
+import type { Job, JobCategory, JobStatus } from '@/lib/afterworks-data'
 import { COLLECTIONS } from '@/lib/admin-data'
 
 function normaliseJob(id: string, d: Record<string, unknown>): Job {
@@ -37,17 +36,22 @@ export async function GET() {
       const db = getAdminFirestore()
       if (db) {
         const snap = await db.collection(COLLECTIONS.jobs).get()
-        if (!snap.empty) {
-          const jobs = snap.docs
-            .map((doc) => normaliseJob(doc.id, doc.data() as Record<string, unknown>))
-            .sort((a, b) => b.postedAgo.localeCompare(a.postedAgo))
-          return NextResponse.json({ source: 'firestore', jobs })
-        }
+        const jobs = snap.docs.map((doc) => normaliseJob(doc.id, doc.data() as Record<string, unknown>))
+        return NextResponse.json({ source: 'firestore', jobs })
       }
     } catch (err) {
-      console.warn('[Jobs] Firestore read failed, falling back to seed jobs:', err)
+      console.error('[Jobs] Firestore read failed:', err)
+      return NextResponse.json(
+        { source: 'firestore', jobs: [], error: 'Failed to load job listings.' },
+        { status: 500 },
+      )
     }
   }
 
-  return NextResponse.json({ source: 'seed', jobs: seedJobs() })
+  // Firebase Admin SDK not configured — no jobs can be served.
+  return NextResponse.json({
+    source: 'unconfigured',
+    jobs: [],
+    error: 'Job listings require Firebase to be configured.',
+  })
 }

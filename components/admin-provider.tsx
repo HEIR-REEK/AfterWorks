@@ -10,63 +10,30 @@ import {
   type ReactNode,
 } from 'react'
 import { useAuth } from '@/components/firebase-auth-provider'
-import { getDemoRole, setDemoRole, clearDemoRole, type DemoRole } from '@/lib/admin-data'
 
 type AdminContextValue = {
   isAdmin: boolean
-  /** True while the admin status is being resolved. */
+  /** True while the admin status is being resolved server-side. */
   checking: boolean
-  /** Demo mode (Firebase auth not configured) — role stored in localStorage. */
-  demo: boolean
-  demoRole: DemoRole | null
-  /** True once the demo role has been read from localStorage. */
-  demoResolved: boolean
-  setDemoRole: (role: DemoRole) => void
   refresh: () => Promise<void>
 }
 
 const AdminContext = createContext<AdminContextValue | null>(null)
 
+/**
+ * Resolves the signed-in user's admin status by asking the server
+ * (POST /api/admin/me, which verifies the ID token with the Firebase Admin
+ * SDK). The client-side flag is purely cosmetic — every admin capability is
+ * enforced again server-side on each API call.
+ */
 export function AdminProvider({ children }: { children: ReactNode }) {
   const { user, configured, loading: authLoading } = useAuth()
-  const demo = !configured
 
   const [isAdmin, setIsAdmin] = useState(false)
   const [checking, setChecking] = useState(true)
-  const [demoRole, setDemoRoleState] = useState<DemoRole | null>(null)
-  /**
-   * False until the demo role has been read from localStorage on the client.
-   * AppGate waits for this before redirecting, so refreshing an admin page in
-   * demo mode doesn't bounce the user to sign-in (and avoids hydration
-   * mismatches, since server and client first render agree on "unresolved").
-   */
-  const [demoResolved, setDemoResolved] = useState(false)
-
-  // ── Demo mode: admin status mirrors the localStorage demo role ────────────
-  useEffect(() => {
-    if (!demo) {
-      setDemoRoleState(null)
-      setDemoResolved(true)
-      return
-    }
-    const sync = () => setDemoRoleState(getDemoRole())
-    sync()
-    setDemoResolved(true)
-    window.addEventListener('aw-demo-role-changed', sync)
-    window.addEventListener('storage', sync)
-    return () => {
-      window.removeEventListener('aw-demo-role-changed', sync)
-      window.removeEventListener('storage', sync)
-    }
-  }, [demo])
 
   const refresh = useCallback(async () => {
-    if (demo) {
-      setIsAdmin(getDemoRole() === 'admin')
-      setChecking(false)
-      return
-    }
-    if (!user) {
+    if (!configured || !user) {
       setIsAdmin(false)
       setChecking(false)
       return
@@ -86,35 +53,16 @@ export function AdminProvider({ children }: { children: ReactNode }) {
     } finally {
       setChecking(false)
     }
-  }, [demo, user])
+  }, [configured, user])
 
   useEffect(() => {
-    if (demo || authLoading) return
+    if (authLoading) return
     void refresh()
-  }, [demo, authLoading, refresh])
-
-  // ── Demo role changes resolve instantly ───────────────────────────────────
-  useEffect(() => {
-    if (demo) {
-      setIsAdmin(demoRole === 'admin')
-      setChecking(false)
-    }
-  }, [demo, demoRole])
+  }, [authLoading, refresh])
 
   const value = useMemo<AdminContextValue>(
-    () => ({
-      isAdmin,
-      checking: demo ? !demoResolved : checking,
-      demo,
-      demoRole,
-      demoResolved,
-      setDemoRole: (role) => {
-        setDemoRole(role)
-        setDemoRoleState(role)
-      },
-      refresh,
-    }),
-    [isAdmin, checking, demo, demoRole, demoResolved, refresh],
+    () => ({ isAdmin, checking: authLoading ? true : checking, refresh }),
+    [isAdmin, checking, authLoading, refresh],
   )
 
   return <AdminContext.Provider value={value}>{children}</AdminContext.Provider>
@@ -125,5 +73,3 @@ export function useAdmin() {
   if (!ctx) throw new Error('useAdmin must be used within an AdminProvider')
   return ctx
 }
-
-export { clearDemoRole }

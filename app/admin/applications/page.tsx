@@ -9,9 +9,7 @@ import {
   Redo2,
   Undo2,
 } from 'lucide-react'
-import { useAdminApplications } from '@/components/admin/data-hooks'
-import { useAdminJobs } from '@/components/admin/data-hooks'
-import { useAfterWorks } from '@/components/afterworks-provider'
+import { useAdminApplications, useAdminJobs } from '@/components/admin/data-hooks'
 import {
   AdminCard,
   AdminSectionHeader,
@@ -166,9 +164,8 @@ function ApplicationCard({
 }
 
 export default function AdminApplicationsPage() {
-  const { items, loading, error, demo, act } = useAdminApplications()
+  const { items, loading, error, act } = useAdminApplications()
   const { jobs } = useAdminJobs()
-  const { reloadJobs } = useAfterWorks()
   const [filter, setFilter] = useState<'active' | 'all'>('active')
 
   const filtered = useMemo(() => {
@@ -190,9 +187,7 @@ export default function AdminApplicationsPage() {
   )
 
   async function handleAct(id: string, action: string, note?: string) {
-    const res = await act(id, action, note)
-    if (res.ok) await reloadJobs() // slot counts may have changed
-    return res
+    return act(id, action, note)
   }
 
   return (
@@ -261,15 +256,6 @@ export default function AdminApplicationsPage() {
             )
           })}
         </div>
-      )}
-
-      {demo && (
-        <p className="text-xs text-muted-foreground">
-          Demo mode — this browser doubles as the worker, so actions here
-          immediately update the worker&apos;s application tracker. With Firebase
-          configured, actions write to Firestore (including slot counts and
-          wallet credits).
-        </p>
       )}
     </div>
   )

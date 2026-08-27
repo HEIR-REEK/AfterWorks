@@ -292,7 +292,7 @@ function TrainingPageInner({
   async function handleApplyAfterTraining() {
     if (isApplying) return
     setIsApplying(true)
-    const result = applyToJob(job!.id)
+    const result = await applyToJob(job!.id)
     if (!result.ok) {
       setApplyError(result.reason)
       setIsApplying(false)

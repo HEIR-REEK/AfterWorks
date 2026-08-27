@@ -150,7 +150,7 @@ function KycCard({
 }
 
 export default function AdminKycPage() {
-  const { items, loading, error, demo, decide } = useAdminKyc()
+  const { items, loading, error, decide } = useAdminKyc()
   const [tab, setTab] = useState<Tab>('action')
 
   const needsAction = items.filter((k) => kycNeedsAction(k.status))
@@ -224,14 +224,6 @@ export default function AdminKycPage() {
             <KycCard key={k.uid} item={k} onDecide={decide} />
           ))}
         </div>
-      )}
-
-      {demo && (
-        <p className="text-xs text-muted-foreground">
-          Demo mode — decisions update the seeded records in this browser. With
-          Firebase configured, decisions write to kyc_records and flip the
-          worker&apos;s account state via the Admin SDK.
-        </p>
       )}
     </div>
   )

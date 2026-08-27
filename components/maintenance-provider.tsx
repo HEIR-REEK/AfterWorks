@@ -9,22 +9,17 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { useAuth } from '@/components/firebase-auth-provider'
 import {
   DEFAULT_MAINTENANCE_MESSAGE,
-  loadDemoMaintenance,
-  saveDemoMaintenance,
   type MaintenanceConfig,
 } from '@/lib/admin-data'
 
 type MaintenanceContextValue = {
   maintenance: MaintenanceConfig
-  /** True until the first state has been resolved (never blocking render). */
+  /** True until the first state has been fetched from the server. */
   loading: boolean
-  /** True while running against demo (localStorage) state — Firebase unconfigured. */
-  demo: boolean
   refresh: () => Promise<void>
-  /** Admin-only: update the maintenance config (Firestore or demo store). */
+  /** Admin-only: update the maintenance config (server verifies admin status). */
   updateMaintenance: (
     config: Partial<MaintenanceConfig> & { enabled: boolean },
   ) => Promise<{ ok: boolean; error?: string }>
@@ -39,19 +34,17 @@ const MaintenanceContext = createContext<MaintenanceContextValue | null>(null)
 
 const POLL_INTERVAL_MS = 30_000
 
+/**
+ * Keeps the platform-wide maintenance state fresh: initial fetch + polling of
+ * the public GET /api/maintenance endpoint (backed by Firestore
+ * site_config/settings via the Admin SDK). Updates go through the admin-only
+ * POST /api/admin/maintenance route.
+ */
 export function MaintenanceProvider({ children }: { children: ReactNode }) {
-  const { configured } = useAuth()
-  const demo = !configured
-
   const [maintenance, setMaintenance] = useState<MaintenanceConfig>(DEFAULT_STATE)
   const [loading, setLoading] = useState(true)
 
   const refresh = useCallback(async () => {
-    if (demo) {
-      setMaintenance(loadDemoMaintenance())
-      setLoading(false)
-      return
-    }
     try {
       const res = await fetch('/api/maintenance', { cache: 'no-store' })
       if (res.ok) {
@@ -69,7 +62,7 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
     } finally {
       setLoading(false)
     }
-  }, [demo])
+  }, [])
 
   // Initial load + polling while the tab is visible.
   useEffect(() => {
@@ -82,32 +75,8 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
     return () => clearInterval(interval)
   }, [refresh])
 
-  // Demo mode: react to instant changes made from the admin panel.
-  useEffect(() => {
-    if (!demo) return
-    const handler = () => setMaintenance(loadDemoMaintenance())
-    window.addEventListener('aw-maintenance-changed', handler)
-    window.addEventListener('storage', handler)
-    return () => {
-      window.removeEventListener('aw-maintenance-changed', handler)
-      window.removeEventListener('storage', handler)
-    }
-  }, [demo])
-
   const updateMaintenance = useCallback<MaintenanceContextValue['updateMaintenance']>(
     async (config) => {
-      if (demo) {
-        const next: MaintenanceConfig = {
-          ...loadDemoMaintenance(),
-          ...config,
-          updatedAt: new Date().toISOString(),
-          updatedBy: 'demo-admin',
-        }
-        saveDemoMaintenance(next)
-        setMaintenance(next)
-        return { ok: true }
-      }
-
       try {
         const res = await fetch('/api/admin/maintenance', {
           method: 'POST',
@@ -122,12 +91,12 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
         return { ok: false, error: 'Network error while updating maintenance mode.' }
       }
     },
-    [demo, refresh],
+    [refresh],
   )
 
   const value = useMemo<MaintenanceContextValue>(
-    () => ({ maintenance, loading, demo, refresh, updateMaintenance }),
-    [maintenance, loading, demo, refresh, updateMaintenance],
+    () => ({ maintenance, loading, refresh, updateMaintenance }),
+    [maintenance, loading, refresh, updateMaintenance],
   )
 
   return <MaintenanceContext.Provider value={value}>{children}</MaintenanceContext.Provider>

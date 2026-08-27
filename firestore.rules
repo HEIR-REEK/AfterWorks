@@ -26,12 +26,20 @@ service cloud.firestore {
       allow write: if false;
     }
 
-    // Applications: workers may create/read their own; all updates happen
-    // through the admin API routes (Admin SDK).
+    // Applications: workers may create/read their own and make exactly one
+    // worker-side transition (submitting completed work for QA). Every other
+    // update (approve, reject, QA outcomes, payments) happens through the
+    // admin API routes (Admin SDK).
     match /applications/{appId} {
       allow read: if request.auth != null && resource.data.userId == request.auth.uid;
       allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
-      allow update, delete: if false;
+      allow update: if request.auth != null
+        && resource.data.userId == request.auth.uid
+        && resource.data.status in ['in_progress', 'revision_requested']
+        && request.resource.data.status == 'submitted_for_review'
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['status', 'history']);
+      allow delete: if false;
     }
 
     // Platform settings (maintenance mode etc.) — read-only for signed-in

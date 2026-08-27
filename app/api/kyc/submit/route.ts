@@ -78,16 +78,12 @@ export async function POST(req: NextRequest) {
       rawStatus: session.status,
     })
 
-    console.log(
-      `[KYC submit] Created session ${session.session_id} for uid=${userId}` +
-        (session.is_demo ? ' [DEMO]' : ''),
-    )
+    console.log(`[KYC submit] Created session ${session.session_id} for uid=${userId}`)
 
     return NextResponse.json({
       sessionId: session.session_id,
       sessionToken: session.session_token,
       verificationUrl: session.verification_url,
-      isDemo: !!session.is_demo,
     })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error'

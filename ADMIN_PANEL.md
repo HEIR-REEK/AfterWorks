@@ -3,13 +3,25 @@
 ## Overview
 
 The admin panel lives at **`/admin`** and gives the AfterWorks team full
-operational control of the platform. It is only visible to users with admin
-access — everyone else is redirected away and API routes reject them
-server-side.
+operational control of the platform. It runs entirely on **production data**:
+every read and write goes through `/api/admin/*` routes that verify the
+caller's Firebase ID token with the Firebase Admin SDK before touching
+Firestore. There is no demo/mock mode anywhere in the app.
 
 The site also supports a **maintenance mode**: a branded "down for
 maintenance" page shown to every non-admin visitor, with a server-side guard
 on worker-facing APIs.
+
+### Requirements
+
+- Firebase project with Firestore + Auth enabled (`firebase.json`,
+  `.firebaserc` are in the repo).
+- Environment variables from `.env.example` — in particular
+  `FIREBASE_SERVICE_ACCOUNT_JSON` (server), the `FIREBASE_WEB_*` config
+  (client auth), and `ADMIN_EMAILS`.
+- Didit credentials for real KYC (`DIDIT_*`) and Paystack credentials for
+  payments (`PAYSTACK_*`). Missing KYC/payment credentials **fail closed** —
+  sessions and checkouts return errors instead of mock-approving.
 
 ---
 
@@ -39,6 +51,9 @@ A caller is an admin when **any** of these holds:
 - **Server:** every `/api/admin/*` route calls `requireAdmin()` which verifies
   the Bearer ID token with the Firebase Admin SDK **before** checking admin
   status. There are no admin capabilities that rely on client-side checks.
+- **Not configured:** without Firebase credentials nobody can sign in, and
+  admin APIs respond with `configured: false` (HTTP 501) — the panel shows
+  the error instead of pretending to work.
 
 ---
 
@@ -49,7 +64,7 @@ A caller is an admin when **any** of these holds:
 | `/admin` | **Overview** — workers, KYC queue depth, open jobs/slots, active applications, wallet holdings, newest users, latest applications. |
 | `/admin/users` | **Users** — search/filter every worker, expand a row to activate / hold / request resubmission / reject (with reason), and adjust the worker quality score. |
 | `/admin/kyc` | **KYC reviews** — the manual verification queue. Approve (activates the account), reject (requires a reason shown to the worker), request resubmission, or hold. Decisions write to `kyc_records/{uid}` and flip the user's `accountState`, mirroring the Didit webhook logic. |
-| `/admin/jobs` | **Jobs** — create, edit, publish/pause/close and delete job listings; manage pay, capacity, slots remaining, training gate and closing date. Changes appear in the worker app immediately. |
+| `/admin/jobs` | **Jobs** — create, edit, publish/pause/close and delete job listings; manage pay, capacity, slots remaining, training gate and closing date. Changes are served to workers from the Firestore `jobs` collection (`GET /api/jobs`). |
 | `/admin/applications` | **Applications** — drive the full 8-state lifecycle: approve (reserves a slot), reject (refunds a held slot), mark in progress, submit for QA, pass QA & pay (credits the worker's pending balance), request revision, fail QA. |
 | `/admin/settings` | **Settings** — maintenance mode toggle + message/ETA, admin-access overview, and the maintenance checklist. |
 
@@ -60,6 +75,16 @@ A caller is an admin when **any** of these holds:
 - `jobs/{id}` — full job documents.
 - `applications/{id}` — status transitions + history; slot accounting on `jobs/{id}`.
 - `site_config/settings` — `maintenance` configuration.
+
+### Live data-flow
+
+- Workers' job listings come from `GET /api/jobs` (Firestore `jobs` → JSON).
+  Nothing is shown until an admin publishes a job.
+- When a worker applies, the application is written to `applications/{id}` in
+  Firestore and streamed back to the worker in real time (`onSnapshot`).
+- Admin lifecycle actions update the same documents, so workers see status
+  changes immediately; approving reserves a job slot and a QA pass credits
+  the worker's `wallet.pendingUsd` (48–72h clearing per the system spec).
 
 ---
 
@@ -91,33 +116,18 @@ A caller is an admin when **any** of these holds:
 `firestore.rules` now includes:
 
 ```
-match /admins/{uid}        { allow read: own doc only; write: false }  // Admin SDK only
-match /jobs/{jobId}        { allow read: signed-in;      write: false }  // Admin SDK only
-match /applications/{appId}{ allow read/create: own docs; update/delete: false }
-match /site_config/{doc}   { allow read: signed-in;      write: false }  // Admin SDK only
+match /admins/{uid}         { allow read: own doc only; write: false }        // Admin SDK only
+match /jobs/{jobId}         { allow read: signed-in;      write: false }      // Admin SDK only
+match /applications/{appId} { read/create: own docs; update: only the worker's
+                              "submit for review" transition; delete: false }
+match /site_config/{doc}    { allow read: signed-in;      write: false }      // Admin SDK only
 ```
 
 Deploy with `firebase deploy --only firestore:rules`.
 
 ---
 
-## 4. Demo mode (no Firebase configured)
-
-When Firebase env vars are absent (local sandbox, previews), the whole app —
-including the admin panel and maintenance mode — runs on **seeded demo data**:
-
-- The sign-in page offers **“Enter as Admin” / “Enter as Worker”** buttons.
-- Admin edits persist to `localStorage` in the browser and are shared live
-  with the worker app (job edits, application decisions, KYC decisions,
-  maintenance toggle), so the entire loop is explorable without a backend.
-- API routes respond with `configured: false` and the client falls back
-  gracefully.
-
-Nothing changes in production behaviour once Firebase is configured.
-
----
-
-## 5. Environment variables
+## 4. Environment variables
 
 ```bash
 # Comma-separated allowlist used to bootstrap admins (see §1)
@@ -127,19 +137,19 @@ ADMIN_EMAILS=admin@yourdomain.com
 # MAINTENANCE_MODE=false
 ```
 
-## 6. File map
+## 5. File map
 
 ```
 app/admin/                    Admin pages (overview, users, kyc, jobs, applications, settings)
 app/maintenance/page.tsx      Public maintenance page
 app/api/admin/*               Admin-only API routes (Bearer ID token + admin check)
-app/api/jobs/route.ts         Worker job listings (Firestore → seed fallback)
+app/api/jobs/route.ts         Worker job listings (Firestore `jobs` collection)
 app/api/maintenance/route.ts  Public maintenance state (polled by clients)
 components/admin/*            Admin shell, UI primitives, data hooks
-components/admin-provider.tsx Client admin role resolution
+components/admin-provider.tsx Client admin role resolution (server-verified)
 components/maintenance-provider.tsx
 components/maintenance-screen.tsx
-lib/admin-data.ts             Types, labels, demo seeds, formatting helpers
+lib/admin-data.ts             Types, labels, formatting helpers
 lib/admin-auth.ts             Server-side admin authorisation (requireAdmin)
 lib/server-config.ts          Server-side maintenance state + API guard
 ```

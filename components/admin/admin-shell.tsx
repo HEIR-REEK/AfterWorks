@@ -16,7 +16,7 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/components/firebase-auth-provider'
-import { useAdmin, clearDemoRole } from '@/components/admin-provider'
+import { useAdmin } from '@/components/admin-provider'
 import { useMaintenance } from '@/components/maintenance-provider'
 import logo from '@/components/logo.png'
 
@@ -32,16 +32,15 @@ const adminNav = [
 export function AdminShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
   const router = useRouter()
-  const { user, signOut, configured } = useAuth()
-  const { isAdmin, demo } = useAdmin()
+  const { user, signOut } = useAuth()
+  const { isAdmin } = useAdmin()
   const { maintenance } = useMaintenance()
 
   const displayName =
     user?.displayName || user?.email?.split('@')[0] || 'Admin'
 
   async function handleSignOut() {
-    if (demo) clearDemoRole()
-    else await signOut()
+    await signOut()
     router.replace('/sign-in')
   }
 
@@ -181,12 +180,6 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
             </Link>
           </div>
         )}
-        {demo && (
-          <div className="flex items-center justify-center gap-2 bg-accent px-4 py-2 text-center text-xs font-medium text-accent-foreground">
-            Demo mode — Firebase is not configured, so the panel runs on seeded
-            data saved in this browser.
-          </div>
-        )}
 
         <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 sm:px-6 sm:py-8">
           {/* Admin identity chip */}
@@ -195,9 +188,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
               <ShieldCheck className="size-3.5" />
               Signed in as admin
             </span>
-            <span className="truncate">
-              {configured ? user?.email ?? displayName : 'admin@afterworks.demo'}
-            </span>
+            <span className="truncate">{user?.email ?? displayName}</span>
           </div>
 
           {children}

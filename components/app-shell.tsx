@@ -15,7 +15,7 @@ import {
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/components/firebase-auth-provider'
 import { useAfterWorks } from '@/components/afterworks-provider'
-import { useAdmin, clearDemoRole } from '@/components/admin-provider'
+import { useAdmin } from '@/components/admin-provider'
 import { useMaintenance } from '@/components/maintenance-provider'
 import logo from '@/components/logo.png'
 
@@ -30,7 +30,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter()
   const { user, signOut } = useAuth()
   const { worker } = useAfterWorks()
-  const { isAdmin, demo, demoRole } = useAdmin()
+  const { isAdmin } = useAdmin()
   const { maintenance } = useMaintenance()
 
   const nav = [
@@ -42,16 +42,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     { href: '/profile', label: 'Profile', icon: User },
   ]
 
-  const displayName = demo
-    ? demoRole === 'admin'
-      ? 'Demo Admin'
-      : 'Amara Okoro'
-    : user?.displayName || user?.email || 'Worker'
+  const displayName = user?.displayName || user?.email || 'Worker'
   const avatar = initials(displayName).toUpperCase() || 'W'
 
   async function handleSignOut() {
-    if (demo) clearDemoRole()
-    else await signOut()
+    await signOut()
     router.replace('/sign-in')
   }
 

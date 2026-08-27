@@ -8,7 +8,7 @@ import type { DiditSessionStatus } from '@/lib/didit'
 /**
  * True when explicit Admin SDK credentials are present in the environment.
  * Used by /api/admin/* routes to respond with `configured: false` instead of
- * attempting (and failing) authenticated calls in demo environments.
+ * attempting (and failing) authenticated calls without credentials.
  */
 export function firebaseAdminConfigured(): boolean {
   return Boolean(

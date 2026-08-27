@@ -146,7 +146,7 @@ function UserActions({
 }
 
 export default function AdminUsersPage() {
-  const { users, loading, error, demo, setUserState, setQuality } = useAdminUsers()
+  const { users, loading, error, setUserState, setQuality } = useAdminUsers()
   const [query, setQuery] = useState('')
   const [stateFilter, setStateFilter] = useState<(typeof STATE_FILTERS)[number]>('all')
   const [expandedUid, setExpandedUid] = useState<string | null>(null)
@@ -298,13 +298,6 @@ export default function AdminUsersPage() {
             })}
           </tbody>
         </AdminTable>
-      )}
-
-      {demo && (
-        <p className="text-xs text-muted-foreground">
-          Demo mode — changes are saved to this browser only. With Firebase
-          configured, actions write straight to Firestore via the Admin SDK.
-        </p>
       )}
     </div>
   )

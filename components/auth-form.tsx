@@ -11,8 +11,6 @@ import {
   Eye,
   EyeOff,
   AlertCircle,
-  Sparkles,
-  Info,
 } from 'lucide-react'
 import { Button } from './ui/button'
 import { useAuth } from './firebase-auth-provider'
@@ -22,20 +20,18 @@ import logo from '@/components/logo.png'
 function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const { signIn, signUp, signInWithGoogle, signInAsDemoUser, configured, isDemo } = useAuth()
+  const { signIn, signUp, signInWithGoogle, configured } = useAuth()
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [googleSubmitting, setGoogleSubmitting] = useState(false)
-  const [demoSubmitting, setDemoSubmitting] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
 
   const isSignUp = mode === 'sign-up'
-  // Show a success banner on sign-in page when coming from sign-up
   const justRegistered = !isSignUp && searchParams.get('registered') === '1'
-  const isBusy = submitting || googleSubmitting || demoSubmitting
+  const isBusy = submitting || googleSubmitting
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -47,7 +43,6 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
     setSubmitting(false)
     if (result.ok) {
       if ('isNewUser' in result && result.isNewUser) {
-        // New user: Send them to profile for initial onboarding
         router.push('/profile?new=1')
       } else {
         router.push('/')
@@ -73,18 +68,6 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
     }
   }
 
-  async function handleQuickDemo() {
-    setError(null)
-    setDemoSubmitting(true)
-    const result = await signInAsDemoUser(true)
-    setDemoSubmitting(false)
-    if (result.ok) {
-      router.push('/')
-    } else {
-      setError(result.error)
-    }
-  }
-
   return (
     <div className="mx-auto flex min-h-dvh w-full max-w-md flex-col justify-center px-4 py-10">
       <div className="mb-8 flex flex-col items-center text-center">
@@ -105,34 +88,6 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
         </p>
       </div>
 
-      {/* Demo Mode notification */}
-      {isDemo && (
-        <div className="mb-5 rounded-xl border border-primary/20 bg-primary/5 p-4 text-xs text-foreground">
-          <div className="flex items-start gap-2.5">
-            <Info className="size-4 shrink-0 text-primary mt-0.5" />
-            <div className="flex-1 space-y-1">
-              <p className="font-semibold text-primary">Demo Mode Active</p>
-              <p className="text-muted-foreground leading-relaxed">
-                Firebase web credentials are not configured yet. You can create accounts, sign in,
-                or use Google Login in sandbox mode.
-              </p>
-            </div>
-          </div>
-          <div className="mt-3 pt-2.5 border-t border-primary/10 flex justify-end">
-            <button
-              type="button"
-              onClick={handleQuickDemo}
-              disabled={isBusy}
-              className="inline-flex items-center gap-1.5 font-semibold text-primary hover:underline disabled:opacity-50"
-            >
-              {demoSubmitting && <Loader2 className="size-3 animate-spin" />}
-              <Sparkles className="size-3.5 text-primary" />
-              Sign in as Demo Worker (Amara)
-            </button>
-          </div>
-        </div>
-      )}
-
       {/* Show success message after sign-up redirect */}
       {justRegistered && (
         <div className="mb-5 flex items-start gap-3 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800 dark:border-green-800 dark:bg-green-950 dark:text-green-300">
@@ -140,6 +95,21 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
           <span>
             <strong>Account created!</strong> Sign in with the email and password you just used.
           </span>
+        </div>
+      )}
+
+      {/* Configuration warning banner */}
+      {!configured && (
+        <div
+          role="alert"
+          className="mb-5 flex items-start gap-2.5 rounded-xl border border-warning/40 bg-warning/10 p-3.5 text-xs text-warning-foreground"
+        >
+          <AlertCircle className="size-4 shrink-0 text-warning mt-0.5" />
+          <div className="leading-relaxed">
+            <strong>Firebase Authentication Not Configured:</strong> Missing web configuration
+            (API Key, Auth Domain, Project ID, or App ID). Please check your server environment
+            variables.
+          </div>
         </div>
       )}
 
@@ -169,7 +139,7 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
               onChange={(e) => setName(e.target.value)}
               className="h-11 rounded-lg border border-input bg-card px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
               placeholder="e.g. Amina Otieno"
-              disabled={isBusy}
+              disabled={isBusy || !configured}
             />
           </div>
         )}
@@ -187,7 +157,7 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
             onChange={(e) => setEmail(e.target.value)}
             className="h-11 rounded-lg border border-input bg-card px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
             placeholder="you@example.com"
-            disabled={isBusy}
+            disabled={isBusy || !configured}
           />
         </div>
 
@@ -206,7 +176,7 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
               onChange={(e) => setPassword(e.target.value)}
               className="h-11 w-full rounded-lg border border-input bg-card pl-3 pr-10 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
               placeholder={isSignUp ? 'At least 6 characters' : 'Your password'}
-              disabled={isBusy}
+              disabled={isBusy || !configured}
             />
             <button
               type="button"
@@ -224,7 +194,7 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
           </div>
         </div>
 
-        <Button type="submit" size="lg" disabled={isBusy} className="mt-1 gap-2">
+        <Button type="submit" size="lg" disabled={isBusy || !configured} className="mt-1 gap-2">
           {submitting && <Loader2 className="size-4 animate-spin" />}
           {isSignUp ? 'Create account' : 'Sign in'}
         </Button>
@@ -240,7 +210,7 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
         type="button"
         variant="outline"
         size="lg"
-        disabled={isBusy}
+        disabled={isBusy || !configured}
         onClick={handleGoogleSignIn}
         className="w-full relative bg-card hover:bg-muted gap-2"
       >

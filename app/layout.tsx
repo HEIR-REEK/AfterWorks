@@ -8,10 +8,12 @@ import './globals.css'
 // stores them as server-only env vars (no NEXT_PUBLIC_ prefix), so we read them
 // in this Server Component and pass them down to the client auth provider.
 const firebaseConfig: FirebaseConfig = {
-  apiKey: process.env.FIREBASE_WEB_API_KEY ?? '',
-  authDomain: process.env.FIREBASE_AUTH_DOMAIN ?? '',
-  projectId: process.env.FIREBASE_PROJECT_ID ?? '',
-  appId: process.env.FIREBASE_APP_ID ?? '',
+  // Support both the documented server-side names and the conventional
+  // NEXT_PUBLIC names used by Vercel/Netlify Firebase setup guides.
+  apiKey: process.env.FIREBASE_WEB_API_KEY ?? process.env.NEXT_PUBLIC_FIREBASE_API_KEY ?? '',
+  authDomain: process.env.FIREBASE_AUTH_DOMAIN ?? process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN ?? '',
+  projectId: process.env.FIREBASE_PROJECT_ID ?? process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ?? '',
+  appId: process.env.FIREBASE_APP_ID ?? process.env.NEXT_PUBLIC_FIREBASE_APP_ID ?? '',
 }
 
 // `Geist` font is not available from next/font/google; use Inter and JetBrains Mono

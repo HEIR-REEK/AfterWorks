@@ -57,6 +57,8 @@ function friendlyError(code: string): string {
       return 'That email address looks invalid.'
     case 'auth/email-already-in-use':
       return 'An account with this email already exists. Try signing in.'
+    case 'auth/account-exists-with-different-credential':
+      return 'This email is already registered with email and password. Sign in with your password instead.'
     case 'auth/weak-password':
       return 'Password is too weak. Use at least 6 characters.'
     case 'auth/invalid-credential':
@@ -67,6 +69,16 @@ function friendlyError(code: string): string {
       return 'Too many attempts. Please wait a moment and try again.'
     case 'auth/network-request-failed':
       return 'Network error. Check your connection and try again.'
+    case 'auth/popup-closed-by-user':
+      return 'Google sign-in was cancelled.'
+    case 'auth/popup-blocked':
+      return 'Your browser blocked the Google sign-in window. Allow pop-ups for this site and try again.'
+    case 'auth/unauthorized-domain':
+      return 'This site is not authorised for Google sign-in. Add its domain in Firebase Console under Authentication → Settings → Authorised domains.'
+    case 'auth/operation-not-allowed':
+      return 'Google sign-in is disabled. Enable Google in Firebase Console under Authentication → Sign-in method.'
+    case 'auth/invalid-api-key':
+      return 'Firebase configuration is invalid. Check the web API key and project settings.'
     default:
       return 'Something went wrong. Please try again.'
   }
@@ -136,6 +148,10 @@ export function FirebaseAuthProvider({
       if (!authRef.current) return { ok: false, error: 'Auth is not configured.' }
       try {
         const provider = new GoogleAuthProvider()
+        // Always show the account chooser. This avoids silently reusing the
+        // wrong Google account, especially when switching between sign-in and
+        // sign-up screens.
+        provider.setCustomParameters({ prompt: 'select_account' })
         const cred = await signInWithPopup(authRef.current, provider)
         const name = cred.user.displayName || cred.user.email?.split('@')[0] || 'Worker'
         await createUserDocument(cred.user.uid, name, cred.user.email || '')

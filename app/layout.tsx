@@ -1,6 +1,8 @@
 import type { Metadata, Viewport } from 'next'
 import { Inter, JetBrains_Mono } from 'next/font/google'
 import { FirebaseAuthProvider, type FirebaseConfig } from '@/components/firebase-auth-provider'
+import { MaintenanceProvider } from '@/components/maintenance-provider'
+import { AdminProvider } from '@/components/admin-provider'
 import { AppGate } from '@/components/app-gate'
 import './globals.css'
 
@@ -43,7 +45,11 @@ export default function RootLayout({
     <html lang="en" className={`light bg-background ${geistSans.variable} ${geistMono.variable}`}>
       <body className="font-sans antialiased">
         <FirebaseAuthProvider config={firebaseConfig}>
-          <AppGate>{children}</AppGate>
+          <MaintenanceProvider>
+            <AdminProvider>
+              <AppGate>{children}</AppGate>
+            </AdminProvider>
+          </MaintenanceProvider>
         </FirebaseAuthProvider>
       </body>
     </html>

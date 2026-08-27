@@ -4,9 +4,10 @@ import { useState, Suspense } from 'react'
 import Image from 'next/image'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
-import { CheckCircle2, Loader2, ShieldCheck, Eye, EyeOff } from 'lucide-react'
+import { CheckCircle2, Loader2, ShieldCheck, Eye, EyeOff, Wrench } from 'lucide-react'
 import { Button } from './ui/button'
 import { useAuth } from './firebase-auth-provider'
+import { useMaintenance } from './maintenance-provider'
 import logo from '@/components/logo.png'
 
 // Inner component that reads search params (must be inside Suspense)
@@ -14,6 +15,7 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
   const router = useRouter()
   const searchParams = useSearchParams()
   const { signIn, signUp, signInWithGoogle, configured } = useAuth()
+  const { maintenance } = useMaintenance()
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -91,6 +93,17 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
           <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-green-600" />
           <span>
             <strong>Account created!</strong> Sign in with the email and password you just used.
+          </span>
+        </div>
+      )}
+
+      {/* Maintenance notice — sign-in stays reachable so admins can get in */}
+      {maintenance.enabled && (
+        <div className="mb-5 flex items-start gap-3 rounded-lg border border-warning/40 bg-warning/10 px-4 py-3 text-sm text-warning-foreground">
+          <Wrench className="mt-0.5 size-4 shrink-0" />
+          <span>
+            AfterWorks is currently <strong>down for maintenance</strong>. You can
+            sign in, but jobs and wallets are paused until we are back.
           </span>
         </div>
       )}

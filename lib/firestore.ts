@@ -11,6 +11,7 @@
  *  - Every exported function wraps its work in try/catch and returns null / void on error
  */
 
+import type { Application } from '@/lib/afterworks-data'
 import { getApps, getApp } from 'firebase/app'
 import {
   getFirestore,
@@ -18,6 +19,9 @@ import {
   setDoc,
   getDoc,
   updateDoc,
+  collection,
+  query,
+  where,
   serverTimestamp,
   onSnapshot,
   type Firestore,
@@ -263,6 +267,109 @@ export async function updateUserProfile(
     await setDoc(userRef, clean, { merge: true })
   } catch (err) {
     console.error('[Firestore] updateUserProfile failed for uid:', uid, err)
+  }
+}
+
+// ─── Job applications (applications/{id}) ────────────────────────────────────
+
+export type ApplicationDoc = {
+  userId: string
+  jobId: string
+  status: string
+  appliedAt: string
+  reviewExpiresAt: string
+  rejectionReason?: string
+  revisionNote?: string
+  history: { status: string; at: string }[]
+}
+
+/**
+ * Creates the worker's job application in the top-level `applications`
+ * collection (readable by the admin panel). Returns the new document ID, or
+ * null if the write failed.
+ */
+export async function createApplicationDocument(
+  uid: string,
+  app: Omit<ApplicationDoc, 'userId'>,
+): Promise<string | null> {
+  const db = getDB()
+  if (!db) return null
+
+  try {
+    const { collection, addDoc } = await import('firebase/firestore')
+    const ref = await addDoc(collection(db, 'applications'), {
+      ...app,
+      userId: uid,
+    })
+    console.log(`[Firestore] Created application ${ref.id} for uid=${uid}`)
+    return ref.id
+  } catch (err) {
+    console.error('[Firestore] createApplicationDocument failed:', err)
+    return null
+  }
+}
+
+/**
+ * Subscribes to the signed-in worker's applications in real-time.
+ * Returns an unsubscribe function. Documents are sorted newest-first.
+ */
+export function subscribeToUserApplications(
+  uid: string,
+  onUpdate: (apps: Application[]) => void,
+): () => void {
+  const db = getDB()
+  if (!db) {
+    onUpdate([])
+    return () => {}
+  }
+
+  return onSnapshot(
+    query(collection(db, 'applications'), where('userId', '==', uid)),
+    (snap) => {
+      const apps: Application[] = snap.docs
+        .map((d) => {
+          const data = d.data() as Partial<ApplicationDoc>
+          return {
+            id: d.id,
+            jobId: data.jobId ?? '',
+            status: (data.status ?? 'under_review') as Application['status'],
+            appliedAt: data.appliedAt ?? '',
+            reviewExpiresAt: data.reviewExpiresAt ?? '',
+            rejectionReason: data.rejectionReason,
+            revisionNote: data.revisionNote,
+            history: Array.isArray(data.history)
+              ? (data.history as Application['history'])
+              : [],
+          }
+        })
+        .sort((a, b) => (b.appliedAt ?? '').localeCompare(a.appliedAt ?? ''))
+      onUpdate(apps)
+    },
+    (err) => {
+      console.error('[Firestore] subscribeToUserApplications failed for uid:', uid, err)
+      onUpdate([])
+    },
+  )
+}
+
+/**
+ * Moves an application from in_progress/revision_requested to
+ * submitted_for_review (worker action). Append-only history update; the
+ * admin panel sees it immediately.
+ */
+export async function submitApplicationForReview(applicationId: string): Promise<void> {
+  const db = getDB()
+  if (!db) return
+
+  try {
+    const { doc, updateDoc, arrayUnion } = await import('firebase/firestore')
+    await updateDoc(doc(db, 'applications', applicationId), {
+      status: 'submitted_for_review',
+      history: arrayUnion({ status: 'submitted_for_review', at: new Date().toISOString() }),
+    })
+    console.log(`[Firestore] Application ${applicationId} submitted for review`)
+  } catch (err) {
+    console.error('[Firestore] submitApplicationForReview failed:', err)
   }
 }
 

@@ -133,7 +133,6 @@ export type KycSessionResult = {
   session_token: string
   verification_url: string
   status: DiditSessionStatus
-  is_demo?: boolean
 }
 
 /**
@@ -157,23 +156,11 @@ export async function createKycSession(
   // Include device type so the callback page can render the correct UI branch
   const cbUrl = isMobile ? `${baseCbUrl}?device=mobile` : `${baseCbUrl}?device=cross_device`
 
-  // ── Demo / development fallback ───────────────────────────────────────────
+  // ── Configuration guard: fail closed, never mock-approve ──────────────────
   if (missingKey || missingWorkflow) {
-    console.warn(
-      '[Didit] API Key or Workflow ID not configured — generating a DEMO session. ' +
-        'This should never happen in production.',
+    throw new Error(
+      'KYC is not available right now (verification provider not configured). Please try again later.',
     )
-    const mockSessionId = `demo_session_${Date.now()}`
-    const mockToken = `demo_token_${Date.now()}`
-    const verificationUrl = `${cbUrl}&session_id=${mockSessionId}&vendor_data=${encodeURIComponent(userId)}&status=Approved`
-
-    return {
-      session_id: mockSessionId,
-      session_token: mockToken,
-      verification_url: verificationUrl,
-      status: 'Pending',
-      is_demo: true,
-    }
   }
 
   // ── Real Didit API call ───────────────────────────────────────────────────
@@ -241,22 +228,6 @@ export type KycStatusResult = {
  * Falls back to /v3/session/{id}/ if the decision endpoint returns 404.
  */
 export async function getKycSessionStatus(sessionId: string): Promise<KycStatusResult> {
-  // ── Demo session shortcut ─────────────────────────────────────────────────
-  if (sessionId.startsWith('demo_session_')) {
-    return {
-      session_id: sessionId,
-      status: 'Approved',
-      raw_status: 'Approved',
-      is_approved: true,
-      is_rejected: false,
-      is_expired: false,
-      is_abandoned: false,
-      is_on_hold: false,
-      needs_resubmission: false,
-      raw: { session_id: sessionId, status: 'Approved' },
-    }
-  }
-
   if (!DIDIT_API_KEY) throw new Error('DIDIT_API_KEY is not configured.')
 
   // Try the decision endpoint first (most authoritative for completed sessions)

@@ -18,8 +18,13 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { createKycSession } from '@/lib/didit'
 import { saveKycRecord, verifyIdToken, getUserProfile } from '@/lib/firestore-admin'
+import { maintenanceGateResponse } from '@/lib/server-config'
 
 export async function POST(req: NextRequest) {
+  // Maintenance mode blocks new verification sessions.
+  const maintenance = await maintenanceGateResponse()
+  if (maintenance) return maintenance
+
   try {
     const body = await req.json().catch(() => ({}))
 
@@ -73,16 +78,12 @@ export async function POST(req: NextRequest) {
       rawStatus: session.status,
     })
 
-    console.log(
-      `[KYC submit] Created session ${session.session_id} for uid=${userId}` +
-        (session.is_demo ? ' [DEMO]' : ''),
-    )
+    console.log(`[KYC submit] Created session ${session.session_id} for uid=${userId}`)
 
     return NextResponse.json({
       sessionId: session.session_id,
       sessionToken: session.session_token,
       verificationUrl: session.verification_url,
-      isDemo: !!session.is_demo,
     })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error'

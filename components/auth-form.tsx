@@ -4,7 +4,16 @@ import { useState, Suspense } from 'react'
 import Image from 'next/image'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
-import { CheckCircle2, Loader2, ShieldCheck, Eye, EyeOff } from 'lucide-react'
+import {
+  CheckCircle2,
+  Loader2,
+  ShieldCheck,
+  Eye,
+  EyeOff,
+  AlertCircle,
+  Sparkles,
+  Info,
+} from 'lucide-react'
 import { Button } from './ui/button'
 import { useAuth } from './firebase-auth-provider'
 import logo from '@/components/logo.png'
@@ -13,17 +22,20 @@ import logo from '@/components/logo.png'
 function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const { signIn, signUp, signInWithGoogle, configured } = useAuth()
+  const { signIn, signUp, signInWithGoogle, signInAsDemoUser, configured, isDemo } = useAuth()
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [googleSubmitting, setGoogleSubmitting] = useState(false)
+  const [demoSubmitting, setDemoSubmitting] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
 
   const isSignUp = mode === 'sign-up'
   // Show a success banner on sign-in page when coming from sign-up
   const justRegistered = !isSignUp && searchParams.get('registered') === '1'
+  const isBusy = submitting || googleSubmitting || demoSubmitting
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -35,12 +47,10 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
     setSubmitting(false)
     if (result.ok) {
       if ('isNewUser' in result && result.isNewUser) {
-        // New user! Send them straight to profile for setup and KYC
+        // New user: Send them to profile for initial onboarding
         router.push('/profile?new=1')
-        router.refresh()
       } else {
         router.push('/')
-        router.refresh()
       }
     } else {
       setError(result.error)
@@ -49,17 +59,27 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
 
   async function handleGoogleSignIn() {
     setError(null)
-    setSubmitting(true)
+    setGoogleSubmitting(true)
     const result = await signInWithGoogle()
-    setSubmitting(false)
+    setGoogleSubmitting(false)
     if (result.ok) {
       if ('isNewUser' in result && result.isNewUser) {
         router.push('/profile?new=1')
-        router.refresh()
       } else {
         router.push('/')
-        router.refresh()
       }
+    } else {
+      setError(result.error)
+    }
+  }
+
+  async function handleQuickDemo() {
+    setError(null)
+    setDemoSubmitting(true)
+    const result = await signInAsDemoUser(true)
+    setDemoSubmitting(false)
+    if (result.ok) {
+      router.push('/')
     } else {
       setError(result.error)
     }
@@ -85,6 +105,34 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
         </p>
       </div>
 
+      {/* Demo Mode notification */}
+      {isDemo && (
+        <div className="mb-5 rounded-xl border border-primary/20 bg-primary/5 p-4 text-xs text-foreground">
+          <div className="flex items-start gap-2.5">
+            <Info className="size-4 shrink-0 text-primary mt-0.5" />
+            <div className="flex-1 space-y-1">
+              <p className="font-semibold text-primary">Demo Mode Active</p>
+              <p className="text-muted-foreground leading-relaxed">
+                Firebase web credentials are not configured yet. You can create accounts, sign in,
+                or use Google Login in sandbox mode.
+              </p>
+            </div>
+          </div>
+          <div className="mt-3 pt-2.5 border-t border-primary/10 flex justify-end">
+            <button
+              type="button"
+              onClick={handleQuickDemo}
+              disabled={isBusy}
+              className="inline-flex items-center gap-1.5 font-semibold text-primary hover:underline disabled:opacity-50"
+            >
+              {demoSubmitting && <Loader2 className="size-3 animate-spin" />}
+              <Sparkles className="size-3.5 text-primary" />
+              Sign in as Demo Worker (Amara)
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Show success message after sign-up redirect */}
       {justRegistered && (
         <div className="mb-5 flex items-start gap-3 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800 dark:border-green-800 dark:bg-green-950 dark:text-green-300">
@@ -95,10 +143,14 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
         </div>
       )}
 
-      {!configured && (
-        <div className="mb-5 rounded-lg border border-warning/40 bg-warning/10 px-4 py-3 text-sm text-warning-foreground">
-          Firebase is not fully configured yet. Add your Firebase web config
-          (apiKey, authDomain, projectId, appId) to enable sign in.
+      {/* Global Error Banner */}
+      {error && (
+        <div
+          role="alert"
+          className="mb-5 flex items-start gap-2.5 rounded-xl border border-destructive/30 bg-destructive/10 p-3.5 text-sm text-destructive"
+        >
+          <AlertCircle className="size-4 shrink-0 mt-0.5" />
+          <div className="flex-1 text-xs sm:text-sm font-medium leading-normal">{error}</div>
         </div>
       )}
 
@@ -116,7 +168,8 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
               value={name}
               onChange={(e) => setName(e.target.value)}
               className="h-11 rounded-lg border border-input bg-card px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              placeholder="Amina Otieno"
+              placeholder="e.g. Amina Otieno"
+              disabled={isBusy}
             />
           </div>
         )}
@@ -134,6 +187,7 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
             onChange={(e) => setEmail(e.target.value)}
             className="h-11 rounded-lg border border-input bg-card px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
             placeholder="you@example.com"
+            disabled={isBusy}
           />
         </div>
 
@@ -152,6 +206,7 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
               onChange={(e) => setPassword(e.target.value)}
               className="h-11 w-full rounded-lg border border-input bg-card pl-3 pr-10 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
               placeholder={isSignUp ? 'At least 6 characters' : 'Your password'}
+              disabled={isBusy}
             />
             <button
               type="button"
@@ -169,13 +224,7 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
           </div>
         </div>
 
-        {error && (
-          <p role="alert" className="text-sm font-medium text-destructive">
-            {error}
-          </p>
-        )}
-
-        <Button type="submit" size="lg" disabled={submitting || !configured} className="mt-1">
+        <Button type="submit" size="lg" disabled={isBusy} className="mt-1 gap-2">
           {submitting && <Loader2 className="size-4 animate-spin" />}
           {isSignUp ? 'Create account' : 'Sign in'}
         </Button>
@@ -191,28 +240,32 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
         type="button"
         variant="outline"
         size="lg"
-        disabled={submitting || !configured}
+        disabled={isBusy}
         onClick={handleGoogleSignIn}
-        className="w-full relative bg-card hover:bg-muted"
+        className="w-full relative bg-card hover:bg-muted gap-2"
       >
-        <svg className="absolute left-4 size-5" viewBox="0 0 24 24">
-          <path
-            d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-            fill="#4285F4"
-          />
-          <path
-            d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-            fill="#34A853"
-          />
-          <path
-            d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
-            fill="#FBBC05"
-          />
-          <path
-            d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
-            fill="#EA4335"
-          />
-        </svg>
+        {googleSubmitting ? (
+          <Loader2 className="size-4 animate-spin text-primary" />
+        ) : (
+          <svg className="absolute left-4 size-5" viewBox="0 0 24 24">
+            <path
+              d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+              fill="#4285F4"
+            />
+            <path
+              d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+              fill="#34A853"
+            />
+            <path
+              d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
+              fill="#FBBC05"
+            />
+            <path
+              d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
+              fill="#EA4335"
+            />
+          </svg>
+        )}
         Continue with Google
       </Button>
 

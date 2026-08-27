@@ -20,11 +20,24 @@ export function AppGate({ children }: { children: React.ReactNode }) {
     if (loading) return
     if (!user && !isPublic) {
       router.replace('/sign-in')
+    } else if (user && isPublic && pathname !== '/kyc/callback') {
+      router.replace('/')
     }
-  }, [loading, user, isPublic, router])
+  }, [loading, user, isPublic, pathname, router])
 
   // Auth screens render bare, without the app chrome.
-  if (isPublic) return <>{children}</>
+  if (isPublic) {
+    // If authenticated user visits sign-in or sign-up, show loading spinner while redirecting to dashboard
+    if (user && pathname !== '/kyc/callback') {
+      return (
+        <div className="flex min-h-dvh items-center justify-center">
+          <Loader2 className="size-6 animate-spin text-muted-foreground" />
+          <span className="sr-only">Redirecting…</span>
+        </div>
+      )
+    }
+    return <>{children}</>
+  }
 
   if (loading || !user) {
     return (

@@ -47,10 +47,9 @@ type AfterWorksContextValue = {
 const AfterWorksContext = createContext<AfterWorksContextValue | null>(null)
 
 /** Default blank worker — used as loading placeholder until real data arrives. */
-/** Default blank worker — used as loading placeholder until real data arrives. */
 const BLANK_WORKER: WorkerProfile = {
-  name: 'Amara Okoro',
-  email: 'amara.okoro@afterworks.io',
+  name: 'Worker',
+  email: '',
   location: '',
   accountState: 'active',
   kycVerified: false,
@@ -61,7 +60,16 @@ const BLANK_WORKER: WorkerProfile = {
   bio: '',
   skills: [],
   languages: [],
-  preferredPayoutMethod: '',
+  preferredPayoutMethod: 'M-Pesa',
+  country: '',
+  zipCode: '',
+  bankName: '',
+  bankBranch: '',
+  bankAccountNumber: '',
+  school: '',
+  course: '',
+  jobExperience: '',
+  career: '',
 }
 
 const BLANK_WALLET: Wallet = {
@@ -72,7 +80,19 @@ const BLANK_WALLET: Wallet = {
 
 export function AfterWorksProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth()
-  const [worker, setWorker] = useState<WorkerProfile>(() => seedWorker())
+  const [worker, setWorker] = useState<WorkerProfile>(() => {
+    if (user) {
+      if (user.email === 'amara.okoro@afterworks.io') {
+        return seedWorker()
+      }
+      return {
+        ...BLANK_WORKER,
+        name: user.displayName || user.email?.split('@')[0] || 'Worker',
+        email: user.email || '',
+      }
+    }
+    return BLANK_WORKER
+  })
   const [wallet, setWallet] = useState<Wallet>(BLANK_WALLET)
   const [profileLoaded, setProfileLoaded] = useState(false)
   const [jobs] = useState<Job[]>(() => seedJobs())
@@ -137,6 +157,18 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
         return
       }
 
+      // Check if user is the standard demo worker
+      if (user.email === 'amara.okoro@afterworks.io') {
+        setWorker(seedWorker())
+        setWallet({
+          pendingUsd: 22,
+          availableUsd: 48,
+          payoutNumber: '+254 712 345 678',
+        })
+        setProfileLoaded(true)
+        return
+      }
+
       try {
         const unsubscribe = subscribeToUserDocument(user.uid, (userDoc) => {
           // Local storage cached edits fallback
@@ -166,7 +198,16 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
               bio: userDoc.bio || localData.bio || '',
               skills: userDoc.skills || localData.skills || [],
               languages: userDoc.languages || localData.languages || [],
-              preferredPayoutMethod: userDoc.preferredPayoutMethod || localData.preferredPayoutMethod || '',
+              preferredPayoutMethod: userDoc.preferredPayoutMethod || localData.preferredPayoutMethod || 'M-Pesa',
+              country: userDoc.country || localData.country || '',
+              zipCode: userDoc.zipCode || localData.zipCode || '',
+              bankName: userDoc.bankName || localData.bankName || '',
+              bankBranch: userDoc.bankBranch || localData.bankBranch || '',
+              bankAccountNumber: userDoc.bankAccountNumber || localData.bankAccountNumber || '',
+              school: userDoc.school || localData.school || '',
+              course: userDoc.course || localData.course || '',
+              jobExperience: userDoc.jobExperience || localData.jobExperience || '',
+              career: userDoc.career || localData.career || '',
             })
             setWallet({
               pendingUsd: userDoc.wallet?.pendingUsd ?? 0,
@@ -181,17 +222,26 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
             setWorker({
               name: user.displayName || user.email?.split('@')[0] || 'Worker',
               email: user.email || '',
-              location: '',
+              location: localData.location || '',
               accountState: 'active',
               kycVerified: false,
               qualityScore: 100,
               jobsCompleted: 0,
-              memberSince: '',
+              memberSince: new Date().toLocaleString('en-US', { month: 'short', year: 'numeric' }),
               phone: localData.phone || '',
               bio: localData.bio || '',
               skills: localData.skills || [],
               languages: localData.languages || [],
-              preferredPayoutMethod: localData.preferredPayoutMethod || '',
+              preferredPayoutMethod: localData.preferredPayoutMethod || 'M-Pesa',
+              country: localData.country || '',
+              zipCode: localData.zipCode || '',
+              bankName: localData.bankName || '',
+              bankBranch: localData.bankBranch || '',
+              bankAccountNumber: localData.bankAccountNumber || '',
+              school: localData.school || '',
+              course: localData.course || '',
+              jobExperience: localData.jobExperience || '',
+              career: localData.career || '',
             })
             setWallet({
               pendingUsd: 0,

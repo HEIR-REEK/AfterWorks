@@ -121,13 +121,50 @@ export async function createUserDocument(
   name: string,
   email: string,
 ): Promise<void> {
+  const defaultDoc: UserDocument = {
+    uid,
+    name,
+    email,
+    location: '',
+    memberSince: currentMonthYear(),
+    qualityScore: 100,
+    jobsCompleted: 0,
+    kycVerified: false,
+    accountState: 'active',
+    phone: '',
+    bio: '',
+    skills: [],
+    languages: [],
+    preferredPayoutMethod: 'M-Pesa',
+    wallet: {
+      pendingUsd: 0,
+      availableUsd: 0,
+      payoutNumber: '',
+    },
+  }
+
+  // Always cache locally so the app works immediately and in offline / demo mode
+  if (typeof window !== 'undefined') {
+    try {
+      const existingLocal = localStorage.getItem(`afterworks_user_${uid}`)
+      if (!existingLocal) {
+        localStorage.setItem(`afterworks_user_${uid}`, JSON.stringify(defaultDoc))
+      }
+    } catch {
+      // ignore
+    }
+  }
+
   const db = getDB()
-  if (!db) return
+  if (!db) {
+    console.log('[Firestore] Local user document created for uid:', uid)
+    return
+  }
 
   try {
     const userRef = doc(db, 'users', uid)
 
-    // Check if document already exists to avoid overwriting
+    // Check if document already exists in Firestore to avoid overwriting
     const existing = await getDoc(userRef)
     if (existing.exists()) {
       console.log('[Firestore] User document already exists for uid:', uid)
@@ -137,24 +174,7 @@ export async function createUserDocument(
     await setDoc(
       userRef,
       {
-        name,
-        email,
-        location: '',
-        memberSince: currentMonthYear(),
-        qualityScore: 100,
-        jobsCompleted: 0,
-        kycVerified: false,
-        accountState: 'active',
-        phone: '',
-        bio: '',
-        skills: [],
-        languages: [],
-        preferredPayoutMethod: 'M-Pesa',
-        wallet: {
-          pendingUsd: 0,
-          availableUsd: 0,
-          payoutNumber: '',
-        },
+        ...defaultDoc,
         createdAt: serverTimestamp(),
       },
       { merge: true },
@@ -168,26 +188,50 @@ export async function createUserDocument(
 
 /**
  * Fetches the full user document (profile + wallet) from Firestore.
- * Returns null if the document doesn't exist or if an error occurs.
+ * Falls back to local storage if Firestore is unavailable.
  */
 export async function getUserDocument(uid: string): Promise<UserDocument | null> {
   const db = getDB()
-  if (!db) return null
+  if (!db) {
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem(`afterworks_user_${uid}`)
+        if (saved) return JSON.parse(saved)
+      } catch {
+        return null
+      }
+    }
+    return null
+  }
 
   try {
     const snap = await getDoc(doc(db, 'users', uid))
-    if (!snap.exists()) return null
+    if (!snap.exists()) {
+      if (typeof window !== 'undefined') {
+        const saved = localStorage.getItem(`afterworks_user_${uid}`)
+        if (saved) return JSON.parse(saved)
+      }
+      return null
+    }
     const data = snap.data() as Omit<UserDocument, 'uid'>
     return { uid, ...data }
   } catch (err) {
     console.error('[Firestore] getUserDocument failed for uid:', uid, err)
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem(`afterworks_user_${uid}`)
+        if (saved) return JSON.parse(saved)
+      } catch {
+        // ignore
+      }
+    }
     return null
   }
 }
 
 /**
  * Subscribes to the user document in real-time.
- * Returns an unsubscribe function.
+ * Returns an unsubscribe function. Falls back to local storage if offline or DB unavailable.
  */
 export function subscribeToUserDocument(
   uid: string,
@@ -195,7 +239,16 @@ export function subscribeToUserDocument(
 ): () => void {
   const db = getDB()
   if (!db) {
-    onUpdate(null)
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem(`afterworks_user_${uid}`)
+        onUpdate(saved ? JSON.parse(saved) : null)
+      } catch {
+        onUpdate(null)
+      }
+    } else {
+      onUpdate(null)
+    }
     return () => {}
   }
 
@@ -203,6 +256,18 @@ export function subscribeToUserDocument(
     doc(db, 'users', uid),
     (snap) => {
       if (!snap.exists()) {
+        // Check local storage fallback
+        if (typeof window !== 'undefined') {
+          const saved = localStorage.getItem(`afterworks_user_${uid}`)
+          if (saved) {
+            try {
+              onUpdate(JSON.parse(saved))
+              return
+            } catch {
+              // ignore
+            }
+          }
+        }
         onUpdate(null)
       } else {
         const data = snap.data() as Omit<UserDocument, 'uid'>
@@ -211,6 +276,18 @@ export function subscribeToUserDocument(
     },
     (err) => {
       console.error('[Firestore] subscribeToUserDocument failed for uid:', uid, err)
+      // Fallback to local storage on Firestore error (e.g. rules or network)
+      if (typeof window !== 'undefined') {
+        try {
+          const saved = localStorage.getItem(`afterworks_user_${uid}`)
+          if (saved) {
+            onUpdate(JSON.parse(saved))
+            return
+          }
+        } catch {
+          // ignore
+        }
+      }
       onUpdate(null)
     }
   )
@@ -221,6 +298,23 @@ export function subscribeToUserDocument(
  * Uses setDoc with merge so it works even if the doc doesn't exist yet.
  */
 export async function updateUserWallet(uid: string, wallet: Partial<WalletData>): Promise<void> {
+  if (typeof window !== 'undefined') {
+    try {
+      const saved = localStorage.getItem(`afterworks_user_${uid}`)
+      const current = saved ? JSON.parse(saved) : {}
+      const curWallet = current.wallet || {}
+      localStorage.setItem(
+        `afterworks_user_${uid}`,
+        JSON.stringify({
+          ...current,
+          wallet: { ...curWallet, ...wallet },
+        })
+      )
+    } catch {
+      // ignore
+    }
+  }
+
   const db = getDB()
   if (!db) return
 
@@ -231,7 +325,6 @@ export async function updateUserWallet(uid: string, wallet: Partial<WalletData>)
     if (wallet.availableUsd !== undefined) updates['wallet.availableUsd'] = wallet.availableUsd
     if (wallet.payoutNumber !== undefined) updates['wallet.payoutNumber'] = wallet.payoutNumber
 
-    // Use setDoc with merge so this doesn't fail if document doesn't exist
     await setDoc(userRef, updates, { merge: true })
   } catch (err) {
     console.error('[Firestore] updateUserWallet failed for uid:', uid, err)
@@ -247,19 +340,30 @@ export async function updateUserProfile(
   uid: string,
   fields: Partial<Omit<UserProfile, 'uid'>>,
 ): Promise<void> {
+  const clean = Object.fromEntries(
+    Object.entries(fields).filter(([, v]) => v !== undefined),
+  ) as Record<string, unknown>
+
+  if (Object.keys(clean).length === 0) return
+
+  if (typeof window !== 'undefined') {
+    try {
+      const saved = localStorage.getItem(`afterworks_user_${uid}`)
+      const current = saved ? JSON.parse(saved) : {}
+      localStorage.setItem(
+        `afterworks_user_${uid}`,
+        JSON.stringify({ ...current, ...clean })
+      )
+    } catch {
+      // ignore
+    }
+  }
+
   const db = getDB()
   if (!db) return
 
   try {
-    // Strip undefined values — Firestore does not accept undefined
-    const clean = Object.fromEntries(
-      Object.entries(fields).filter(([, v]) => v !== undefined),
-    ) as Record<string, unknown>
-
-    if (Object.keys(clean).length === 0) return
-
     const userRef = doc(db, 'users', uid)
-    // Use setDoc with merge so it creates the document if it doesn't exist
     await setDoc(userRef, clean, { merge: true })
   } catch (err) {
     console.error('[Firestore] updateUserProfile failed for uid:', uid, err)

@@ -49,12 +49,35 @@ function ProfilePageContent() {
   const [isQrModalOpen, setIsQrModalOpen] = useState(false)
   const [kycFailureReason, setKycFailureReason] = useState<string | null>(null)
 
-  // 1. Auto-open edit modal for new users
+  // 1. Auto-open edit modal for new users with their actual account info
   useEffect(() => {
     if (searchParams.get('new') === '1') {
+      const activeName =
+        worker.name && worker.name !== 'Worker' && worker.name !== 'Amara Okoro'
+          ? worker.name
+          : user?.displayName || user?.email?.split('@')[0] || ''
+      setFormData((prev) => ({
+        ...prev,
+        name: activeName || prev.name,
+        phone: worker.phone || wallet.payoutNumber || '',
+        country: worker.country || '',
+        zipCode: worker.zipCode || '',
+        location: worker.location || '',
+        bio: worker.bio || '',
+        preferredPayoutMethod: worker.preferredPayoutMethod || 'M-Pesa',
+        bankName: worker.bankName || '',
+        bankBranch: worker.bankBranch || '',
+        bankAccountNumber: worker.bankAccountNumber || '',
+        skillsStr: (worker.skills || []).join(', '),
+        languagesStr: (worker.languages || []).join(', '),
+        school: worker.school || '',
+        course: worker.course || '',
+        jobExperience: worker.jobExperience || '',
+        career: worker.career || '',
+      }))
       setIsEditing(true)
     }
-  }, [searchParams])
+  }, [searchParams, worker, user, wallet.payoutNumber])
 
   // 2. Handle return from KYC callback — verify server-side before trusting
   useEffect(() => {

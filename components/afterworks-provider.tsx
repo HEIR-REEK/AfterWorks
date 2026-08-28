@@ -21,6 +21,8 @@ import { subscribeToUserDocument, getUserDocument } from '@/lib/firestore'
 
 import { useAuth } from '@/components/firebase-auth-provider'
 
+import { isUserAdmin } from '@/lib/admin'
+
 type ApplyResult =
   | { ok: true; applicationId: string }
   | { ok: false; reason: string }
@@ -47,12 +49,13 @@ type AfterWorksContextValue = {
 const AfterWorksContext = createContext<AfterWorksContextValue | null>(null)
 
 /** Default blank worker — used as loading placeholder until real data arrives. */
-/** Default blank worker — used as loading placeholder until real data arrives. */
 const BLANK_WORKER: WorkerProfile = {
-  name: 'Amara Okoro',
-  email: 'amara.okoro@afterworks.io',
+  name: '',
+  email: '',
   location: '',
   accountState: 'active',
+  role: 'user',
+  isAdmin: false,
   kycVerified: false,
   qualityScore: 100,
   jobsCompleted: 0,
@@ -61,7 +64,7 @@ const BLANK_WORKER: WorkerProfile = {
   bio: '',
   skills: [],
   languages: [],
-  preferredPayoutMethod: '',
+  preferredPayoutMethod: 'M-Pesa',
 }
 
 const BLANK_WALLET: Wallet = {
@@ -144,12 +147,15 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
           const localData = localSaved ? JSON.parse(localSaved) : {}
 
           if (userDoc) {
+            const adminStatus = isUserAdmin(user, userDoc)
             setWorker({
-              name: userDoc.name || user.displayName || user.email?.split('@')[0] || 'Worker',
+              name: userDoc.name || user.displayName || user.email?.split('@')[0] || '',
               email: user.email || userDoc.email || '',
-              location: userDoc.location || localData.location || '',
-              // Security-critical fields — ALWAYS from Firestore, never from localStorage
+              location: userDoc.location || '',
+              // Security-critical fields — ALWAYS from Firestore
               accountState: userDoc.accountState || 'active',
+              role: adminStatus ? 'admin' : (userDoc.role || 'user'),
+              isAdmin: adminStatus,
               kycVerified: userDoc.kycVerified ?? false,
               kycVerifiedAt: userDoc.kycVerifiedAt,
               kycRejectedAt: userDoc.kycRejectedAt,
@@ -162,36 +168,57 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
               qualityScore: userDoc.qualityScore ?? 100,
               jobsCompleted: userDoc.jobsCompleted ?? 0,
               memberSince: userDoc.memberSince || '',
-              phone: userDoc.phone || userDoc.wallet?.payoutNumber || localData.phone || '',
-              bio: userDoc.bio || localData.bio || '',
-              skills: userDoc.skills || localData.skills || [],
-              languages: userDoc.languages || localData.languages || [],
-              preferredPayoutMethod: userDoc.preferredPayoutMethod || localData.preferredPayoutMethod || '',
+              phone: userDoc.phone || userDoc.wallet?.payoutNumber || '',
+              bio: userDoc.bio || '',
+              skills: userDoc.skills || [],
+              languages: userDoc.languages || [],
+              preferredPayoutMethod: userDoc.preferredPayoutMethod || 'M-Pesa',
+              country: userDoc.country || '',
+              zipCode: userDoc.zipCode || '',
+              bankName: userDoc.bankName || '',
+              bankBranch: userDoc.bankBranch || '',
+              bankAccountNumber: userDoc.bankAccountNumber || '',
+              school: userDoc.school || '',
+              course: userDoc.course || '',
+              jobExperience: userDoc.jobExperience || '',
+              career: userDoc.career || '',
             })
             setWallet({
               pendingUsd: userDoc.wallet?.pendingUsd ?? 0,
               availableUsd: userDoc.wallet?.availableUsd ?? 0,
-              payoutNumber: userDoc.wallet?.payoutNumber ?? userDoc.phone ?? localData.phone ?? '',
+              payoutNumber: userDoc.wallet?.payoutNumber ?? userDoc.phone ?? '',
             })
             if (userDoc.paidTrainings && Array.isArray(userDoc.paidTrainings)) {
               setPaidTrainings((prev) => Array.from(new Set([...prev, ...userDoc.paidTrainings!])))
             }
           } else {
-            // No Firestore document yet — use Firebase Auth details + defaults
+            // No Firestore document yet — use Firebase Auth details + clean defaults
+            const adminStatus = isUserAdmin(user, null)
             setWorker({
-              name: user.displayName || user.email?.split('@')[0] || 'Worker',
+              name: user.displayName || user.email?.split('@')[0] || '',
               email: user.email || '',
               location: '',
               accountState: 'active',
+              role: adminStatus ? 'admin' : 'user',
+              isAdmin: adminStatus,
               kycVerified: false,
               qualityScore: 100,
               jobsCompleted: 0,
               memberSince: '',
-              phone: localData.phone || '',
-              bio: localData.bio || '',
-              skills: localData.skills || [],
-              languages: localData.languages || [],
-              preferredPayoutMethod: localData.preferredPayoutMethod || '',
+              phone: '',
+              bio: '',
+              skills: [],
+              languages: [],
+              preferredPayoutMethod: 'M-Pesa',
+              country: '',
+              zipCode: '',
+              bankName: '',
+              bankBranch: '',
+              bankAccountNumber: '',
+              school: '',
+              course: '',
+              jobExperience: '',
+              career: '',
             })
             setWallet({
               pendingUsd: 0,

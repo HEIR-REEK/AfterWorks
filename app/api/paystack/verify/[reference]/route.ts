@@ -1,9 +1,7 @@
 export const dynamic = 'force-dynamic'
 
 import { NextRequest, NextResponse } from 'next/server'
-import { recordPaidTrainingAdmin } from '@/lib/firestore-admin'
-
-
+import { recordPaidTrainingAdmin, recordPaymentTransactionAdmin } from '@/lib/firestore-admin'
 
 export async function GET(
   _req: NextRequest,
@@ -42,7 +40,6 @@ export async function GET(
         headers: {
           Authorization: `Bearer ${secretKey}`,
         },
-        // Avoid caching — we always want a fresh status from Paystack.
         cache: 'no-store',
       },
     )
@@ -59,18 +56,36 @@ export async function GET(
 
     const tx = data.data
     const paid = tx.status === 'success'
+    const jobId = tx.metadata?.jobId
+    const userId = tx.metadata?.userId || tx.metadata?.uid
+    const amountKes = tx.amount ? tx.amount / 100 : 0
 
-    if (paid && tx.metadata?.jobId && (tx.metadata?.userId || tx.metadata?.uid)) {
-      const jobId = tx.metadata.jobId
-      const userId = tx.metadata.userId || tx.metadata.uid
+    if (paid && jobId && userId) {
       await recordPaidTrainingAdmin(userId, jobId)
+    }
+
+    // Record verified transaction status in Firestore
+    try {
+      await recordPaymentTransactionAdmin({
+        reference: tx.reference || reference,
+        email: tx.customer?.email || 'customer@paystack.com',
+        userId: userId || '',
+        amountKes,
+        amountUsd: Math.round(amountKes / 130) || 10,
+        currency: tx.currency || 'KES',
+        status: paid ? 'success' : 'failed',
+        jobId: jobId || '',
+        metadata: tx.metadata ?? {},
+      })
+    } catch (logErr) {
+      console.warn('[PaystackVerify] Failed to update transaction status:', logErr)
     }
 
     return NextResponse.json({
       paid,
       status: tx.status,
       reference: tx.reference,
-      amount: tx.amount / 100, // convert back from cents
+      amount: amountKes,
       currency: tx.currency,
       metadata: tx.metadata ?? {},
     })

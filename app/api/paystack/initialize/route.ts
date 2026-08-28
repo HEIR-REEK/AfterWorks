@@ -2,8 +2,7 @@ export const dynamic = 'force-dynamic'
 
 import { NextRequest, NextResponse } from 'next/server'
 import { getPaystackAmountSubunits } from '@/lib/afterworks-data'
-
-
+import { recordPaymentTransactionAdmin } from '@/lib/firestore-admin'
 
 export async function POST(req: NextRequest) {
   try {
@@ -57,10 +56,30 @@ export async function POST(req: NextRequest) {
       )
     }
 
+    const reference = data.data.reference
+    const amountKes = amountInSmallestUnit / 100
+
+    // Log payment transaction in Firestore for real-time admin monitoring
+    try {
+      await recordPaymentTransactionAdmin({
+        reference,
+        email: cleanEmail,
+        userId: metadata?.userId || metadata?.uid || '',
+        amountKes,
+        amountUsd: Math.round(amountKes / 130) || 10,
+        currency: 'KES',
+        status: 'pending',
+        jobId: metadata?.jobId || '',
+        metadata: metadata ?? {},
+      })
+    } catch (logErr) {
+      console.warn('[PaystackInitialize] Failed to log transaction:', logErr)
+    }
+
     return NextResponse.json({
       authorizationUrl: data.data.authorization_url,
       accessCode: data.data.access_code,
-      reference: data.data.reference,
+      reference,
     })
   } catch (err) {
     console.error('Paystack initialize route error:', err)

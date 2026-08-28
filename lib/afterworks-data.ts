@@ -65,12 +65,16 @@ export type AccountState =
   | 'kyc_on_hold'
   | 'kyc_abandoned'
   | 'kyc_expired'
+  | 'suspended'
+  | 'banned'
 
 export type WorkerProfile = {
   name: string
   email: string
   location: string
   accountState: AccountState
+  role?: 'admin' | 'user'
+  isAdmin?: boolean
   kycVerified: boolean
   qualityScore: number // 0-100
   jobsCompleted: number
@@ -718,46 +722,32 @@ export function seedJobs(): Job[] {
 
 export function seedWorker(): WorkerProfile {
   return {
-    name: 'Amara Okoro',
-    email: 'amara.okoro@afterworks.io',
-    location: 'Nairobi, Kenya',
+    name: '',
+    email: '',
+    location: '',
     accountState: 'active',
-    kycVerified: true,
-    qualityScore: 98,
-    jobsCompleted: 14,
-    memberSince: 'Mar 2025',
-    phone: '+254 712 345 678',
-    bio: 'Experienced data annotator, Swahili/English translator & audio transcription specialist with 2+ years in digital micro-tasking.',
-    skills: ['Swahili Transcription', 'Data Entry', 'Image Bounding Box', 'Medical Glossary', 'Content Moderation'],
-    languages: ['English (Native/Fluent)', 'Swahili (Native)', 'Kikuyu (Fluent)'],
+    kycVerified: false,
+    qualityScore: 100,
+    jobsCompleted: 0,
+    memberSince: '',
+    phone: '',
+    bio: '',
+    skills: [],
+    languages: [],
     preferredPayoutMethod: 'M-Pesa',
   }
 }
 
 export function seedWallet(): Wallet {
   return {
-    pendingUsd: 22,
-    availableUsd: 46,
-    payoutNumber: '+254 7•• ••• 481',
+    pendingUsd: 0,
+    availableUsd: 0,
+    payoutNumber: '',
   }
 }
 
-// One pre-existing application so the tracker isn't empty on first load.
 export function seedApplications(): Application[] {
-  const applied = new Date()
-  applied.setDate(applied.getDate() - 1)
-  return [
-    {
-      id: 'app-seed-1',
-      jobId: 'job-data-entry',
-      status: 'under_review',
-      appliedAt: applied.toISOString(),
-      reviewExpiresAt: daysFromNow(1),
-      history: [
-        { status: 'under_review', at: applied.toISOString() },
-      ],
-    },
-  ]
+  return []
 }
 
 // --- Application lifecycle helpers ---

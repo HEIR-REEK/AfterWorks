@@ -150,13 +150,13 @@ function ProfilePageContent() {
 
   // Form state for editing profile
   const [formData, setFormData] = useState({
-    name: worker.name || '',
+    name: worker.name || user?.displayName || user?.email?.split('@')[0] || '',
     phone: worker.phone || wallet.payoutNumber || '',
     country: worker.country || '',
     zipCode: worker.zipCode || '',
     location: worker.location || '',
     bio: worker.bio || '',
-    preferredPayoutMethod: worker.preferredPayoutMethod || '',
+    preferredPayoutMethod: worker.preferredPayoutMethod || 'M-Pesa',
     bankName: worker.bankName || '',
     bankBranch: worker.bankBranch || '',
     bankAccountNumber: worker.bankAccountNumber || '',
@@ -168,16 +168,38 @@ function ProfilePageContent() {
     career: worker.career || '',
   })
 
-  // Open edit modal & sync form data
-  const handleOpenEdit = () => {
+  // Sync formData whenever real worker data loads or updates
+  useEffect(() => {
     setFormData({
-      name: worker.name || '',
+      name: worker.name || user?.displayName || user?.email?.split('@')[0] || '',
       phone: worker.phone || wallet.payoutNumber || '',
       country: worker.country || '',
       zipCode: worker.zipCode || '',
       location: worker.location || '',
       bio: worker.bio || '',
-      preferredPayoutMethod: worker.preferredPayoutMethod || '',
+      preferredPayoutMethod: worker.preferredPayoutMethod || 'M-Pesa',
+      bankName: worker.bankName || '',
+      bankBranch: worker.bankBranch || '',
+      bankAccountNumber: worker.bankAccountNumber || '',
+      skillsStr: (worker.skills || []).join(', '),
+      languagesStr: (worker.languages || []).join(', '),
+      school: worker.school || '',
+      course: worker.course || '',
+      jobExperience: worker.jobExperience || '',
+      career: worker.career || '',
+    })
+  }, [worker, wallet, user])
+
+  // Open edit modal & sync form data
+  const handleOpenEdit = () => {
+    setFormData({
+      name: worker.name || user?.displayName || user?.email?.split('@')[0] || '',
+      phone: worker.phone || wallet.payoutNumber || '',
+      country: worker.country || '',
+      zipCode: worker.zipCode || '',
+      location: worker.location || '',
+      bio: worker.bio || '',
+      preferredPayoutMethod: worker.preferredPayoutMethod || 'M-Pesa',
       bankName: worker.bankName || '',
       bankBranch: worker.bankBranch || '',
       bankAccountNumber: worker.bankAccountNumber || '',
@@ -280,7 +302,9 @@ function ProfilePageContent() {
             {/* Basic Info */}
             <div className="min-w-0 flex flex-col gap-1">
               <div className="flex flex-wrap items-center gap-2">
-                <h2 className="text-lg font-bold tracking-tight sm:text-2xl truncate">{worker.name}</h2>
+                <h2 className="text-lg font-bold tracking-tight sm:text-2xl truncate">
+                  {worker.name || user?.displayName || user?.email?.split('@')[0] || 'Worker'}
+                </h2>
                 {worker.kycVerified ? (
                   <span className="inline-flex items-center gap-1 rounded-full bg-success/15 px-2 py-0.5 text-xs font-semibold text-success">
                     <ShieldCheck className="size-3" />
@@ -306,7 +330,11 @@ function ProfilePageContent() {
                 )}
                 <div className="flex items-center gap-1">
                   <MapPin className="size-3.5 text-muted-foreground/70" />
-                  <span>{worker.location || 'Nairobi, Kenya'}</span>
+                  <span>
+                    {worker.location
+                      ? `${worker.location}${worker.country ? `, ${worker.country}` : ''}`
+                      : 'Location not set'}
+                  </span>
                 </div>
               </div>
             </div>
@@ -320,7 +348,9 @@ function ProfilePageContent() {
               <Calendar className="size-3.5 text-primary" />
               Member Since
             </div>
-            <span className="mt-1 text-sm font-semibold sm:text-base">{worker.memberSince || 'Jul 2026'}</span>
+            <span className="mt-1 text-sm font-semibold sm:text-base">
+              {worker.memberSince || 'New Member'}
+            </span>
           </div>
 
           <div className="flex flex-col p-3 sm:p-5">
@@ -369,8 +399,11 @@ function ProfilePageContent() {
           </Button>
         </div>
         <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
-          {worker.bio ||
-            'Experienced digital task professional with expertise in data entry, Swahili transcription, and content validation.'}
+          {worker.bio || (
+            <span className="italic text-muted-foreground/80">
+              No bio added yet. Click &quot;Edit&quot; to add your professional summary and experience.
+            </span>
+          )}
         </p>
       </section>
 
@@ -392,15 +425,21 @@ function ProfilePageContent() {
               Skills used to match you with high-value micro-task opportunities.
             </p>
             <div className="mt-4 flex flex-wrap gap-2">
-              {(worker.skills || ['Data Entry', 'Transcription', 'Swahili Translation']).map((skill, idx) => (
-                <span
-                  key={idx}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-primary/20 bg-primary/5 px-3 py-1.5 text-xs font-medium text-primary"
-                >
-                  <Check className="size-3.5 stroke-[2.5]" />
-                  {skill}
+              {worker.skills && worker.skills.length > 0 ? (
+                worker.skills.map((skill, idx) => (
+                  <span
+                    key={idx}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-primary/20 bg-primary/5 px-3 py-1.5 text-xs font-medium text-primary"
+                  >
+                    <Check className="size-3.5 stroke-[2.5]" />
+                    {skill}
+                  </span>
+                ))
+              ) : (
+                <span className="text-xs italic text-muted-foreground/80">
+                  No skills listed yet. Click &quot;Edit&quot; to specify your skills.
                 </span>
-              ))}
+              )}
             </div>
           </div>
 
@@ -410,14 +449,20 @@ function ProfilePageContent() {
               Spoken & Written Languages
             </h4>
             <div className="mt-2.5 flex flex-wrap gap-2">
-              {(worker.languages || ['English (Fluent)', 'Swahili (Native)']).map((lang, idx) => (
-                <span
-                  key={idx}
-                  className="inline-flex items-center rounded-md bg-muted px-2.5 py-1 text-xs font-medium text-foreground"
-                >
-                  {lang}
+              {worker.languages && worker.languages.length > 0 ? (
+                worker.languages.map((lang, idx) => (
+                  <span
+                    key={idx}
+                    className="inline-flex items-center rounded-md bg-muted px-2.5 py-1 text-xs font-medium text-foreground"
+                  >
+                    {lang}
+                  </span>
+                ))
+              ) : (
+                <span className="text-xs italic text-muted-foreground/80">
+                  No languages specified yet.
                 </span>
-              ))}
+              )}
             </div>
           </div>
         </section>
@@ -594,7 +639,7 @@ function ProfilePageContent() {
                   value={formData.name}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                   className="h-10 w-full rounded-lg border border-input bg-card px-3 text-sm outline-none focus:ring-2 focus:ring-primary"
-                  placeholder="e.g. Amara Okoro"
+                  placeholder="e.g. Amina Otieno"
                 />
               </div>
 
@@ -834,7 +879,7 @@ function ProfilePageContent() {
                   value={formData.skillsStr}
                   onChange={(e) => setFormData({ ...formData, skillsStr: e.target.value })}
                   className="h-10 w-full rounded-lg border border-input bg-card px-3 text-sm outline-none focus:ring-2 focus:ring-primary"
-                  placeholder="Swahili Transcription, Data Entry, Image Labeling"
+                  placeholder="e.g. Swahili Transcription, Data Entry, Image Labeling"
                 />
               </div>
 
@@ -845,7 +890,7 @@ function ProfilePageContent() {
                   value={formData.languagesStr}
                   onChange={(e) => setFormData({ ...formData, languagesStr: e.target.value })}
                   className="h-10 w-full rounded-lg border border-input bg-card px-3 text-sm outline-none focus:ring-2 focus:ring-primary"
-                  placeholder="English (Fluent), Swahili (Native)"
+                  placeholder="e.g. English (Fluent), Swahili (Native)"
                 />
               </div>
 

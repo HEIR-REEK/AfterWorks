@@ -276,3 +276,103 @@ export async function recordPaidTrainingAdmin(
     console.error('[FirestoreAdmin] recordPaidTrainingAdmin failed for uid:', uid, err)
   }
 }
+
+// ─── Server Admin Audit Logs ──────────────────────────────────────────────────
+
+/**
+ * Creates an immutable admin audit log entry using Firebase Admin SDK.
+ */
+export async function createAdminAuditLog(
+  action: string,
+  details?: Record<string, unknown>,
+  actorEmail?: string,
+): Promise<void> {
+  try {
+    const app = getAdminApp()
+    const db = admin.firestore(app)
+    const logId = `log_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`
+    const logRef = db.collection('admin_logs').doc(logId)
+    await logRef.set({
+      id: logId,
+      action,
+      details: details ?? {},
+      actorEmail: actorEmail || 'Admin',
+      timestamp: new Date().toISOString(),
+    })
+  } catch (err) {
+    console.error('[FirestoreAdmin] createAdminAuditLog failed:', err)
+  }
+}
+
+// ─── Payment Transactions Logging ─────────────────────────────────────────────
+
+export type PaymentTransactionRecord = {
+  id: string
+  reference: string
+  userId?: string
+  email: string
+  amountKes: number
+  amountUsd?: number
+  currency: string
+  status: 'pending' | 'success' | 'failed'
+  jobId?: string
+  metadata?: Record<string, unknown>
+  createdAt: string
+}
+
+/**
+ * Records or updates a real Paystack payment transaction in Firestore.
+ */
+export async function recordPaymentTransactionAdmin(
+  txData: Partial<PaymentTransactionRecord> & { reference: string; email: string },
+): Promise<void> {
+  try {
+    const app = getAdminApp()
+    const db = admin.firestore(app)
+    const txId = txData.id || `tx_${txData.reference}`
+    const txRef = db.collection('transactions').doc(txId)
+
+    const payload: PaymentTransactionRecord = {
+      id: txId,
+      reference: txData.reference,
+      userId: txData.userId || '',
+      email: txData.email,
+      amountKes: txData.amountKes || 0,
+      amountUsd: txData.amountUsd || Math.round((txData.amountKes || 0) / 130),
+      currency: txData.currency || 'KES',
+      status: txData.status || 'pending',
+      jobId: txData.jobId || '',
+      metadata: txData.metadata || {},
+      createdAt: txData.createdAt || new Date().toISOString(),
+    }
+
+    await txRef.set(payload, { merge: true })
+    console.log(`[FirestoreAdmin] Payment transaction recorded for ref=${txData.reference}, status=${txData.status}`)
+  } catch (err) {
+    console.error('[FirestoreAdmin] recordPaymentTransactionAdmin failed:', err)
+  }
+}
+
+/**
+ * Checks if a user has admin role in Firestore `users` collection.
+ */
+export async function checkUserAdminRoleAdmin(email: string): Promise<boolean> {
+  try {
+    const app = getAdminApp()
+    const db = admin.firestore(app)
+    const cleanEmail = email.trim().toLowerCase()
+    
+    const snap = await db
+      .collection('users')
+      .where('email', '==', cleanEmail)
+      .limit(1)
+      .get()
+
+    if (snap.empty) return false
+    const userData = snap.docs[0].data()
+    return Boolean(userData.isAdmin === true || userData.role === 'admin')
+  } catch (err) {
+    console.error('[FirestoreAdmin] checkUserAdminRoleAdmin failed for email:', email, err)
+    return false
+  }
+}

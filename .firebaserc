@@ -1,5 +1,8 @@
 {
   "projects": {
-    "default": "afterworks-online"
-  }
+    "default": "afterworks-online",
+    "staging": "afterworks-online"
+  },
+  "targets": {},
+  "etags": {}
 }

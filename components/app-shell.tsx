@@ -8,6 +8,7 @@ import {
   LayoutDashboard,
   ListChecks,
   LogOut,
+  Shield,
   ShieldCheck,
   User,
 } from 'lucide-react'
@@ -16,13 +17,15 @@ import { useAuth } from '@/components/firebase-auth-provider'
 import { useAfterWorks } from '@/components/afterworks-provider'
 import logo from '@/components/logo.png'
 
+import { isUserAdmin } from '@/lib/admin'
+
 function initials(nameOrEmail: string) {
   const base = nameOrEmail.includes('@') ? nameOrEmail.split('@')[0] : nameOrEmail
   const parts = base.replace(/[._-]/g, ' ').trim().split(/\s+/)
   return (parts[0]?.[0] ?? '') + (parts[1]?.[0] ?? '')
 }
 
-const nav = [
+const baseNav = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/jobs', label: 'Jobs', icon: Briefcase },
   { href: '/applications', label: 'Applied', icon: ListChecks },
@@ -37,6 +40,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   const displayName = user?.displayName || user?.email || 'Worker'
   const avatar = initials(displayName).toUpperCase() || 'W'
+
+  const isAdmin = isUserAdmin(user, worker)
+
+  const nav = isAdmin
+    ? [...baseNav, { href: '/admin', label: 'Admin', icon: Shield, isAdminLink: true }]
+    : baseNav
 
   async function handleSignOut() {
     await signOut()
@@ -68,19 +77,25 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <nav className="hidden items-center gap-1 md:flex" aria-label="Primary">
             {nav.map((item) => {
               const Icon = item.icon
+              const active = isActive(item.href)
+              const isAdminLink = 'isAdminLink' in item && item.isAdminLink
+
               return (
                 <Link
                   key={item.href}
                   href={item.href}
-                  aria-current={isActive(item.href) ? 'page' : undefined}
+                  aria-current={active ? 'page' : undefined}
                   className={cn(
                     'flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
-                    isActive(item.href)
+                    active
                       ? 'bg-secondary text-foreground'
                       : 'text-muted-foreground hover:bg-secondary hover:text-foreground',
+                    isAdminLink &&
+                      !active &&
+                      'border border-primary/20 bg-primary/5 text-primary hover:bg-primary/10',
                   )}
                 >
-                  <Icon className="size-4" />
+                  <Icon className={cn('size-4', isAdminLink && 'text-primary')} />
                   {item.label}
                 </Link>
               )
@@ -120,12 +135,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
       {/* Mobile bottom nav */}
       <nav
-        className="fixed bottom-0 left-0 right-0 z-40 grid grid-cols-4 border-t border-border bg-background/95 backdrop-blur supports-[padding:max(0px)]:pb-[env(safe-area-inset-bottom)] md:hidden"
+        className={cn(
+          'fixed bottom-0 left-0 right-0 z-40 grid border-t border-border bg-background/95 backdrop-blur supports-[padding:max(0px)]:pb-[env(safe-area-inset-bottom)] md:hidden',
+          isAdmin ? 'grid-cols-5' : 'grid-cols-4',
+        )}
         aria-label="Primary mobile"
       >
         {nav.map((item) => {
           const Icon = item.icon
           const active = isActive(item.href)
+          const isAdminLink = 'isAdminLink' in item && item.isAdminLink
+
           return (
             <Link
               key={item.href}
@@ -134,6 +154,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               className={cn(
                 'flex flex-col items-center gap-0.5 py-2.5 text-[10px] font-medium transition-colors',
                 active ? 'text-primary' : 'text-muted-foreground',
+                isAdminLink && !active && 'text-primary font-semibold',
               )}
             >
               <Icon className={cn('size-5 mb-0.5', active && 'stroke-[2.25]')} />

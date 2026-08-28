@@ -23,7 +23,8 @@ import {
   NO_STORE_HEADERS,
   isSameSiteRequest,
 } from '@/lib/security-core'
-import { getCachedMaintenanceStatus } from '@/lib/maintenance-shared'
+import { getCachedMaintenanceStatus, isGatedPath, isSignInPath } from '@/lib/maintenance-shared'
+import { renderMaintenanceShell } from '@/lib/maintenance-shell'
 import { readSession } from '@/lib/session-token'
 
 // ─── Static configuration (resolved once at module load) ─────────────────────
@@ -34,6 +35,13 @@ const SIGNING_OK = SESSION_SECRET.length >= 32
 const TRUST_PROXY = (process.env.TRUST_PROXY_HEADERS ?? (PRODUCTION ? 'false' : 'true')) !== 'false'
 const EDGE_RATE_LIMIT_ON = (process.env.MIDDLEWARE_RATE_LIMIT ?? 'true') !== 'false'
 const MAINTENANCE_GATE_ON = (process.env.MAINTENANCE_EDGE_GATE ?? 'true') !== 'false'
+/**
+ * Serve the blackout page from the edge as a static document instead of rewriting into the app.
+ * The app is usually what is degraded, so the notice must not depend on it. Set
+ * MAINTENANCE_STATIC_SHELL=false to fall back to the rendered /maintenance route.
+ */
+const MAINTENANCE_STATIC_SHELL = (process.env.MAINTENANCE_STATIC_SHELL ?? 'true') !== 'false'
+const SUPPORT_EMAIL_EDGE = (process.env.NEXT_PUBLIC_SUPPORT_EMAIL ?? 'support@afterworks.io').trim().toLowerCase()
 const RATE_CAPACITY = Number(process.env.MIDDLEWARE_RATE_LIMIT_PER_MINUTE ?? 40)
 const ALLOWED_HOSTS = new Set(
   [process.env.APP_ALLOWED_HOSTS, process.env.NEXT_PUBLIC_APP_URL, process.env.RENDER_EXTERNAL_URL]
@@ -208,30 +216,73 @@ export async function middleware(request: NextRequest) {
   let maintenanceMode = 'off'
   if (MAINTENANCE_GATE_ON && !EXTENSION_PATH.test(pathname)) {
     const { status } = await getCachedMaintenanceStatus()
-    if (status.bannerOnly) maintenanceMode = 'banner'
+    maintenanceMode = status.blocksAll
+      ? 'blackout'
+      : status.active
+        ? 'sections'
+        : status.bannerOnly
+          ? 'banner'
+          : 'off'
+
     if (status.active) {
-      maintenanceMode = 'blackout'
       const privileged = await hasPrivilegedCookie(request)
-      const gated = !ADMIN_PATH.test(pathname) && !isOpenPath(pathname)
+      // Always open, in every mode: the console (so the operator can end the window), the outage and
+      // status pages, health/auth endpoints (so monitors and sign-in keep working), static assets.
+      // `full` then gates everything else; `sections` gates only the operator-selected prefixes.
+      const gated =
+        !ADMIN_PATH.test(pathname) &&
+        !isOpenPath(pathname) &&
+        !(status.config.allowSignIn && isSignInPath(pathname)) &&
+        (status.blocksAll || isGatedPath(pathname, status))
+
       if (gated && !privileged) {
+        const modeLabel = status.blocksAll ? 'blackout' : 'sections'
+        if (pathname.startsWith('/api/')) {
+          return reject(
+            503,
+            status.blocksAll
+              ? 'The platform is inside a maintenance window. Please retry shortly.'
+              : 'This part of the platform is under maintenance. Everything else keeps working.',
+            'maintenance_active',
+            {
+              'Retry-After': String(status.retryAfterSec || 300),
+              'X-Maintenance-Mode': modeLabel,
+              ...(status.blocksAll ? {} : { 'X-Maintenance-Paths': status.blockedPaths.join(' ') }),
+            },
+          )
+        }
         if (isDocumentRequest(request)) {
+          if (MAINTENANCE_STATIC_SHELL) {
+            // No bundle, no providers, no datastore read: the notice is built right here from the
+            // cached config, so it survives the app being down.
+            const html = renderMaintenanceShell(status, {
+              siteName: 'AfterWorks',
+              supportEmail: SUPPORT_EMAIL_EDGE,
+              statusPath: '/status',
+            })
+            const res = new NextResponse(html, {
+              status: 503,
+              headers: {
+                'Content-Type': 'text/html; charset=utf-8',
+                'Retry-After': String(status.retryAfterSec || 300),
+                'X-Maintenance-Mode': modeLabel,
+                'X-Robots-Tag': 'noindex, nofollow',
+              },
+            })
+            applySecurityHeaders(res)
+            return res
+          }
           const rewriteHeaders = new Headers(request.headers)
-          rewriteHeaders.set('x-afterworks-maintenance-mode', 'blackout')
+          rewriteHeaders.set('x-afterworks-maintenance-mode', modeLabel)
           const res = NextResponse.rewrite(new URL(`/maintenance${search}`, request.url), {
             status: 503,
             request: { headers: rewriteHeaders },
           })
           res.headers.set('Retry-After', String(status.retryAfterSec || 300))
-          res.headers.set('X-Maintenance-Mode', 'blackout')
+          res.headers.set('X-Maintenance-Mode', modeLabel)
           res.headers.set('X-Robots-Tag', 'noindex, nofollow')
           applySecurityHeaders(res)
           return res
-        }
-        if (pathname.startsWith('/api/')) {
-          return reject(503, 'The platform is inside a maintenance window. Please retry shortly.', 'maintenance_active', {
-            'Retry-After': String(status.retryAfterSec || 300),
-            'X-Maintenance-Mode': 'blackout',
-          })
         }
       }
     }

@@ -49,7 +49,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // Cosmetic only: decides whether to show the Admin link. The console itself is gated by
   // useAdminSession() + the API guard, so a wrong answer here grants nothing.
   const isAdmin = isUserAdmin({ idTokenResult: { claims: (claims as Record<string, unknown>) ?? null } }, worker)
-  const bannerVisible = view.bannerOnly && !view.unknown
+  // Three states worth a strip: banner mode, and a scoped blackout (only some areas are down).
+  const scopedBlackout = view.blocking && !view.blocksAll
+  const bannerVisible = (view.bannerOnly || scopedBlackout) && !view.unknown
 
   const nav = isAdmin
     ? [...baseNav, { href: '/admin', label: 'Admin', icon: Shield, isAdminLink: true }]
@@ -144,15 +146,22 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       </header>
 
-      {/* Soft maintenance banner: the platform works, but operators asked us to warn people. */}
+      {/* Maintenance strip: the platform works, but parts of it are paused. */}
       {bannerVisible && (
         <div
           role="status"
-          className="border-b border-amber-500/30 bg-amber-500/10 px-4 py-2 text-center text-xs font-medium text-amber-900 dark:text-amber-200 sm:text-sm"
+          className={cn(
+            'px-4 py-2 text-center text-xs font-medium sm:text-sm',
+            scopedBlackout
+              ? 'border-b border-destructive/30 bg-destructive/[0.07] text-destructive'
+              : 'border-b border-amber-500/30 bg-amber-500/10 text-amber-900 dark:text-amber-200',
+          )}
         >
-          <span className="inline-flex items-center gap-2">
+          <span className="inline-flex flex-wrap items-center justify-center gap-x-2 gap-y-1">
             <Wrench className="size-3.5 shrink-0" />
-            {view.banner || 'Maintenance in progress.'}
+            {scopedBlackout
+              ? `Some parts are under maintenance: ${view.blockedPaths.join(', ')} — everything else works as usual.`
+              : view.banner || 'Maintenance in progress.'}
             <Link href="/status" className="underline decoration-amber-500/50 underline-offset-2 hover:decoration-amber-500">
               Details
             </Link>

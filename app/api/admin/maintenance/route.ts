@@ -8,6 +8,7 @@ import {
 } from '@/lib/maintenance-shared'
 import { audit, consumeBucket, fail, json, requireAdmin, routeError } from '@/lib/guards'
 import { isEmailLike, parseEmailList, sanitizeLine, sanitizePlainText } from '@/lib/security-core'
+import { normaliseBlockedPath } from '@/lib/maintenance-shared'
 import { invalidateGuardCaches } from '@/lib/guard-cache'
 
 /**
@@ -34,6 +35,25 @@ function validatePatch(body: Record<string, unknown>): { ok: true; patch: Partia
   if ('mode' in body) {
     if (body.mode !== 'blackout' && body.mode !== 'banner') return { ok: false, error: '`mode` must be "blackout" or "banner".' }
     patch.mode = body.mode
+  }
+  if ('scope' in body) {
+    if (body.scope !== 'full' && body.scope !== 'sections') return { ok: false, error: '`scope` must be "full" or "sections".' }
+    patch.scope = body.scope
+  }
+  if ('blockedPaths' in body) {
+    if (body.blockedPaths === null || body.blockedPaths === '') patch.blockedPaths = []
+    else if (!Array.isArray(body.blockedPaths)) return { ok: false, error: '`blockedPaths` must be a list of paths.' }
+    else {
+      const paths = Array.from(
+        new Set(
+          (body.blockedPaths as unknown[])
+            .map(normaliseBlockedPath)
+            .filter((value): value is string => value !== null),
+        ),
+      )
+      if (paths.length > 20) return { ok: false, error: 'At most 20 paths can be paused at once.' }
+      patch.blockedPaths = paths
+    }
   }
   if ('title' in body) patch.title = sanitizeLine(body.title, 90)
   if ('message' in body) patch.message = sanitizePlainText(body.message, 900)
@@ -135,6 +155,9 @@ export async function GET(req: NextRequest) {
       config,
       status: {
         active: status.active,
+        blocksAll: status.blocksAll,
+        scope: status.scope,
+        blockedPaths: status.blockedPaths,
         bannerOnly: status.bannerOnly,
         pending: status.pending,
         stale: status.stale,

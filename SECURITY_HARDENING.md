@@ -45,7 +45,7 @@ by disabling JavaScript, and the config document was writable from the browser.
 
 | Layer | File | Behaviour |
 | --- | --- | --- |
-| Edge gate | `middleware.ts` | gated document requests get the maintenance screen with `503` + `Retry-After`; `/api/*` gets a JSON `503` so clients show a banner instead of a stack trace |
+| Edge gate | `middleware.ts` | gated document requests get the **static** outage document with `503` + `Retry-After` (no app render); gated `/api/*` gets a JSON `503` so clients show a banner instead of a stack trace |
 | Server | `lib/maintenance-shared.ts`, `app/api/admin/maintenance` | single canonical config, `resolveMaintenance()` decides, writes only through `saveMaintenanceConfigServer()` (field whitelist, `version++`, audit, cache priming) |
 | Client | `components/maintenance-provider.tsx`, `app-gate.tsx` | one poller per tab freezes writes, shows a countdown, and never blocks the console |
 
@@ -54,10 +54,29 @@ Exempt during a blackout: `/admin`, `/api/admin/auth`, `/api/admin/session`, `/m
 `aw_ops_bypass` cookie, minted **only** by `/api/maintenance/bypass` after the server has confirmed
 the caller is an admin or on the config's email allow-list.
 
+**The outage page does not need the app.** A gated document request is answered in the edge runtime with a
+self-contained HTML document built from the cached config (`lib/maintenance-shell.ts`): no client bundle, no
+`<script>`, no Firebase, no Firestore read, inline CSS in the product's own tokens, `meta refresh` while a window
+is open, `noindex`, `503` + `Retry-After`. That matters because the app is usually the thing that is degraded — a
+maintenance page rendered by a broken app is a blank screen. `MAINTENANCE_STATIC_SHELL=false` falls back to the
+rendered `/maintenance` route.
+
+Two scopes, decided in `resolveMaintenance()` and enforced by one predicate (`isGatedPath`) at the edge and in
+`maintenanceBlockForApi()`:
+
+| Scope | Behaviour |
+| --- | --- |
+| `full` | every non-exempt path is gated; `blocksAll` freezes the app (`components/app-gate.tsx`) and `/api/maintenance` answers `503` so monitors fire |
+| `sections` | only the operator-selected prefixes (`/jobs`, `/api/wallet`, …) are gated; everything else serves normally with a strip naming the paused areas; the console can never pause `/admin`, `/status`, `/maintenance`, `/api/health`, `/api/maintenance` or `/api/admin` (an ungatable list) — otherwise an outage would lock the operator out of ending it |
+
+A `sections` window with no paths escalates to `full`: "pause nothing" while `enabled` is true is never what was meant.
+
 If Firestore itself is down, `MAINTENANCE_FORCE=blackout` in the platform environment gates traffic
 without touching the database; the console shows an override strip instead of pretending the form
 controls it, and the `PUT`/`DELETE` responses carry a warning so "I turned it off" is never a
-misunderstanding.
+misunderstanding. The override is environment-only by design (a broken database must not be able to re-open
+traffic), so **the way to clear it is to unset the variable in Render/Vercel and let the instance restart** —
+`MAINTENANCE_FORCE_PATHS` scopes it to listed prefixes and `MAINTENANCE_FORCE_UNTIL` makes it expire on its own.
 
 Two modes: `blackout` (reject traffic) and `banner` (site works, warning strip in the app shell) —
 for the common case where the platform is degraded, not down. A window may be scheduled

@@ -141,8 +141,21 @@ export function MaintenanceScreen({
         </div>
 
         <h1 className="text-pretty text-2xl font-semibold leading-tight tracking-tight text-balance sm:text-3xl">
-          {config.title || 'Under scheduled maintenance'}
+          {config.blocksAll
+            ? config.title || 'Under scheduled maintenance'
+            : `This part of ${site.name} is under maintenance`}
         </h1>
+
+        {!config.blocksAll && config.blockedPaths.length > 0 && (
+          <p className="mt-3 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+            <span className="font-semibold uppercase tracking-wider">Paused paths</span>
+            {config.blockedPaths.map((path) => (
+              <code key={path} className="rounded-md border border-border bg-muted/60 px-1.5 py-0.5 font-mono">
+                {path}
+              </code>
+            ))}
+          </p>
+        )}
 
         <p className="mt-3 max-w-lg text-pretty text-sm leading-relaxed text-muted-foreground sm:text-base">
           {config.message ||

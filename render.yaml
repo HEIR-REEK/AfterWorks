@@ -72,6 +72,13 @@ services:
         value: ""
       - key: MAINTENANCE_FORCE_UNTIL
         value: ""
+      - key: MAINTENANCE_FORCE_PATHS
+        value: ""
+      - key: MAINTENANCE_FORCE_MESSAGE
+        value: ""
+      # Outage page is rendered at the edge with no app bundle; only change in an emergency.
+      - key: MAINTENANCE_STATIC_SHELL
+        value: "true"
       - key: API_RATE_LIMIT_ENABLED
         value: "true"
       - key: API_RATE_LIMIT_PER_MINUTE

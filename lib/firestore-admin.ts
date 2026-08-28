@@ -575,6 +575,8 @@ export async function saveMaintenanceConfigServer(
   const allowed: Array<keyof MaintenanceConfig> = [
     'enabled',
     'mode',
+    'scope',
+    'blockedPaths',
     'title',
     'message',
     'banner',
@@ -609,7 +611,16 @@ export async function saveMaintenanceConfigServer(
 
   await createAuditEntry(
     next.enabled ? 'MAINTENANCE_ENABLED' : 'MAINTENANCE_DISABLED',
-    { mode: next.mode, changed, title: next.title, estimatedEnd: next.estimatedEnd, reason: next.reason, version: next.version },
+    {
+      mode: next.mode,
+      scope: next.scope,
+      blockedPaths: next.scope === 'sections' ? next.blockedPaths : undefined,
+      changed,
+      title: next.title,
+      estimatedEnd: next.estimatedEnd,
+      reason: next.reason,
+      version: next.version,
+    },
     actorEmail,
   )
 

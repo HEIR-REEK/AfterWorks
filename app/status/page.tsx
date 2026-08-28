@@ -42,6 +42,9 @@ type Health = {
   maintenance: {
     enabled: boolean
     blocking: boolean
+    /** False when only selected areas are down and the rest of the platform is serving. */
+    blocksAll?: boolean
+    blockedPaths?: string[]
     title: string
     message: string
     estimatedEnd: string | null
@@ -164,9 +167,18 @@ export default function StatusPage() {
           <section className="mt-5 rounded-2xl border border-amber-500/30 bg-amber-500/[0.08] p-5">
             <h2 className="flex items-center gap-2 text-sm font-semibold text-amber-800 dark:text-amber-300">
               <Wrench className="size-4" />
-              {health.maintenance.title}
+              {health.maintenance.blocksAll === false ? 'Partial maintenance — some areas are paused' : health.maintenance.title}
             </h2>
             <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{health.maintenance.message}</p>
+            {health.maintenance.blocksAll === false && (health.maintenance.blockedPaths?.length ?? 0) > 0 && (
+              <ul className="mt-3 flex flex-wrap gap-1.5" aria-label="Areas under maintenance">
+                {health.maintenance.blockedPaths!.map((path) => (
+                  <li key={path}>
+                    <code className="rounded-lg border border-amber-500/30 bg-background/70 px-2 py-1 font-mono text-[11px] text-foreground">{path}</code>
+                  </li>
+                ))}
+              </ul>
+            )}
             {health.maintenance.estimatedEnd && (
               <p className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-background/70 px-2.5 py-1.5 text-xs font-medium text-foreground">
                 <Clock3 className="size-3.5 text-amber-600" />

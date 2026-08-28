@@ -32,6 +32,10 @@ export async function GET(req: NextRequest) {
     ok: true,
     enabled: status.active || status.bannerOnly,
     blocking: status.active,
+    /** False for a scoped window: only `blockedPaths` are down, so the app must keep working. */
+    blocksAll: status.blocksAll,
+    scope: status.scope,
+    blockedPaths: status.blockedPaths,
     bannerOnly: status.bannerOnly,
     scheduled: status.pending,
     mode: config.mode,
@@ -59,7 +63,9 @@ export async function GET(req: NextRequest) {
     serverTime: new Date().toISOString(),
   }
 
-  if (status.active) {
+  // A full blackout answers 503 so monitors fire; a scoped one stays 200 because the platform is
+  // reachable and the app needs to read which parts are paused.
+  if (status.active && status.blocksAll) {
     const res = json({ ...payload, error: 'The platform is inside a maintenance window.' }, { status: 503 })
     res.headers.set('Retry-After', String(status.retryAfterSec || 300))
     res.headers.set('X-Maintenance-Mode', 'blackout')
@@ -70,7 +76,7 @@ export async function GET(req: NextRequest) {
 
   const res = json(payload)
   res.headers.set('ETag', etag)
-  res.headers.set('X-Maintenance-Mode', status.bannerOnly ? 'banner' : 'off')
+  res.headers.set('X-Maintenance-Mode', status.bannerOnly ? 'banner' : status.active ? 'sections' : 'off')
   for (const [key, value] of Object.entries(PUBLIC_SHORT_CACHE)) res.headers.set(key, value)
   return res
 }

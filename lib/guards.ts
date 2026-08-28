@@ -30,7 +30,7 @@ import {
   parseEmailList,
   type ClientIdentity,
 } from '@/lib/security-core'
-import { getCachedMaintenanceStatus, resolveMaintenance } from '@/lib/maintenance-shared'
+import { getCachedMaintenanceStatus, isGatedPath, isSignInPath, resolveMaintenance } from '@/lib/maintenance-shared'
 import {
   getCachedRevocation,
   invalidateGuardCaches,
@@ -154,14 +154,18 @@ export function rateLimit(req: NextRequest, scope: string, capacity?: number, wi
 export async function maintenanceBlockForApi(req: NextRequest, opts?: { privileged?: boolean }): Promise<NextResponse | null> {
   if (opts?.privileged) return null
   const status = await getCachedMaintenanceStatus()
-  const { active, config, retryAfterSec } = status.status
+  const { active, config, retryAfterSec, blocksAll, blockedPaths } = status.status
   if (!active) return null
-  if (config.allowSignIn && isAuthRoute(req.nextUrl.pathname)) return null
+  if (config.allowSignIn && (isAuthRoute(req.nextUrl.pathname) || isSignInPath(req.nextUrl.pathname))) return null
+  // Scoped window: only the listed areas are down. A wallet endpoint must fail while the job board
+  // keeps answering, otherwise "some parts are under maintenance" is a lie the UI tells.
+  if (!blocksAll && !isGatedPath(req.nextUrl.pathname, status.status)) return null
   return fail(503, config.message || 'The platform is in a maintenance window. Please retry shortly.', {
     code: 'maintenance_active',
+    details: blocksAll ? undefined : { affectedPaths: blockedPaths },
     headers: {
       'Retry-After': String(retryAfterSec || 300),
-      'X-Maintenance-Mode': 'blackout',
+      'X-Maintenance-Mode': blocksAll ? 'blackout' : 'sections',
     },
   })
 }

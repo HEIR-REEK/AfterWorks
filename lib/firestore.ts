@@ -36,6 +36,7 @@ import {
   type MaintenanceConfig,
   type MaintenanceMode,
   type MaintenanceReason,
+  type MaintenanceScope,
   type MaintenanceService,
   type MaintenanceView,
 } from '@/lib/maintenance-shared'
@@ -365,6 +366,9 @@ export async function fetchMaintenanceStatus(): Promise<MaintenanceView> {
       enabled: data.enabled === true,
       blocking: data.blocking === true || status.active,
       bannerOnly: data.bannerOnly === true || status.bannerOnly,
+      blocksAll: typeof data.blocksAll === 'boolean' ? data.blocksAll : status.blocksAll,
+      scope: (data.scope as MaintenanceScope) ?? status.scope,
+      blockedPaths: Array.isArray(data.blockedPaths) ? (data.blockedPaths as string[]) : status.blockedPaths,
       mode: (data.mode as MaintenanceMode) ?? config.mode,
       title: String(data.title || '') || config.title,
       message: String(data.message || '') || config.message,

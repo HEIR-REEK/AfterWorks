@@ -5,6 +5,7 @@ import Link from 'next/link'
 import {
   AlertTriangle,
   BellRing,
+  Layers,
   CheckCircle2,
   Clock3,
   Eye,
@@ -25,8 +26,8 @@ import { Button } from '@/components/ui/button'
 import { StatusBadge } from '@/components/status-badge'
 import { cn } from '@/lib/utils'
 import { site } from '@/lib/site'
-import type { MaintenanceConfig, MaintenanceService, MaintenanceView } from '@/lib/maintenance-shared'
-import { INERT_MAINTENANCE_VIEW } from '@/lib/maintenance-shared'
+import type { MaintenanceConfig, MaintenanceScope, MaintenanceService, MaintenanceView } from '@/lib/maintenance-shared'
+import { INERT_MAINTENANCE_VIEW, MAINTENANCE_SECTIONS } from '@/lib/maintenance-shared'
 
 /**
  * Maintenance mode control.
@@ -64,6 +65,9 @@ export default function AdminMaintenancePage() {
   // Editable copy of the config.
   const [enabled, setEnabled] = useState(false)
   const [mode, setMode] = useState<'blackout' | 'banner'>('blackout')
+  const [scope, setScope] = useState<MaintenanceScope>('full')
+  const [sections, setSections] = useState<string[]>([])
+  const [extraPaths, setExtraPaths] = useState('')
   const [title, setTitle] = useState('')
   const [message, setMessage] = useState('')
   const [banner, setBanner] = useState('')
@@ -85,6 +89,11 @@ export default function AdminMaintenancePage() {
       setStatus(data.status as typeof status)
       setEnabled(cfg.enabled)
       setMode(cfg.mode)
+      setScope(cfg.scope ?? 'full')
+      const stored = cfg.blockedPaths ?? []
+      setSections(MAINTENANCE_SECTIONS.filter((section) => section.paths.every((path) => stored.includes(path))).map((section) => section.id))
+      const covered = new Set(MAINTENANCE_SECTIONS.filter((section) => stored.includes(section.paths[0])).flatMap((section) => section.paths))
+      setExtraPaths(stored.filter((path) => !covered.has(path)).join('\n'))
       setTitle(cfg.title)
       setMessage(cfg.message)
       setBanner(cfg.banner)
@@ -107,12 +116,24 @@ export default function AdminMaintenancePage() {
     if (session.status === 'authorized') void load()
   }, [session.status, load])
 
+  const resolvedPaths = useMemo(() => {
+    const fromSections = MAINTENANCE_SECTIONS.filter((section) => sections.includes(section.id)).flatMap((section) => section.paths)
+    const extras = extraPaths
+      .split(/[\n,;\s]+/)
+      .map((entry) => entry.trim())
+      .filter(Boolean)
+    return Array.from(new Set([...fromSections, ...extras]))
+  }, [sections, extraPaths])
+
   const dirty = useMemo(() => {
     if (!config) return false
+    const pathsSame = resolvedPaths.join(' ') === (config.blockedPaths ?? []).join(' ')
     const emails = parseEmails(allowedEmailsText)
     return (
       enabled !== config.enabled ||
       mode !== config.mode ||
+      scope !== (config.scope ?? 'full') ||
+      (scope === 'sections' && !pathsSame) ||
       title.trim() !== config.title ||
       message.trim() !== config.message ||
       banner.trim() !== config.banner ||
@@ -125,13 +146,16 @@ export default function AdminMaintenancePage() {
       emails.join(',') !== (config.allowedEmails ?? []).join(',') ||
       JSON.stringify(services) !== JSON.stringify(config.affectedServices ?? [])
     )
-  }, [config, enabled, mode, title, message, banner, reason, estimatedEnd, scheduledStart, autoResolve, allowSignIn, contactEmail, allowedEmailsText, services])
+  }, [config, enabled, mode, scope, resolvedPaths, title, message, banner, reason, estimatedEnd, scheduledStart, autoResolve, allowSignIn, contactEmail, allowedEmailsText, services])
 
   const previewView: MaintenanceView = useMemo(
     () => ({
       ...INERT_MAINTENANCE_VIEW,
       enabled: true,
       blocking: enabled && mode === 'blackout',
+      blocksAll: scope === 'full',
+      scope,
+      blockedPaths: scope === 'sections' ? resolvedPaths : [],
       bannerOnly: enabled && mode === 'banner',
       mode,
       title: title || INERT_MAINTENANCE_VIEW.title,
@@ -145,7 +169,7 @@ export default function AdminMaintenancePage() {
       raw: config ?? INERT_MAINTENANCE_VIEW.raw,
       unknown: false,
     }),
-    [enabled, mode, title, message, banner, estimatedEnd, contactEmail, services, config],
+    [enabled, mode, scope, resolvedPaths, title, message, banner, estimatedEnd, contactEmail, services, config],
   )
 
   const save = async () => {
@@ -154,6 +178,8 @@ export default function AdminMaintenancePage() {
       const result = await adminApi.saveMaintenance({
         enabled,
         mode,
+        scope,
+        blockedPaths: scope === 'sections' ? resolvedPaths : [],
         title: title.trim(),
         message: message.trim(),
         banner: banner.trim(),
@@ -363,6 +389,106 @@ export default function AdminMaintenancePage() {
                   </div>
                 </Field>
               </div>
+            </div>
+          </AdminCard>
+
+          <AdminCard
+            title="What to pause"
+            description="Most windows only need part of the platform. A scoped window leaves the rest of the site working, and says so on the page."
+            icon={<Layers className="size-4" />}
+          >
+            <div className="flex flex-col gap-3.5">
+              <div className="grid gap-2 sm:grid-cols-2">
+                {(
+                  [
+                    ['full', 'Whole site', 'Every page and endpoint except the console. Use for schema changes, migrations or a full outage.'],
+                    ['sections', 'Only these areas', 'Everything else keeps working normally. Workers can still browse, apply and read their balance.'],
+                  ] as const
+                ).map(([value, label, hint]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setScope(value)}
+                    className={cn(
+                      'rounded-xl border p-3 text-left transition-colors',
+                      scope === value ? 'border-primary bg-primary/[0.06]' : 'border-border bg-background/60 hover:bg-muted',
+                    )}
+                  >
+                    <span className="flex items-center gap-2 text-xs font-semibold text-foreground">
+                      <span className={cn('flex size-3.5 items-center justify-center rounded-full border', scope === value ? 'border-primary bg-primary' : 'border-muted-foreground/40',
+                      )}
+                    >
+                        {scope === value && <span className="size-1 rounded-full bg-primary-foreground" />}
+                      </span>
+                      {label}
+                    </span>
+                    <span className="mt-1 block text-[11px] leading-snug text-muted-foreground">{hint}</span>
+                  </button>
+                ))}
+              </div>
+
+              {scope === 'sections' ? (
+                <>
+                  <ul className="flex flex-col gap-1.5">
+                    {MAINTENANCE_SECTIONS.map((section) => {
+                      const checked = sections.includes(section.id)
+                      return (
+                        <li key={section.id}>
+                          <label
+                            className={cn(
+                              'flex cursor-pointer items-start gap-2.5 rounded-xl border px-3 py-2 transition-colors',
+                              checked ? 'border-destructive/40 bg-destructive/[0.05]' : 'border-border/70 bg-background/50 hover:bg-muted',
+                            )}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={(event) =>
+                                setSections((prev) => (event.target.checked ? [...prev, section.id] : prev.filter((id) => id !== section.id)))
+                              }
+                              className="mt-0.5 size-3.5 accent-[var(--primary)]"
+                            />
+                            <span className="min-w-0 flex-1">
+                              <span className="block text-xs font-semibold text-foreground">{section.label}</span>
+                              <span className="block font-mono text-[10px] text-muted-foreground">{section.paths.join('  ')}</span>
+                            </span>
+                          </label>
+                        </li>
+                      )
+                    })}
+                  </ul>
+
+                  <Field label="Extra paths to pause" hint="One prefix per line, e.g. /api/wallet/withdraw. /admin, /status, /maintenance and /api/health can never be paused — you must always be able to switch this off.">
+                    <textarea
+                      rows={2}
+                      value={extraPaths}
+                      onChange={(event) => setExtraPaths(event.target.value)}
+                      placeholder="/api/payouts"
+                      className={cn(inputClass, 'font-mono text-[11px]')}
+                    />
+                  </Field>
+
+                  <div className="rounded-xl border border-border/70 bg-background/50 px-3 py-2.5">
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Gating {resolvedPaths.length} path{resolvedPaths.length === 1 ? '' : 's'}</p>
+                    <div className="mt-1.5 flex flex-wrap gap-1.5">
+                      {resolvedPaths.length === 0 ? (
+                        <span className="text-[11px] text-amber-700 dark:text-amber-400">Nothing selected — saving this would pause the whole site instead.</span>
+                      ) : (
+                        resolvedPaths.map((path) => (
+                          <code key={path} className="rounded-md border border-border bg-card px-1.5 py-0.5 font-mono text-[10px] text-foreground">
+                            {path}
+                          </code>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <p className="text-[11px] leading-relaxed text-muted-foreground">
+                  Workers get a static page that does not depend on the app or the database: heading, message, expected back-online time and the list of affected services. Queues and crawlers
+                  receive <code className="font-mono">503</code> with <code className="font-mono">Retry-After</code>.
+                </p>
+              )}
             </div>
           </AdminCard>
 

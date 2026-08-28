@@ -9,6 +9,7 @@ import { AppShell } from '@/components/app-shell'
 import { MaintenanceScreen } from '@/components/maintenance-screen'
 import { MaintenanceProvider, useMaintenance } from '@/components/maintenance-provider'
 import { useAdminSession } from '@/lib/admin'
+import { matchesBlockedPath } from '@/lib/maintenance-shared'
 
 /**
  * The application gate: auth requirement, maintenance interception and chrome selection.
@@ -43,7 +44,12 @@ function Gate({ children }: { children: React.ReactNode }) {
 
   const isPublic = useMemo(() => PUBLIC_ROUTES.some((route) => pathname === route || pathname.startsWith(`${route}/`)), [pathname])
   const isAdminRoute = pathname.startsWith('/admin') || pathname.startsWith('/api/admin')
-  const blackout = view.blocking && !bypassed && admin.status !== 'authorized'
+  // A full blackout replaces the whole app. A scoped one (`sections`) replaces only the affected
+  // route, so a payout run does not take the job board down with it — which is what the notice claims.
+  const blackoutAll = view.blocking && view.blocksAll && !bypassed && admin.status !== 'authorized'
+  const scopedHit =
+    view.blocking && !view.blocksAll && !bypassed && admin.status !== 'authorized' && matchesBlockedPath(pathname, view.blockedPaths)
+  const blackout = blackoutAll
 
   // Redirect to sign-in only for routes that genuinely need a session, and never while an outage
   // is up (the maintenance screen is the correct terminal state, not a redirect loop).
@@ -59,7 +65,7 @@ function Gate({ children }: { children: React.ReactNode }) {
     return () => clearTimeout(id)
   }, [])
 
-  if (blackout && !isAdminRoute) {
+  if (blackoutAll && !isAdminRoute) {
     return <MaintenanceScreen config={view} onRefresh={() => admin.refresh()} />
   }
 
@@ -76,6 +82,16 @@ function Gate({ children }: { children: React.ReactNode }) {
 
   // /admin has its own layout + session gate; it renders without the worker chrome (see admin/layout).
   if (isAdminRoute) return <>{children}</>
+
+  if (scopedHit) {
+    return (
+      <AfterWorksProvider>
+        <AppShell>
+          <MaintenanceScreen config={view} embedded onRefresh={() => admin.refresh()} />
+        </AppShell>
+      </AfterWorksProvider>
+    )
+  }
 
   return (
     <AfterWorksProvider>

@@ -124,7 +124,7 @@ const DIDIT_HOSTS = 'https://*.didit.me https://apx.didit.me'
 
 function buildCsp(production: boolean): string {
   const scriptSrc = production
-    ? `script-src 'self' 'wasm-unsafe-eval' ${FIREBASE_HOSTS} https://apis.google.com https://js.paystack.co`
+        ? `script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' ${FIREBASE_HOSTS} https://apis.google.com https://js.paystack.co`
     : // Dev mode needs inline/eval for the React refresh runtime injected by Next.
       `script-src 'self' 'unsafe-eval' 'unsafe-inline' ${FIREBASE_HOSTS} https://apis.google.com https://js.paystack.co`
 
@@ -136,7 +136,7 @@ function buildCsp(production: boolean): string {
     `font-src 'self' data:`,
     `img-src 'self' data: blob: https:`,
     `connect-src 'self' https: wss:${production ? '' : ' ws:'} ${FIREBASE_HOSTS} ${PAYSTACK_HOSTS}`,
-    `frame-src 'self' ${PAYSTACK_HOSTS} ${DIDIT_HOSTS} https://apis.google.com`,
+    `frame-src 'self' ${FIREBASE_HOSTS} ${PAYSTACK_HOSTS} ${DIDIT_HOSTS} https://apis.google.com`,
     `worker-src 'self' blob:`,
     `manifest-src 'self'`,
     `object-src 'none'`,

@@ -59,6 +59,7 @@ export default function AdminMaintenancePage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [preview, setPreview] = useState(false)
+  const [forced, setForced] = useState(false)
 
   // Editable copy of the config.
   const [enabled, setEnabled] = useState(false)
@@ -79,6 +80,7 @@ export default function AdminMaintenancePage() {
     try {
       const data = await adminApi.maintenance()
       const cfg = data.config
+      setForced(data.forced === true)
       setConfig(cfg)
       setStatus(data.status as typeof status)
       setEnabled(cfg.enabled)
@@ -166,6 +168,7 @@ export default function AdminMaintenancePage() {
       })
       setConfig(result.config)
       setStatus(result.effective as typeof status)
+      if (result.warning) push('warning', result.warning, 9000)
       push(
         'success',
         `${enabled ? 'Maintenance saved' : 'Settings saved'}${result.changed?.length ? ` · ${result.changed.length} field${result.changed.length === 1 ? '' : 's'} updated` : ''} · live immediately for all sessions.`,
@@ -204,6 +207,16 @@ export default function AdminMaintenancePage() {
   return (
     <div className="flex flex-col gap-5">
       {toasts}
+
+      {forced && (
+        <div className="flex items-start gap-2.5 rounded-xl border border-destructive/35 bg-destructive/[0.07] p-3.5 text-xs text-destructive" role="alert">
+          <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+          <span>
+            An emergency override is active: <code className="font-mono">MAINTENANCE_FORCE</code> is set in the deployment environment and takes precedence over everything on
+            this page. Saving changes the stored settings, but traffic stays gated until that variable is removed in the platform’s environment settings.
+          </span>
+        </div>
+      )}
 
       {/* Hero switch */}
       <div
@@ -289,8 +302,9 @@ export default function AdminMaintenancePage() {
             className="ml-auto gap-1.5"
             onClick={async () => {
               try {
-                await adminApi.disableMaintenance()
-                push('success', 'Maintenance disabled — traffic is flowing again.')
+                const result = await adminApi.disableMaintenance()
+                if (result.warning) push('warning', result.warning, 9000)
+                else push('success', 'Maintenance disabled — traffic is flowing again.')
                 await load()
               } catch (err) {
                 push('error', err instanceof Error ? err.message : 'Could not disable maintenance.')

@@ -903,6 +903,11 @@ async function safeCount(build: () => admin.firestore.Query, fallbackLimit = 500
   }
 }
 
+async function getRate(): Promise<number> {
+  const { getExchangeRateUsdToKes } = await import('./afterworks-data')
+  return getExchangeRateUsdToKes()
+}
+
 export async function getPlatformStats(): Promise<PlatformStats> {
   const db = dbOrNull()
   const maintenance = await getMaintenanceConfigServer()
@@ -1001,6 +1006,7 @@ export async function getPlatformStats(): Promise<PlatformStats> {
     console.warn('[FirestoreAdmin] revenue aggregation skipped:', err)
   }
   try {
+    const rate = await getRate()
     const payouts = await db
       .collection('wallet_ledger')
       .where('kind', '==', 'earning')
@@ -1008,7 +1014,8 @@ export async function getPlatformStats(): Promise<PlatformStats> {
       .limit(1000)
       .get()
     payouts.forEach((d) => {
-      paidOutKes += (Number(((d.data() ?? {}).amountUsd as number) ?? 0) || 0) * 129
+      // Same rate the wallet endpoint publishes, so the console and the worker never disagree.
+      paidOutKes += (Number(((d.data() ?? {}).amountUsd as number) ?? 0) || 0) * rate
     })
   } catch (err) {
     console.warn('[FirestoreAdmin] payout aggregation skipped:', err)

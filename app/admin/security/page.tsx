@@ -159,8 +159,8 @@ export default function AdminSecurityPage() {
             </p>
             <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-all font-mono text-[11px] leading-relaxed text-muted-foreground">
 {`node scripts/hash-admin-password.mjs
-# → ADMIN_PASSWORD_SCRYPT="pbkdf2$210000$…"$…"
-# set it in the deploy env, restart, then revoke all sessions`}
+# prints ADMIN_PASSWORD_SCRYPT="scrypt$16384$8$1$<salt>$<hash>"
+# set it in the deploy env, redeploy, then revoke all sessions`}
             </pre>
           </div>
         </AdminCard>

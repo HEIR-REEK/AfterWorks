@@ -213,13 +213,16 @@ export async function terminateAdminSession(): Promise<void> {
 export const adminApi = {
   stats: (refresh = false) => apiFetch<Record<string, unknown>>('/api/admin', { query: refresh ? { refresh: 1 } : undefined, timeoutMs: 30_000 }),
   operatorAction: (body: Record<string, unknown>) => apiFetch<{ ok: boolean }>('/api/admin', { method: 'PATCH', body }),
-  maintenance: () => apiFetch<{ ok: boolean; config: MaintenanceConfig; status: Record<string, unknown> }>('/api/admin/maintenance'),
+  maintenance: () =>
+    apiFetch<{ ok: boolean; config: MaintenanceConfig; status: Record<string, unknown>; forced?: boolean }>('/api/admin/maintenance'),
   saveMaintenance: (patch: Partial<MaintenanceConfig>) =>
-    apiFetch<{ ok: boolean; config: MaintenanceConfig; changed: string[]; effective: Record<string, unknown> }>('/api/admin/maintenance', {
+    apiFetch<{ ok: boolean; config: MaintenanceConfig; changed: string[]; effective: Record<string, unknown>; forced?: boolean; warning?: string }>(
+      '/api/admin/maintenance', {
       method: 'PUT',
       body: patch,
     }),
-  disableMaintenance: () => apiFetch<{ ok: boolean; config: MaintenanceConfig }>('/api/admin/maintenance', { method: 'DELETE' }),
+  disableMaintenance: () =>
+    apiFetch<{ ok: boolean; config: MaintenanceConfig; forced?: boolean; warning?: string }>('/api/admin/maintenance', { method: 'DELETE' }),
   users: (query: { pageSize?: number; cursor?: string | null; search?: string; state?: string }) =>
     apiFetch<{ ok: boolean; rows: AdminUserRow[]; nextCursor: string | null; hasMore: boolean; degraded?: string }>('/api/admin/users', { query }),
   userDetail: (uid: string) => apiFetch<{ ok: boolean; user: Record<string, unknown> }>('/api/admin/users', { query: { uid } }),

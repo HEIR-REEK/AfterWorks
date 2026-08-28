@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import {
   DEFAULT_MAINTENANCE_CONFIG,
+  isMaintenanceForced,
   resolveMaintenance,
   type MaintenanceConfig,
   type MaintenanceService,
@@ -129,6 +130,7 @@ export async function GET(req: NextRequest) {
     const config = await getMaintenanceConfigServer()
     const status = resolveMaintenance(config)
     return json({
+      forced: isMaintenanceForced(),
       ok: true,
       config,
       status: {
@@ -198,6 +200,15 @@ async function save(req: NextRequest) {
 
     return json({
       ok: true,
+      // If the environment is forcing a window, saving the document will not lift it — say so
+      // instead of letting the operator believe the switch is broken.
+      forced: isMaintenanceForced(),
+      ...(isMaintenanceForced()
+        ? {
+            warning:
+              'MAINTENANCE_FORCE is set in the deployment environment, so it overrides these settings. Traffic stays gated until that variable is removed (or set to off).',
+          }
+        : {}),
       config,
       changed,
       effective: {
@@ -223,8 +234,15 @@ export async function DELETE(req: NextRequest) {
       { enabled: false, scheduledStart: null, estimatedEnd: null },
       guard.value.email,
     )
-    await audit({ action: 'MAINTENANCE_FORCE_DISABLED', actorEmail: guard.value.email, details: { version: config.version }, req })
-    return json({ ok: true, config })
+    await audit({ action: 'MAINTENANCE_DISABLED', actorEmail: guard.value.email, details: { version: config.version, forcedOverride: isMaintenanceForced() }, req })
+    return json({
+      ok: true,
+      config,
+      forced: isMaintenanceForced(),
+      ...(isMaintenanceForced()
+        ? { warning: 'The stored window is cleared, but MAINTENANCE_FORCE is still set in the environment — traffic stays gated until it is removed.' }
+        : {}),
+    })
   } catch (err) {
     return routeError('admin/maintenance:DELETE', err)
   }

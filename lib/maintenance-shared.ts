@@ -16,8 +16,50 @@ import { isEmailLike, sanitizeLine, sanitizePlainText } from '@/lib/security-cor
  * `process.env[name]` is undefined. That silently disables the edge maintenance gate on Vercel-style
  * builds, so every env read that the edge path needs goes through these helpers instead.
  */
-function staticEnv(name: 'FIREBASE_PROJECT_ID' | 'NEXT_PUBLIC_FIREBASE_PROJECT_ID' | 'FIREBASE_WEB_API_KEY' | 'NEXT_PUBLIC_FIREBASE_API_KEY' | 'MAINTENANCE_CACHE_MS' | 'MAINTENANCE_EDGE_GATE'): string | undefined {
-  return typeof process !== 'undefined' && process.env ? process.env[name] : undefined
+/**
+ * Environment names this module may read.
+ *
+ * Each one is accessed as a literal below on purpose: Next inlines `process.env.NAME` for the
+ * Edge/middleware bundle only when it appears literally in the source. A dynamic index
+ * (`process.env[name]`) silently yields `undefined` at the edge, which would mean the maintenance
+ * gate and its cache TTL were only ever configurable in Node — i.e. the documented switch would not
+ * actually switch the thing that blocks traffic.
+ */
+export type MaintenanceEnvName =
+  | 'FIREBASE_PROJECT_ID'
+  | 'NEXT_PUBLIC_FIREBASE_PROJECT_ID'
+  | 'FIREBASE_WEB_API_KEY'
+  | 'NEXT_PUBLIC_FIREBASE_API_KEY'
+  | 'MAINTENANCE_CACHE_MS'
+  | 'MAINTENANCE_EDGE_GATE'
+  | 'MAINTENANCE_FORCE'
+  | 'MAINTENANCE_FORCE_UNTIL'
+  | 'MAINTENANCE_FORCE_MESSAGE'
+
+function staticEnv(name: MaintenanceEnvName): string | undefined {
+  if (typeof process === 'undefined' || !process.env) return undefined
+  switch (name) {
+    case 'FIREBASE_PROJECT_ID':
+      return process.env.FIREBASE_PROJECT_ID
+    case 'NEXT_PUBLIC_FIREBASE_PROJECT_ID':
+      return process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID
+    case 'FIREBASE_WEB_API_KEY':
+      return process.env.FIREBASE_WEB_API_KEY
+    case 'NEXT_PUBLIC_FIREBASE_API_KEY':
+      return process.env.NEXT_PUBLIC_FIREBASE_API_KEY
+    case 'MAINTENANCE_CACHE_MS':
+      return process.env.MAINTENANCE_CACHE_MS
+    case 'MAINTENANCE_EDGE_GATE':
+      return process.env.MAINTENANCE_EDGE_GATE
+    case 'MAINTENANCE_FORCE':
+      return process.env.MAINTENANCE_FORCE
+    case 'MAINTENANCE_FORCE_UNTIL':
+      return process.env.MAINTENANCE_FORCE_UNTIL
+    case 'MAINTENANCE_FORCE_MESSAGE':
+      return process.env.MAINTENANCE_FORCE_MESSAGE
+    default:
+      return undefined
+  }
 }
 
 export type MaintenanceMode = 'blackout' | 'banner'
@@ -183,8 +225,47 @@ export type MaintenanceStatus = {
   remainingMs: number | null
 }
 
+/**
+ * Emergency override: `MAINTENANCE_FORCE=blackout|banner` in the deployment environment.
+ *
+ * The normal source of truth is `system/maintenance` in Firestore — but when the datastore itself is
+ * degraded, or a credentials problem means the console cannot save, the operator still needs one way
+ * to stop traffic. A platform-level env var is that lever, it is honoured identically at the edge and
+ * in Node, and it cannot be set from the application.
+ */
+export function forcedMaintenanceConfig(): MaintenanceConfig | null {
+  const flag = (staticEnv('MAINTENANCE_FORCE') ?? '').trim().toLowerCase()
+  if (!flag || flag === 'false' || flag === '0' || flag === 'off') return null
+
+  const until = (staticEnv('MAINTENANCE_FORCE_UNTIL') ?? '').trim()
+  const parsed = until ? new Date(until) : null
+  const estimatedEnd = parsed && !Number.isNaN(parsed.getTime()) ? parsed.toISOString() : null
+  const message = (staticEnv('MAINTENANCE_FORCE_MESSAGE') ?? '').trim()
+
+  return normaliseMaintenanceConfig({
+    ...DEFAULT_MAINTENANCE_CONFIG,
+    enabled: true,
+    mode: flag === 'banner' ? 'banner' : 'blackout',
+    reason: 'outage',
+    title: 'Temporarily unavailable',
+    message:
+      message ||
+      'We have interrupted access while we stabilise the platform. Your applications, earnings and verification records are untouched — please try again shortly.',
+    estimatedEnd,
+    // Only auto-resolve when the operator gave an end time; otherwise an env override that cannot
+    // expire silently turns into "blocked forever" the moment the ETA passes.
+    autoResolve: Boolean(estimatedEnd),
+    allowSignIn: false,
+    updatedBy: 'MAINTENANCE_FORCE',
+  })
+}
+
+export function isMaintenanceForced(): boolean {
+  return forcedMaintenanceConfig() !== null
+}
+
 export function resolveMaintenance(configInput: MaintenanceConfig, now: number = Date.now()): MaintenanceStatus {
-  const config = normaliseMaintenanceConfig(configInput)
+  const config = normaliseMaintenanceConfig(forcedMaintenanceConfig() ?? configInput)
   const start = config.scheduledStart ? new Date(config.scheduledStart).getTime() : null
   const end = config.estimatedEnd ? new Date(config.estimatedEnd).getTime() : null
 

@@ -209,6 +209,15 @@ export function formatKes(usd: number): string {
   }).format(usd * USD_TO_KES)
 }
 
+/** Format an amount that is already denominated in Kenyan Shillings (no FX conversion). */
+export function formatKesValue(kes: number): string {
+  return new Intl.NumberFormat('en-KE', {
+    style: 'currency',
+    currency: 'KES',
+    maximumFractionDigits: 0,
+  }).format(kes)
+}
+
 export function formatDuration(minutes: number): string {
   if (minutes < 60) return `${minutes} min`
   const hours = Math.round((minutes / 60) * 10) / 10

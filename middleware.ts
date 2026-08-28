@@ -135,7 +135,9 @@ function buildCsp(production: boolean): string {
     `base-uri 'self'`,
     `form-action 'self'`,
     `frame-ancestors 'none'`,
-    `require-trusted-types-for 'no-csp'`,
+    // No `require-trusted-types-for`: Next 14 injects inline bootstrap scripts, so declaring a
+    // Trusted Types requirement here would break the app in a way that only shows up in production.
+    // XSS is instead handled the other way round — no unsafe-inline in production script-src above.
     ...(production ? [`upgrade-insecure-requests`] : []),
   ].join('; ')
 }
@@ -201,14 +203,24 @@ export async function middleware(request: NextRequest) {
 
   // 5. Maintenance blackout. Document requests are rewritten to the maintenance screen; API
   //    traffic gets a plain 503 so clients surface a retryable error instead of parsing HTML.
+  //    The resolved mode is also forwarded as a request header so the root layout can mark the
+  //    document (`<html data-maintenance>`) without reading Firestore a second time.
+  let maintenanceMode = 'off'
   if (MAINTENANCE_GATE_ON && !EXTENSION_PATH.test(pathname)) {
     const { status } = await getCachedMaintenanceStatus()
+    if (status.bannerOnly) maintenanceMode = 'banner'
     if (status.active) {
+      maintenanceMode = 'blackout'
       const privileged = await hasPrivilegedCookie(request)
       const gated = !ADMIN_PATH.test(pathname) && !isOpenPath(pathname)
       if (gated && !privileged) {
         if (isDocumentRequest(request)) {
-          const res = NextResponse.rewrite(new URL(`/maintenance${search}`, request.url), { status: 503 })
+          const rewriteHeaders = new Headers(request.headers)
+          rewriteHeaders.set('x-afterworks-maintenance-mode', 'blackout')
+          const res = NextResponse.rewrite(new URL(`/maintenance${search}`, request.url), {
+            status: 503,
+            request: { headers: rewriteHeaders },
+          })
           res.headers.set('Retry-After', String(status.retryAfterSec || 300))
           res.headers.set('X-Maintenance-Mode', 'blackout')
           res.headers.set('X-Robots-Tag', 'noindex, nofollow')
@@ -228,6 +240,7 @@ export async function middleware(request: NextRequest) {
   // 6. Pass through with hardened headers.
   const headers = new Headers(request.headers)
   headers.set('x-request-id', requestId)
+  if (maintenanceMode !== 'off') headers.set('x-afterworks-maintenance-mode', maintenanceMode)
   const response = NextResponse.next({ request: { headers } })
   applySecurityHeaders(response)
   response.headers.set('X-Request-Id', requestId)

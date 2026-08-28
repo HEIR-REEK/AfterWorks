@@ -1,7 +1,6 @@
 'use client'
 
 import { Suspense, useCallback, useEffect, useRef, useState } from 'react'
-import { usePaystackPayment } from 'react-paystack'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import {
@@ -20,14 +19,29 @@ import { useAuth } from '@/components/firebase-auth-provider'
 import { Button } from '@/components/ui/button'
 import { AssessmentQuiz } from '@/components/assessment-quiz'
 import { TrainingModules } from '@/components/training-modules'
-import {
-  formatKes,
-  getTrainingFeeKes,
-  getPaystackAmountSubunits,
-} from '@/lib/afterworks-data'
+import { formatKesValue, getTrainingFeeKes } from '@/lib/afterworks-data'
+import { authedFetch, describeError } from '@/lib/client-api'
 
-// localStorage key — persists across page navigations
+// Kept per-tab and short-lived: it is only a pointer to a pending Paystack charge that the server
+// can re-verify at any time, so it does not belong in localStorage where it would outlive the session.
 const LS_REF_KEY = 'aw_training_paystack_ref'
+
+function rememberReference(value: string | null) {
+  try {
+    if (value) window.sessionStorage.setItem(LS_REF_KEY, value)
+    else window.sessionStorage.removeItem(LS_REF_KEY)
+  } catch {
+    /* private mode — the URL parameter still carries the reference home */
+  }
+}
+
+function recalledReference(): string | null {
+  try {
+    return window.sessionStorage.getItem(LS_REF_KEY)
+  } catch {
+    return null
+  }
+}
 
 type PayState =
   | 'idle'
@@ -43,7 +57,6 @@ type PayState =
 function PaystackCheckoutSection({
   jobId,
   userEmail,
-  userId,
   onVerifySuccess,
   payState,
   setPayState,
@@ -52,7 +65,6 @@ function PaystackCheckoutSection({
 }: {
   jobId: string
   userEmail: string
-  userId: string
   onVerifySuccess: (ref: string) => Promise<void>
   payState: PayState
   setPayState: (st: PayState) => void
@@ -60,60 +72,48 @@ function PaystackCheckoutSection({
   setErrorMsg: (msg: string | null) => void
 }) {
   const amountKes = getTrainingFeeKes()
-  const amountSubunits = getPaystackAmountSubunits()
 
-  const paystackConfig = {
-    reference: `aw_training_${new Date().getTime()}`,
-    email: userEmail || 'user@afterworks.io',
-    amount: amountSubunits,
-    publicKey: process.env.NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY || '',
-    currency: 'KES',
-    metadata: {
-      userId: userId || '',
-      jobId: jobId,
-      custom_fields: [
-        { display_name: 'Job ID', variable_name: 'jobId', value: jobId },
-        { display_name: 'User ID', variable_name: 'userId', value: userId || '' },
-        { display_name: 'Purpose', variable_name: 'purpose', value: 'training_access' }
-      ]
-    }
-  }
+  const isLoading = payState === 'initializing' || payState === 'verifying' || payState === 'awaiting_payment'
 
-  const initializePayment = usePaystackPayment(paystackConfig as any)
-
-  const isLoading =
-    payState === 'initializing' ||
-    payState === 'verifying' ||
-    payState === 'awaiting_payment'
-
-  function handlePay() {
+  /**
+   * Ask the server to open the charge, then hand the browser to Paystack's hosted page.
+   *
+   * The amount, the payer email and the reference all come back from `/api/paystack/initialize`
+   * rather than being assembled here, so the price cannot be edited in devtools and the charge is
+   * reconcilable when the worker returns to this page.
+   */
+  async function handlePay() {
+    if (isLoading) return
     setErrorMsg(null)
 
     if (!userEmail) {
       setPayState('error')
-      setErrorMsg('Please sign in or enter your email to complete payment.')
+      setErrorMsg('Please sign in with the email you want charged before paying.')
       return
     }
 
-    setPayState('awaiting_payment')
-
+    setPayState('initializing')
     try {
-      initializePayment({
-        onSuccess: (reference: any) => {
-          const refStr = reference.reference || reference.trxref || reference
-          if (typeof refStr === 'string') {
-            localStorage.setItem(LS_REF_KEY, refStr)
-          }
-          onVerifySuccess(refStr)
-        },
-        onClose: () => {
-          setPayState('idle')
-        }
-      })
-    } catch (err: any) {
+      const data = await authedFetch<{ authorizationUrl: string; reference: string; amountKes: number }>(
+        '/api/paystack/initialize',
+        { method: 'POST', body: { jobId }, timeoutMs: 20_000 },
+      )
+      rememberReference(data.reference)
+      setPayState('awaiting_payment')
+      window.location.assign(data.authorizationUrl)
+    } catch (err) {
       setPayState('error')
-      setErrorMsg(err?.message || 'Could not launch checkout. Please check payment configuration.')
+      setErrorMsg(describeError(err))
     }
+  }
+
+  async function handleCheckNow() {
+    const ref = recalledReference()
+    if (!ref) {
+      setErrorMsg('No pending payment was found in this tab. Reload the page if you have just paid.')
+      return
+    }
+    await onVerifySuccess(ref)
   }
 
   return (
@@ -138,7 +138,8 @@ function PaystackCheckoutSection({
         <div className="flex items-center justify-between text-sm">
           <span className="font-medium text-foreground">Job Card Training Access Fee</span>
           <div className="flex flex-col items-end">
-            <span className="font-mono font-bold text-lg text-primary">10$</span>
+            <span className="font-mono text-lg font-bold text-primary">{formatKesValue(amountKes)}</span>
+            <span className="text-[11px] text-muted-foreground">≈ $10 · one job card</span>
           </div>
         </div>
 
@@ -157,9 +158,20 @@ function PaystackCheckoutSection({
 
       {/* Status banners */}
       {payState === 'awaiting_payment' && (
-        <div className="flex items-center gap-2 rounded-xl border border-border bg-muted/50 p-3 text-sm text-muted-foreground">
-          <Loader2 className="size-4 animate-spin text-primary" />
-          Waiting for payment detection…
+        <div className="flex flex-col gap-2.5 rounded-xl border border-border bg-muted/50 p-3 text-sm text-muted-foreground">
+          <span className="flex items-center gap-2">
+            <Loader2 className="size-4 animate-spin text-primary" />
+            Waiting for Paystack to confirm the charge…
+          </span>
+          <span className="flex flex-wrap items-center gap-2 text-xs">
+            Back already?
+            <Button type="button" size="sm" variant="outline" className="h-7 text-xs" onClick={() => void handleCheckNow()}>
+              Check payment now
+            </Button>
+            <Button type="button" size="sm" variant="ghost" className="h-7 text-xs" onClick={() => { rememberReference(null); setPayState('idle') }}>
+              Start over
+            </Button>
+          </span>
         </div>
       )}
 
@@ -180,12 +192,12 @@ function PaystackCheckoutSection({
         {isLoading ? (
           <>
             <Loader2 className="size-5 animate-spin" />
-            {payState === 'initializing' ? 'Redirecting to checkout…' : 'Detecting payment…'}
+            {payState === 'initializing' ? 'Opening secure checkout…' : 'Confirming payment…'}
           </>
         ) : (
           <>
             <CreditCard className="size-5" />
-            Pay 10$ for training and assessment
+            Pay {formatKesValue(amountKes)} for training and assessment
           </>
         )}
       </Button>
@@ -233,7 +245,7 @@ function TrainingPageInner({
     setPayState('verifying')
     const result = await verifyTrainingPayment(id, ref)
     if (result.ok && result.paid) {
-      localStorage.removeItem(LS_REF_KEY)
+      rememberReference(null)
       setPayState('paid')
       return
     }
@@ -268,7 +280,7 @@ function TrainingPageInner({
   // ── Poll for payment while awaiting ─────────────────────────────────────
   useEffect(() => {
     if (payState === 'awaiting_payment') {
-      const ref = localStorage.getItem(LS_REF_KEY)
+      const ref = recalledReference()
       if (!ref) return
 
       pollingRef.current = setInterval(() => verifyReference(ref), 4000)
@@ -294,16 +306,21 @@ function TrainingPageInner({
     }
 
     try {
+      // Receipt email. Configured in .env.local; absence is not an error — the application record
+      // is already written server-side and the worker also gets an in-app notification.
+      const serviceId = process.env.NEXT_PUBLIC_EMAILJS_SERVICE_ID ?? 'service_8qxbsyi'
+      const templateId = process.env.NEXT_PUBLIC_EMAILJS_TEMPLATE_ID ?? 'template_8g1egki'
+      const publicKey = process.env.NEXT_PUBLIC_EMAILJS_PUBLIC_KEY ?? 'Juc_jABykXhGr_WPK'
       await emailjs.send(
-        'service_8qxbsyi',
-        'template_8g1egki',
+        serviceId,
+        templateId,
         {
           to_name: worker.name || 'Applicant',
           to_email: worker.email,
           job_title: job!.title,
           message: 'Your application is under review. You will be contacted shortly for an online interview.',
         },
-        'Juc_jABykXhGr_WPK'
+        publicKey
       )
     } catch (err) {
       console.error('Failed to send application email:', err)
@@ -412,7 +429,6 @@ function TrainingPageInner({
             <PaystackCheckoutSection
               jobId={job.id}
               userEmail={userEmail}
-              userId={user?.uid || ''}
               onVerifySuccess={verifyReference}
               payState={payState}
               setPayState={setPayState}

@@ -51,9 +51,10 @@ const nextConfig = {
   experimental: {
     serverComponentsExternalPackages: ['firebase-admin'],
     // lucide-react ships hundreds of icons; tree-shake them at import time instead of bundling all.
-    optimizePackageImports: ['lucide-react', '@fontsource-variable/inter', '@fontsource-variable/jetbrains-mono'],
-    // Metadata is computed on demand (maintenance state lives in the data layer).
-    asyncMetadata: true,
+    // Note: the self-hosted font packages must NOT be listed here. optimizePackageImports rewrites
+    // sub-path imports for the listed packages, and Next then tries to parse their `index.css` as
+    // JavaScript ("Expression expected" at compile time).
+    optimizePackageImports: ['lucide-react'],
   },
   images: {
     formats: ['image/avif', 'image/webp'],

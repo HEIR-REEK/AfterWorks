@@ -18,6 +18,8 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { createKycSession } from '@/lib/didit'
 import { saveKycRecord, verifyIdToken, getUserProfile } from '@/lib/firestore-admin'
+import { consumeBucket, audit } from '@/lib/guards'
+import { env, isHostAllowed } from '@/lib/security-core'
 
 export async function POST(req: NextRequest) {
   try {
@@ -44,6 +46,15 @@ export async function POST(req: NextRequest) {
     const userId = decoded.uid
     const isMobile: boolean = !!body?.isMobile
 
+    // Didit sessions are metered and each one writes a record, so creation is throttled per member.
+    const bucket = consumeBucket('kyc-submit', 4, 5 * 60_000, userId)
+    if (!bucket.ok) {
+      return NextResponse.json(
+        { error: 'You have opened several verification sessions in a short time. Please wait before trying again.', retryAfterSec: bucket.retryAfterSec },
+        { status: 429, headers: { 'Retry-After': String(bucket.retryAfterSec) } },
+      )
+    }
+
     // ── Guard: user is already verified ──────────────────────────────────────
     const userProfile = await getUserProfile(userId)
     if (userProfile?.kycVerified === true) {
@@ -54,16 +65,17 @@ export async function POST(req: NextRequest) {
     }
 
 
+    // Where Didit sends the worker back to. Honouring x-forwarded-host blindly lets an attacker
+    // craft a request whose callback URL points at their own server — with the session token on it.
+    const configured = env('NEXT_PUBLIC_APP_URL') ?? env('APP_URL') ?? env('RENDER_EXTERNAL_URL') ?? env('VERCEL_URL')
     const host = req.headers.get('x-forwarded-host') || req.headers.get('host')
     const proto = req.headers.get('x-forwarded-proto') || 'https'
-    const publicOrigin =
-      process.env.NEXT_PUBLIC_APP_URL ||
-      process.env.APP_URL ||
-      process.env.RENDER_EXTERNAL_URL ||
-      process.env.VERCEL_URL ||
-      (host && !host.includes('localhost') && !host.includes('127.0.0.1')
+    const publicOrigin = (configured && configured.replace(/^https?:\/\//, '').length > 0
+      ? (configured.startsWith('http') ? configured : `https://${configured}`)
+      : host && isHostAllowed(host)
         ? `${proto}://${host}`
-        : req.nextUrl.origin)
+        : req.nextUrl.origin
+    ).replace(/\/+$/, '')
 
     // ── Create the Didit session ──────────────────────────────────────────────
     const session = await createKycSession(userId, isMobile, publicOrigin)
@@ -84,9 +96,26 @@ export async function POST(req: NextRequest) {
       verificationUrl: session.verification_url,
       isDemo: !!session.is_demo,
     })
+    await audit({
+      action: 'KYC_SESSION_CREATED',
+      actorEmail: userId, // uid is the stable identifier; the token's email is re-checked by the webhook anyway
+      details: { sessionId: session.session_id, isMobile, demo: Boolean(session.is_demo) },
+      req,
+    })
+
+    return NextResponse.json({
+      sessionId: session.session_id,
+      sessionToken: session.session_token,
+      verificationUrl: session.verification_url,
+      isDemo: !!session.is_demo,
+    })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error'
     console.error('[KYC submit]', message)
-    return NextResponse.json({ error: message }, { status: 500 })
+    // Provider internals (rate limits, API keys in messages) never reach the browser.
+    return NextResponse.json(
+      { error: 'Identity verification could not be started right now. Please try again in a few minutes.' },
+      { status: 502 },
+    )
   }
 }

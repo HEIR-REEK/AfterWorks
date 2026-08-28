@@ -1,28 +1,16 @@
 {
-  "hosting": {
-    "public": "public",
-    "ignore": [
-      "firebase.json",
-      "**/.*",
-      "**/node_modules/**"
-    ],
-    "rewrites": [
-      {
-        "source": "**",
-        "destination": "/index.html"
-      }
-    ]
-  },
   "firestore": {
-    "rules": "firestore.rules"
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
   },
   "auth": {
     "providers": {
       "emailPassword": true,
       "googleSignIn": {
         "oAuthBrandDisplayName": "AfterWorks",
-        "supportEmail": "support@afterworks"
+        "supportEmail": "support@afterworks.io"
       }
     }
-  }
+  },
+  "_comment": "Rules and indexes only. The Next.js app is deployed as a Node service (see render.yaml / DEPLOYMENT.md), not as Firebase Hosting static files."
 }

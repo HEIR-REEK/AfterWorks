@@ -1,4 +1,25 @@
 # System Implementation Checklist & Status Report
+# Accuracy notice
+
+Everything checked in this file as "Core Infrastructure" (Express, Prisma, PostgreSQL/SQLite,
+nodemon, generated Prisma client, error-handling middleware) **does not exist in this repository**
+and the checkboxes were never true for this codebase. The platform is a Next.js App Router application:
+Firebase Auth + Firestore, with privileged operations in route handlers under `app/api/**`.
+
+Corrected status, as of this pass:
+
+* **Implemented and enforced** — Firebase sign-in and profile, jobs catalogue, training gate with
+  Paystack charges verified server-side, applications with a real QA lifecycle, wallet ledger with
+  clearing windows and payouts, KYC via Didit (submit / status / signed webhook), admin console
+  (users, jobs, QA, audit, maintenance, security), maintenance mode at the edge, security headers
+  and CSP, rate limiting, audit logging.
+* **Not implemented** — Prisma/Express backend, Twilio OTP, device fingerprinting, ABIS matching,
+  background cron reconciliation workers, email receipts beyond the single EmailJS template, any
+  multi-tenant or admin-managed role hierarchy beyond the `ADMIN_EMAILS` roster + `isAdmin` flag.
+* **Known gaps** — no automated tests yet (only `npm run typecheck`), no CSP report collector, no
+  hard account deletion (moderation is a ban + flag for a retention job).
+
+See `SECURITY_HARDENING.md` for details and verification commands.
 
 ## Overview
 Complete AfterWorks backend prototype with all features from documentation implemented and tested.

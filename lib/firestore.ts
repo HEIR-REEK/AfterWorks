@@ -1,9 +1,14 @@
 /**
- * Firestore client helpers — user profile, wallet, maintenance mode, and admin persistence.
+ * Firestore client helpers — the browser-facing half of the data layer.
  *
- * Every user document lives at: users/{uid}
- * System config lives at: system/settings
- * Admin logs live at: admin_logs/{logId}
+ * Scope rules for this file (enforced by firestore.rules, not by convention):
+ *  • A member may read and edit **their own** profile, and read the public job catalogue.
+ *  • Nothing else is writable from the browser. Roles, KYC verdicts, wallet balances, job slots,
+ *    the maintenance switch and the audit ledger moved to server routes (`/api/admin/*`,
+ *    `/api/applications`), because a browser-supplied `isAdmin: true` is not a security model.
+ *  • Maintenance state is *polled* from `/api/maintenance` rather than subscribed to: it must work
+ *    for signed-out visitors, crawlers and blocked-websocket networks, and one ETag'd request every
+ *    20s is cheaper than a live listener per tab.
  */
 
 import { getApps, getApp } from 'firebase/app'
@@ -12,22 +17,37 @@ import {
   doc,
   setDoc,
   getDoc,
-  updateDoc,
-  deleteDoc,
   getDocs,
   collection,
   query,
-  orderBy,
-  limit,
+  where,
+  limit as fsLimit,
   serverTimestamp,
-  arrayUnion,
   onSnapshot,
   type Firestore,
 } from 'firebase/firestore'
-import type { Job, Application, ApplicationStatus } from '@/lib/afterworks-data'
+import type { Job } from '@/lib/afterworks-data'
+import { apiFetch, authedFetch } from '@/lib/client-api'
+import {
+  DEFAULT_MAINTENANCE_CONFIG,
+  INERT_MAINTENANCE_VIEW,
+  resolveMaintenance,
+  toMaintenanceView,
+  type MaintenanceConfig,
+  type MaintenanceMode,
+  type MaintenanceReason,
+  type MaintenanceScope,
+  type MaintenanceService,
+  type MaintenanceView,
+} from '@/lib/maintenance-shared'
+
+// Re-exported so existing importers (app shell, maintenance screen) keep working while the model
+// itself lives in the runtime-agnostic module that the middleware shares.
+export type { MaintenanceConfig, MaintenanceMode, MaintenanceReason, MaintenanceService, MaintenanceView }
+export { DEFAULT_MAINTENANCE_CONFIG, INERT_MAINTENANCE_VIEW, resolveMaintenance, toMaintenanceView }
 
 /**
- * All possible values for a user's accountState field.
+ * All possible values for a member's accountState field.
  */
 export type AccountState =
   | 'active'
@@ -44,7 +64,7 @@ export type UserProfile = {
   name: string
   email: string
   location: string
-  memberSince: string // e.g. "Jul 2026"
+  memberSince: string
   qualityScore: number
   jobsCompleted: number
   kycVerified: boolean
@@ -88,16 +108,7 @@ export type UserDocument = UserProfile & {
   wallet: WalletData
 }
 
-export type MaintenanceConfig = {
-  enabled: boolean
-  title: string
-  message: string
-  estimatedEnd: string | null
-  allowedEmails: string[]
-  updatedAt: string
-  updatedBy?: string
-}
-
+/** Kept as an alias so existing admin imports keep compiling while they move to the API. */
 export type AdminAuditLog = {
   id: string
   action: string
@@ -106,70 +117,60 @@ export type AdminAuditLog = {
   timestamp: string
 }
 
-export type PaymentTransaction = {
-  id: string
-  reference: string
-  userId?: string
-  email: string
-  amountKes: number
-  amountUsd?: number
-  currency: string
-  status: 'pending' | 'success' | 'failed'
-  jobId?: string
-  metadata?: Record<string, unknown>
-  createdAt: string
-}
+/** Fields the browser may write about itself. Anything else is dropped (and rejected server-side). */
+const MEMBER_EDITABLE_FIELDS = new Set([
+  'name',
+  'location',
+  'bio',
+  'skills',
+  'languages',
+  'preferredPayoutMethod',
+  'country',
+  'zipCode',
+  'bankName',
+  'bankBranch',
+  'bankAccountNumber',
+  'school',
+  'course',
+  'jobExperience',
+  'career',
+  'phone',
+])
 
-export const DEFAULT_MAINTENANCE_CONFIG: MaintenanceConfig = {
-  enabled: false,
-  title: 'Under Scheduled Maintenance',
-  message: 'We are currently optimizing the AfterWorks platform for improved performance and reliability. We will be back shortly.',
-  estimatedEnd: null,
-  allowedEmails: [],
-  updatedAt: new Date().toISOString(),
-  updatedBy: 'System',
-}
+// ─── Firestore handle ────────────────────────────────────────────────────────
 
-/**
- * Safely initialise (or reuse) the Firestore instance.
- */
 function getDB(): Firestore | null {
-  if (!getApps().length) {
-    console.warn('[Firestore] Firebase app not initialized — skipping DB call.')
-    return null
-  }
+  if (typeof window === 'undefined') return null
+  if (!getApps().length) return null
   try {
     return getFirestore(getApp())
   } catch (err) {
-    console.error('[Firestore] Failed to get Firestore instance:', err)
+    console.warn('[Firestore] instance unavailable:', err instanceof Error ? err.message : err)
     return null
   }
 }
 
-/** Format the current date as "Mon YYYY" for memberSince */
+export function isFirestoreReady(): boolean {
+  return getDB() !== null
+}
+
 function currentMonthYear(): string {
   return new Date().toLocaleString('en-US', { month: 'short', year: 'numeric' })
 }
 
+// ─── Profile ─────────────────────────────────────────────────────────────────
+
 /**
- * Called once on sign-up.
- * Creates the user document in Firestore with a blank wallet.
+ * Called once on sign-up. Creates the member document in its inert initial state; privileges are
+ * deliberately absent (see firestore.rules `create` clause, which rejects otherwise).
  */
-export async function createUserDocument(
-  uid: string,
-  name: string,
-  email: string,
-): Promise<void> {
+export async function createUserDocument(uid: string, name: string, email: string): Promise<void> {
   const db = getDB()
   if (!db) return
 
   try {
     const userRef = doc(db, 'users', uid)
-    const existing = await getDoc(userRef)
-    if (existing.exists()) {
-      console.log('[Firestore] User document already exists for uid:', uid)
-      return
-    }
+    if ((await getDoc(userRef)).exists()) return
 
     await setDoc(
       userRef,
@@ -190,548 +191,286 @@ export async function createUserDocument(
         languages: [],
         preferredPayoutMethod: 'M-Pesa',
         paidTrainings: [],
-        wallet: {
-          pendingUsd: 0,
-          availableUsd: 0,
-          payoutNumber: '',
-        },
+        wallet: { pendingUsd: 0, availableUsd: 0, payoutNumber: '' },
         createdAt: serverTimestamp(),
       },
       { merge: true },
     )
-    console.log('[Firestore] User document created for uid:', uid)
   } catch (err) {
-    console.error('[Firestore] createUserDocument failed:', err)
+    console.warn('[Firestore] createUserDocument skipped:', err instanceof Error ? err.message : err)
   }
 }
 
-/**
- * Fetches the full user document (profile + wallet) from Firestore.
- */
 export async function getUserDocument(uid: string): Promise<UserDocument | null> {
   const db = getDB()
   if (!db) return null
-
   try {
     const snap = await getDoc(doc(db, 'users', uid))
     if (!snap.exists()) return null
-    const data = snap.data() as Omit<UserDocument, 'uid'>
-    return { uid, ...data }
+    return { uid, ...(snap.data() as Omit<UserDocument, 'uid'>) }
   } catch (err) {
-    console.error('[Firestore] getUserDocument failed for uid:', uid, err)
+    console.warn('[Firestore] getUserDocument failed:', err instanceof Error ? err.message : err)
     return null
   }
 }
 
-/**
- * Subscribes to the user document in real-time.
- */
-export function subscribeToUserDocument(
-  uid: string,
-  onUpdate: (data: UserDocument | null) => void,
-): () => void {
+export function subscribeToUserDocument(uid: string, onUpdate: (data: UserDocument | null) => void): () => void {
   const db = getDB()
   if (!db) {
     onUpdate(null)
     return () => {}
   }
-
   return onSnapshot(
     doc(db, 'users', uid),
-    (snap) => {
-      if (!snap.exists()) {
-        onUpdate(null)
-      } else {
-        const data = snap.data() as Omit<UserDocument, 'uid'>
-        onUpdate({ uid, ...data })
-      }
-    },
+    (snap) => onUpdate(snap.exists() ? { uid, ...(snap.data() as Omit<UserDocument, 'uid'>) } : null),
     (err) => {
-      console.error('[Firestore] subscribeToUserDocument failed for uid:', uid, err)
+      console.warn('[Firestore] subscribeToUserDocument error:', err instanceof Error ? err.message : err)
       onUpdate(null)
     },
   )
 }
 
 /**
- * Updates only the wallet sub-object for a user.
+ * Profile edits. Unknown or privileged keys are filtered here *and* rejected by the server and the
+ * rules, so a tampered client bundle cannot smuggle `kycVerified: true` through a profile save.
  */
-export async function updateUserWallet(uid: string, wallet: Partial<WalletData>): Promise<void> {
+export async function updateUserProfile(uid: string, fields: Partial<Omit<UserProfile, 'uid'>>): Promise<{ ok: boolean; dropped: string[] }> {
   const db = getDB()
-  if (!db) return
+  if (!db) return { ok: false, dropped: Object.keys(fields) }
+
+  const clean: Record<string, unknown> = {}
+  const dropped: string[] = []
+  for (const [key, value] of Object.entries(fields)) {
+    if (value === undefined) continue
+    if (!MEMBER_EDITABLE_FIELDS.has(key)) {
+      dropped.push(key)
+      continue
+    }
+    clean[key] = value
+  }
+  if (Object.keys(clean).length === 0) return { ok: true, dropped }
 
   try {
-    const userRef = doc(db, 'users', uid)
-    const updates: Record<string, number | string> = {}
-    if (wallet.pendingUsd !== undefined) updates['wallet.pendingUsd'] = wallet.pendingUsd
-    if (wallet.availableUsd !== undefined) updates['wallet.availableUsd'] = wallet.availableUsd
+    await setDoc(doc(db, 'users', uid), { ...clean, updatedAt: new Date().toISOString() }, { merge: true })
+    return { ok: true, dropped }
+  } catch (err) {
+    console.error('[Firestore] updateUserProfile failed:', err)
+    return { ok: false, dropped }
+  }
+}
+
+/** Payout handle only. Balances themselves are server-owned (wallet ledger + admin actions). */
+export async function updateUserWallet(uid: string, wallet: { payoutNumber?: string }): Promise<void> {
+  const db = getDB()
+  if (!db) return
+  try {
+    const updates: Record<string, string> = {}
     if (wallet.payoutNumber !== undefined) updates['wallet.payoutNumber'] = wallet.payoutNumber
-
-    await setDoc(userRef, updates, { merge: true })
+    if (Object.keys(updates).length === 0) return
+    await setDoc(doc(db, 'users', uid), updates, { merge: true })
   } catch (err) {
-    console.error('[Firestore] updateUserWallet failed for uid:', uid, err)
+    console.error('[Firestore] updateUserWallet failed:', err)
   }
 }
 
 /**
- * Updates profile fields on the user's Firestore document.
+ * Wallet snapshot for the signed-in member. Route returns the same numbers the ledger produced, so
+ * "pending clears at 09:14 tomorrow" is a real timestamp and not copy.
  */
-export async function updateUserProfile(
-  uid: string,
-  fields: Partial<Omit<UserProfile, 'uid'>>,
-): Promise<void> {
-  const db = getDB()
-  if (!db) return
-
-  try {
-    const clean = Object.fromEntries(
-      Object.entries(fields).filter(([, v]) => v !== undefined),
-    ) as Record<string, unknown>
-
-    if (Object.keys(clean).length === 0) return
-
-    const userRef = doc(db, 'users', uid)
-    await setDoc(userRef, clean, { merge: true })
-  } catch (err) {
-    console.error('[Firestore] updateUserProfile failed for uid:', uid, err)
-  }
+export async function fetchWallet(): Promise<WalletData & { entries?: unknown[]; clearingLabel?: string } | null> {
+  return authedFetch<WalletData & { entries?: unknown[]; clearingLabel?: string }>('/api/wallet')
 }
 
-/**
- * Records a paid training module for a user in Firestore.
- */
-export async function recordPaidTrainingInFirestore(uid: string, jobId: string): Promise<void> {
-  const db = getDB()
-  if (!db) return
+// ─── Jobs (public catalogue, bounded read) ───────────────────────────────────
 
-  try {
-    const userRef = doc(db, 'users', uid)
-    await updateDoc(userRef, {
-      paidTrainings: arrayUnion(jobId),
-    })
-  } catch (err) {
-    console.warn('[Firestore] updateDoc arrayUnion failed, attempting setDoc merge:', err)
-    try {
-      const userRef = doc(db, 'users', uid)
-      const userDoc = await getUserDocument(uid)
-      const existing = userDoc?.paidTrainings || []
-      await setDoc(
-        userRef,
-        { paidTrainings: Array.from(new Set([...existing, jobId])) },
-        { merge: true },
-      )
-    } catch (fallbackErr) {
-      console.error('[Firestore] fallback recordPaidTraining failed:', fallbackErr)
-    }
-  }
-}
-
-// ─── Maintenance Mode Operations ─────────────────────────────────────────────
-
-/**
- * Fetches the system maintenance mode configuration.
- */
-export async function getMaintenanceConfig(): Promise<MaintenanceConfig> {
-  const db = getDB()
-  if (!db) return DEFAULT_MAINTENANCE_CONFIG
-
-  try {
-    const snap = await getDoc(doc(db, 'system', 'maintenance'))
-    if (!snap.exists()) {
-      return DEFAULT_MAINTENANCE_CONFIG
-    }
-    return { ...DEFAULT_MAINTENANCE_CONFIG, ...snap.data() } as MaintenanceConfig
-  } catch (err) {
-    console.error('[Firestore] getMaintenanceConfig failed:', err)
-    return DEFAULT_MAINTENANCE_CONFIG
-  }
-}
-
-/**
- * Subscribes to maintenance mode changes in real-time.
- */
-export function subscribeToMaintenanceConfig(
-  onUpdate: (config: MaintenanceConfig) => void,
-): () => void {
-  const db = getDB()
-  if (!db) {
-    onUpdate(DEFAULT_MAINTENANCE_CONFIG)
-    return () => {}
-  }
-
-  return onSnapshot(
-    doc(db, 'system', 'maintenance'),
-    (snap) => {
-      if (!snap.exists()) {
-        onUpdate(DEFAULT_MAINTENANCE_CONFIG)
-      } else {
-        onUpdate({ ...DEFAULT_MAINTENANCE_CONFIG, ...snap.data() } as MaintenanceConfig)
-      }
-    },
-    (err) => {
-      console.error('[Firestore] subscribeToMaintenanceConfig error:', err)
-      onUpdate(DEFAULT_MAINTENANCE_CONFIG)
-    },
-  )
-}
-
-/**
- * Updates maintenance mode configuration in Firestore.
- */
-export async function updateMaintenanceConfig(
-  config: Partial<MaintenanceConfig>,
-): Promise<void> {
-  const db = getDB()
-  if (!db) return
-
-  try {
-    const clean = Object.fromEntries(
-      Object.entries({
-        ...config,
-        updatedAt: new Date().toISOString(),
-      }).filter(([, v]) => v !== undefined),
-    )
-    await setDoc(doc(db, 'system', 'maintenance'), clean, { merge: true })
-  } catch (err) {
-    console.error('[Firestore] updateMaintenanceConfig failed:', err)
-  }
-}
-
-// ─── Admin Users & Management Operations ─────────────────────────────────────
-
-/**
- * Retrieves all registered users from Firestore.
- */
-export async function getAllUsers(): Promise<UserDocument[]> {
+export async function loadJobsOnce(max = 60): Promise<Job[]> {
   const db = getDB()
   if (!db) return []
-
   try {
-    const snap = await getDocs(collection(db, 'users'))
-    const list: UserDocument[] = []
-    snap.forEach((d) => {
-      const data = d.data() as Omit<UserDocument, 'uid'>
-      list.push({ uid: d.id, ...data })
-    })
-    return list
+    const snap = await getDocs(query(collection(db, 'jobs'), fsLimit(max)))
+    const jobs: Job[] = []
+    snap.forEach((d) => jobs.push(d.data() as Job))
+    return jobs
   } catch (err) {
-    console.error('[Firestore] getAllUsers failed:', err)
+    console.warn('[Firestore] loadJobsOnce failed:', err instanceof Error ? err.message : err)
     return []
   }
 }
 
-/**
- * Subscribes to all users in real-time.
- */
-export function subscribeToAllUsers(
-  onUpdate: (users: UserDocument[]) => void,
-): () => void {
+export function subscribeToJobs(onUpdate: (jobs: Job[]) => void): () => void {
   const db = getDB()
   if (!db) {
     onUpdate([])
     return () => {}
   }
-
   return onSnapshot(
-    collection(db, 'users'),
+    query(collection(db, 'jobs'), fsLimit(60)),
     (snap) => {
-      const list: UserDocument[] = []
-      snap.forEach((d) => {
-        const data = d.data() as Omit<UserDocument, 'uid'>
-        list.push({ uid: d.id, ...data })
-      })
-      onUpdate(list)
+      const jobs: Job[] = []
+      snap.forEach((d) => jobs.push(d.data() as Job))
+      onUpdate(jobs)
     },
     (err) => {
-      console.error('[Firestore] subscribeToAllUsers failed:', err)
+      console.warn('[Firestore] subscribeToJobs error:', err instanceof Error ? err.message : err)
       onUpdate([])
     },
   )
 }
 
-/**
- * Updates a user's profile and wallet as an admin.
- */
-export async function updateUserAdmin(
-  uid: string,
-  fields: Partial<UserDocument>,
-): Promise<void> {
+/** Jobs the member has open slots for, without their own applications leaking into the query. */
+export async function getJobSnapshot(jobId: string): Promise<Job | null> {
   const db = getDB()
-  if (!db) return
-
+  if (!db) return null
   try {
-    const clean = Object.fromEntries(
-      Object.entries(fields).filter(([, v]) => v !== undefined),
+    const snap = await getDoc(doc(db, 'jobs', jobId))
+    return snap.exists() ? (snap.data() as Job) : null
+  } catch {
+    return null
+  }
+}
+
+/** Slot count straight from the catalogue (used to render "37 of 80 slots left" honestly). */
+export async function getJobAvailability(jobIds: string[]): Promise<Record<string, { slotsRemaining: number; status: string }>> {
+  const db = getDB()
+  const out: Record<string, { slotsRemaining: number; status: string }> = {}
+  if (!db || jobIds.length === 0) return out
+  try {
+    const chunks: string[][] = []
+    for (let i = 0; i < jobIds.length; i += 10) chunks.push(jobIds.slice(i, i + 10))
+    await Promise.all(
+      chunks.map(async (chunk) => {
+        const snap = await getDocs(query(collection(db, 'jobs'), where('__name__', 'in', chunk)))
+        snap.forEach((d) => {
+          const data = d.data() as Record<string, unknown>
+          out[d.id] = {
+            slotsRemaining: Number(data.slotsRemaining ?? 0),
+            status: String(data.status ?? 'open'),
+          }
+        })
+      }),
     )
-    const userRef = doc(db, 'users', uid)
-    await setDoc(userRef, clean, { merge: true })
   } catch (err) {
-    console.error('[Firestore] updateUserAdmin failed:', err)
+    console.warn('[Firestore] getJobAvailability failed:', err instanceof Error ? err.message : err)
   }
+  return out
 }
 
-/**
- * Deletes a user document from Firestore.
- */
-export async function deleteUserDocument(uid: string): Promise<void> {
-  const db = getDB()
-  if (!db) return
+// ─── Maintenance mode ────────────────────────────────────────────────────────
 
+export async function fetchMaintenanceStatus(): Promise<MaintenanceView> {
   try {
-    await deleteDoc(doc(db, 'users', uid))
-  } catch (err) {
-    console.error('[Firestore] deleteUserDocument failed:', err)
-  }
-}
-
-// ─── Admin Audit Logs ────────────────────────────────────────────────────────
-
-/**
- * Creates an admin audit log entry.
- */
-export async function createAdminAuditLog(
-  action: string,
-  details?: Record<string, unknown>,
-  actorEmail?: string,
-): Promise<void> {
-  const db = getDB()
-  if (!db) return
-
-  try {
-    const logId = `log_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`
-    const logRef = doc(db, 'admin_logs', logId)
-    await setDoc(logRef, {
-      id: logId,
-      action,
-      details: details ?? {},
-      actorEmail: actorEmail || 'Admin',
-      timestamp: new Date().toISOString(),
-    })
-  } catch (err) {
-    console.error('[Firestore] createAdminAuditLog failed:', err)
-  }
-}
-
-/**
- * Subscribes to the latest admin audit logs.
- */
-export function subscribeToAdminAuditLogs(
-  onUpdate: (logs: AdminAuditLog[]) => void,
-): () => void {
-  const db = getDB()
-  if (!db) {
-    onUpdate([])
-    return () => {}
-  }
-
-  const q = query(collection(db, 'admin_logs'), orderBy('timestamp', 'desc'), limit(50))
-
-  return onSnapshot(
-    q,
-    (snap) => {
-      const list: AdminAuditLog[] = []
-      snap.forEach((d) => {
-        list.push(d.data() as AdminAuditLog)
-      })
-      onUpdate(list)
-    },
-    (err) => {
-      console.warn('[Firestore] subscribeToAdminAuditLogs error (fallback without order):', err)
-      onSnapshot(collection(db, 'admin_logs'), (snap) => {
-        const list: AdminAuditLog[] = []
-        snap.forEach((d) => {
-          list.push(d.data() as AdminAuditLog)
-        })
-        list.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-        onUpdate(list.slice(0, 50))
-      })
-    },
-  )
-}
-
-// ─── Job Persistence Helpers ─────────────────────────────────────────────────
-
-/**
- * Saves or updates a Job in Firestore.
- */
-export async function saveJobToFirestore(job: Job): Promise<void> {
-  const db = getDB()
-  if (!db) return
-
-  try {
-    const jobRef = doc(db, 'jobs', job.id)
-    await setDoc(jobRef, job, { merge: true })
-  } catch (err) {
-    console.error('[Firestore] saveJobToFirestore failed:', err)
-  }
-}
-
-/**
- * Subscribes to jobs in Firestore.
- */
-export function subscribeToJobs(
-  onUpdate: (jobs: Job[]) => void,
-): () => void {
-  const db = getDB()
-  if (!db) {
-    onUpdate([])
-    return () => {}
-  }
-
-  return onSnapshot(
-    collection(db, 'jobs'),
-    (snap) => {
-      const list: Job[] = []
-      snap.forEach((d) => {
-        list.push(d.data() as Job)
-      })
-      onUpdate(list)
-    },
-    (err) => {
-      console.error('[Firestore] subscribeToJobs failed:', err)
-      onUpdate([])
-    },
-  )
-}
-
-/**
- * Deletes a Job from Firestore.
- */
-export async function deleteJobFromFirestore(jobId: string): Promise<void> {
-  const db = getDB()
-  if (!db) return
-
-  try {
-    await deleteDoc(doc(db, 'jobs', jobId))
-  } catch (err) {
-    console.error('[Firestore] deleteJobFromFirestore failed:', err)
-  }
-}
-
-// ─── Applications Persistence Helpers ────────────────────────────────────────
-
-/**
- * Saves an Application to Firestore.
- */
-export async function saveApplicationToFirestore(app: Application): Promise<void> {
-  const db = getDB()
-  if (!db) return
-
-  try {
-    const appRef = doc(db, 'applications', app.id)
-    await setDoc(appRef, app, { merge: true })
-  } catch (err) {
-    console.error('[Firestore] saveApplicationToFirestore failed:', err)
-  }
-}
-
-/**
- * Subscribes to all applications in Firestore.
- */
-export function subscribeToAllApplications(
-  onUpdate: (apps: Application[]) => void,
-): () => void {
-  const db = getDB()
-  if (!db) {
-    onUpdate([])
-    return () => {}
-  }
-
-  return onSnapshot(
-    collection(db, 'applications'),
-    (snap) => {
-      const list: Application[] = []
-      snap.forEach((d) => {
-        list.push(d.data() as Application)
-      })
-      onUpdate(list)
-    },
-    (err) => {
-      console.error('[Firestore] subscribeToAllApplications failed:', err)
-      onUpdate([])
-    },
-  )
-}
-
-/**
- * Updates application status and history in Firestore.
- */
-export async function updateApplicationInFirestore(
-  appId: string,
-  status: ApplicationStatus,
-  extras?: { rejectionReason?: string; revisionNote?: string },
-): Promise<void> {
-  const db = getDB()
-  if (!db) return
-
-  try {
-    const appRef = doc(db, 'applications', appId)
-    const snap = await getDoc(appRef)
-    const now = new Date().toISOString()
-    
-    if (snap.exists()) {
-      const existing = snap.data() as Application
-      const history = [...(existing.history || []), { status, at: now }]
-      const updateData: Partial<Application> = {
-        status,
-        history,
-      }
-      if (extras?.rejectionReason !== undefined) updateData.rejectionReason = extras.rejectionReason
-      if (extras?.revisionNote !== undefined) updateData.revisionNote = extras.revisionNote
-      await updateDoc(appRef, updateData)
-    } else {
-      await setDoc(
-        appRef,
-        {
-          id: appId,
-          status,
-          history: [{ status, at: now }],
-          ...extras,
-        },
-        { merge: true },
-      )
+    const data = await apiFetch<Record<string, unknown>>('/api/maintenance', { timeoutMs: 8_000 })
+    const config = { ...DEFAULT_MAINTENANCE_CONFIG, ...(data as object) } as MaintenanceConfig
+    const status = resolveMaintenance(config)
+    return {
+      enabled: data.enabled === true,
+      blocking: data.blocking === true || status.active,
+      bannerOnly: data.bannerOnly === true || status.bannerOnly,
+      blocksAll: typeof data.blocksAll === 'boolean' ? data.blocksAll : status.blocksAll,
+      scope: (data.scope as MaintenanceScope) ?? status.scope,
+      blockedPaths: Array.isArray(data.blockedPaths) ? (data.blockedPaths as string[]) : status.blockedPaths,
+      mode: (data.mode as MaintenanceMode) ?? config.mode,
+      title: String(data.title || '') || config.title,
+      message: String(data.message || '') || config.message,
+      banner: String(data.banner || '') || config.banner,
+      estimatedEnd: (data.estimatedEnd as string | null) ?? config.estimatedEnd,
+      remainingMs: typeof data.remainingMs === 'number' ? data.remainingMs : status.remainingMs,
+      contactEmail: String(data.contactEmail || '') || config.contactEmail,
+      services: (Array.isArray(data.services) ? (data.services as MaintenanceService[]) : config.affectedServices),
+      version: Number(data.version ?? config.version) || 0,
+      unknown: false,
+      raw: config,
     }
-  } catch (err) {
-    console.error('[Firestore] updateApplicationInFirestore failed:', err)
+  } catch {
+    return INERT_MAINTENANCE_VIEW
   }
 }
-
-// ─── Real Transactions Listener ───────────────────────────────────────────────
 
 /**
- * Subscribes to real payment transactions in Firestore.
+ * Subscribe to the maintenance flag. Polls on a visibility-aware interval: 15s while the tab is
+ * focused, 2 minutes in the background (a hidden tab does not need to be accurate to the second,
+ * and this used to fire once per tab per second on the previous implementation).
  */
-export function subscribeToTransactions(
-  onUpdate: (transactions: PaymentTransaction[]) => void,
-): () => void {
-  const db = getDB()
-  if (!db) {
-    onUpdate([])
-    return () => {}
+export function subscribeToMaintenanceConfig(onUpdate: (view: MaintenanceView) => void): () => void {
+  let stopped = false
+  let timer: ReturnType<typeof setTimeout> | null = null
+
+  const tick = async () => {
+    if (stopped) return
+    const view = await fetchMaintenanceStatus()
+    if (!stopped) onUpdate(view)
+    const focused = typeof document !== 'undefined' && document.visibilityState === 'visible'
+    timer = setTimeout(tick, focused ? 15_000 : 120_000)
   }
 
-  const q = query(collection(db, 'transactions'), orderBy('createdAt', 'desc'), limit(50))
+  const onVisible = () => {
+    if (typeof document === 'undefined') return
+    if (document.visibilityState === 'visible') {
+      if (timer) clearTimeout(timer)
+      void tick()
+    }
+  }
 
-  return onSnapshot(
-    q,
-    (snap) => {
-      const list: PaymentTransaction[] = []
-      snap.forEach((d) => {
-        list.push(d.data() as PaymentTransaction)
-      })
-      onUpdate(list)
-    },
-    (err) => {
-      console.warn('[Firestore] subscribeToTransactions error (fallback without order):', err)
-      onSnapshot(collection(db, 'transactions'), (snap) => {
-        const list: PaymentTransaction[] = []
-        snap.forEach((d) => {
-          list.push(d.data() as PaymentTransaction)
-        })
-        list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-        onUpdate(list.slice(0, 50))
-      })
-    },
-  )
+  void tick()
+  if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVisible)
+
+  return () => {
+    stopped = true
+    if (timer) clearTimeout(timer)
+    if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisible)
+  }
 }
 
+// ─── Worker notifications ────────────────────────────────────────────────────
+
+export type NotificationRow = {
+  id: string
+  title: string
+  body: string
+  tone?: 'success' | 'info' | 'warning' | 'danger'
+  link?: string
+  read?: boolean
+  createdAt: string
+}
+
+export async function fetchNotifications(limit = 20): Promise<{ notifications: NotificationRow[]; unread: number; available: boolean }> {
+  try {
+    const data = await apiFetch<{ ok: boolean; notifications: NotificationRow[]; unread: number; available?: boolean }>('/api/notifications', {
+      query: { limit },
+    })
+    return { notifications: data.notifications ?? [], unread: data.unread ?? 0, available: data.available !== false }
+  } catch {
+    return { notifications: [], unread: 0, available: false }
+  }
+}
+
+export async function markNotificationsRead(ids?: string[]): Promise<void> {
+  try {
+    await apiFetch('/api/notifications', { method: 'PATCH', body: ids?.length ? { ids } : { all: true } })
+  } catch (err) {
+    console.warn('[notifications] mark-read failed:', err)
+  }
+}
+
+// ─── Legacy shims ────────────────────────────────────────────────────────────
+
+/**
+ * Audit writes from the browser are gone on purpose: the ledger is append-only from server code.
+ * Admin UI actions are audited by the routes they call. This shim exists so a stale tab does not
+ * throw while the console is being used mid-deploy.
+ */
+export async function createAdminAuditLog(): Promise<void> {
+  console.warn('[Firestore] client-side audit writes are disabled; the API records actions instead.')
+}
+
+/** @deprecated maintenance is now saved through PUT /api/admin/maintenance */
+export async function updateMaintenanceConfig(patch: Partial<MaintenanceConfig>): Promise<void> {
+  const { apiFetch: call } = await import('@/lib/client-api')
+  await call('/api/admin/maintenance', { method: 'PUT', body: patch })
+}
+
+/** @deprecated read maintenance via fetchMaintenanceStatus() */
+export async function getMaintenanceConfig(): Promise<MaintenanceConfig> {
+  const view = await fetchMaintenanceStatus()
+  return view.raw
+}

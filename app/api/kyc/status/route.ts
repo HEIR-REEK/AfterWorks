@@ -18,6 +18,7 @@ export const dynamic = 'force-dynamic'
 
 import { NextRequest, NextResponse } from 'next/server'
 import { getKycSessionStatus } from '@/lib/didit'
+import { consumeBucket } from '@/lib/guards'
 import { saveKycRecord, verifyIdToken, getUserProfile, updateUserProfile } from '@/lib/firestore-admin'
 
 export async function GET(req: NextRequest) {
@@ -36,6 +37,15 @@ export async function GET(req: NextRequest) {
       return NextResponse.json(
         { error: 'Invalid or expired authentication token.' },
         { status: 401 },
+      )
+    }
+
+    // Each poll is a call to Didit, so cap it per member.
+    const bucket = consumeBucket('kyc-status', 40, 60_000, decoded.uid)
+    if (!bucket.ok) {
+      return NextResponse.json(
+        { error: 'Status checks are rate limited. Please wait a moment.', retryAfterSec: bucket.retryAfterSec },
+        { status: 429, headers: { 'Retry-After': String(bucket.retryAfterSec) } },
       )
     }
 

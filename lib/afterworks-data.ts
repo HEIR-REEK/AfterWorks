@@ -10,6 +10,16 @@ export type JobCategory =
 
 export type JobStatus = 'open' | 'paused' | 'closed'
 
+/** Canonical category list — client forms and the server validator both read this. */
+export const JOB_CATEGORY_LIST: readonly JobCategory[] = [
+  'Data Entry',
+  'Transcription',
+  'Image Labeling',
+  'Content Review',
+  'Translation',
+  'Research',
+]
+
 export type Job = {
   id: string
   title: string
@@ -197,6 +207,15 @@ export function formatKes(usd: number): string {
     currency: 'KES',
     maximumFractionDigits: 0,
   }).format(usd * USD_TO_KES)
+}
+
+/** Format an amount that is already denominated in Kenyan Shillings (no FX conversion). */
+export function formatKesValue(kes: number): string {
+  return new Intl.NumberFormat('en-KE', {
+    style: 'currency',
+    currency: 'KES',
+    maximumFractionDigits: 0,
+  }).format(kes)
 }
 
 export function formatDuration(minutes: number): string {

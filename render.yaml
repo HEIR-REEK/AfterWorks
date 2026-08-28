@@ -1,21 +1,37 @@
+# Render Blueprint for the AfterWorks web service.
+#
+# Every secret is `sync: false`, meaning Render will ask for the value at create/update time instead
+# of reading it from this file — so nothing privileged can ever be committed by pasting it here.
+# Fill them in from .env.example; the app refuses to start a console with no session secret, so a
+# half-configured deploy fails loudly rather than quietly running with defaults.
 services:
   - type: web
     name: afterworks
     runtime: node
     plan: starter
-    buildCommand: npm install && npm run build
+    rootDir: .
+    buildCommand: npm ci && npm run build
     startCommand: npm run start
+    healthCheckPath: /api/health
+    autoDeploy: true
     envVars:
+      # ── Runtime ────────────────────────────────────────────────────────────
       - key: NODE_VERSION
         value: 20.18.0
       - key: NODE_ENV
         value: production
-      - key: NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY
+      - key: APP_URL
+        sync: false # https://<service>.onrender.com
+      - key: NEXT_PUBLIC_APP_URL
         sync: false
-      - key: PAYSTACK_SECRET_KEY
-        sync: false
-      - key: FIREBASE_SERVICE_ACCOUNT_JSON
-        sync: false
+      - key: APP_ALLOWED_HOSTS
+        sync: false # comma-separated public hostnames; anything else gets 400
+      - key: TRUST_PROXY_HEADERS
+        value: "true"
+      - key: FORCE_SECURE_COOKIES
+        value: "true"
+
+      # ── Firebase (client config; read server-side and passed to the provider) ──
       - key: FIREBASE_PROJECT_ID
         sync: false
       - key: FIREBASE_WEB_API_KEY
@@ -24,11 +40,78 @@ services:
         sync: false
       - key: FIREBASE_APP_ID
         sync: false
+      - key: FIREBASE_STORAGE_BUCKET
+        sync: false
+      - key: FIREBASE_MESSAGING_SENDER_ID
+        sync: false
+      # Full service-account JSON on one line. Never commit it; never expose it to the client.
+      - key: FIREBASE_SERVICE_ACCOUNT_JSON
+        sync: false
+
+      # ── Operations console ─────────────────────────────────────────────────
+      - key: ADMIN_EMAILS
+        sync: false # the only roster that grants console access
+      - key: ADMIN_SESSION_SECRET
+        sync: false # >= 32 chars: openssl rand -base64 48
+      - key: ADMIN_PASSWORD_SCRYPT
+        sync: false # from: node scripts/hash-admin-password.mjs
+      - key: ADMIN_SESSION_TTL_MINUTES
+        value: "45"
+      - key: ADMIN_LOCKOUT_THRESHOLD
+        value: "5"
+      - key: ADMIN_LOCKOUT_SECONDS
+        value: "900"
+
+      # ── Maintenance + rate limiting ────────────────────────────────────────
+      - key: MAINTENANCE_EDGE_GATE
+        value: "true"
+      - key: MAINTENANCE_CACHE_MS
+        value: "10000"
+      # Emergency gate for when Firestore is unreachable and the console cannot save. Leave empty.
+      - key: MAINTENANCE_FORCE
+        value: ""
+      - key: MAINTENANCE_FORCE_UNTIL
+        value: ""
+      - key: MAINTENANCE_FORCE_PATHS
+        value: ""
+      - key: MAINTENANCE_FORCE_MESSAGE
+        value: ""
+      # Outage page is rendered at the edge with no app bundle; only change in an emergency.
+      - key: MAINTENANCE_STATIC_SHELL
+        value: "true"
+      - key: API_RATE_LIMIT_ENABLED
+        value: "true"
+      - key: API_RATE_LIMIT_PER_MINUTE
+        value: "120"
+
+      # ── Payments ───────────────────────────────────────────────────────────
+      - key: PAYSTACK_SECRET_KEY
+        sync: false
+      - key: PAYSTACK_WEBHOOK_SECRET
+        sync: false
+      - key: PAYSTACK_TRAINING_AMOUNT
+        value: "10"
+      - key: PAYSTACK_AMOUNT_KES
+        value: "1300"
+      - key: USD_TO_KES_RATE
+        value: "129"
+      - key: MIN_WITHDRAWAL_USD
+        value: "10"
+      - key: PAYOUT_CLEARING_WINDOW_HOURS
+        value: "24"
+
+      # ── Identity verification ──────────────────────────────────────────────
+      - key: DIDIT_API_URL
+        value: "https://apx.didit.me"
       - key: DIDIT_API_KEY
         sync: false
       - key: DIDIT_WORKFLOW_ID
         sync: false
       - key: DIDIT_WEBHOOK_SECRET
         sync: false
-      - key: NEXT_PUBLIC_APP_URL
+
+      # ── Contact addresses shown in the UI ──────────────────────────────────
+      - key: NEXT_PUBLIC_SUPPORT_EMAIL
+        sync: false
+      - key: NEXT_PUBLIC_OPS_EMAIL
         sync: false

@@ -30,6 +30,8 @@ export type FirebaseConfig = {
   authDomain: string
   projectId: string
   appId: string
+  storageBucket?: string
+  messagingSenderId?: string
 }
 
 type AuthResult = { ok: true; isNewUser?: boolean } | { ok: false; error: string }
@@ -38,6 +40,13 @@ type AuthContextValue = {
   user: User | null
   loading: boolean
   configured: boolean
+  /**
+   * Claims from the current ID token. `admin` here is minted server-side by the Admin SDK — the
+   * client cannot write it, which is what makes it usable as a UI hint (nav badge) without being a
+   * security boundary.
+   */
+  claims: { admin?: boolean } | null
+  getIdToken: (forceRefresh?: boolean) => Promise<string | null>
   signIn: (email: string, password: string) => Promise<AuthResult>
   signUp: (email: string, password: string, name: string) => Promise<AuthResult>
   signInWithGoogle: () => Promise<AuthResult>
@@ -83,6 +92,7 @@ export function FirebaseAuthProvider({
   const authRef = useRef<Auth | null>(null)
   const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(configured)
+  const [claims, setClaims] = useState<{ admin?: boolean } | null>(null)
 
   useEffect(() => {
     if (!configured) {
@@ -95,11 +105,35 @@ export function FirebaseAuthProvider({
     const unsub = onAuthStateChanged(auth, (u) => {
       setUser(u)
       setLoading(false)
+      if (!u) {
+        setClaims(null)
+        return
+      }
+      // Read the token claims once per session, and again whenever the tab regains focus.
+      void u.getIdTokenResult().then((result) => setClaims({ admin: result.claims?.admin === true })).catch(() => setClaims(null))
     })
+    const onFocus = () => {
+      const current = authRef.current?.currentUser
+      if (!current) return
+      void current.getIdTokenResult(true).then((result) => setClaims({ admin: result.claims?.admin === true })).catch(() => {})
+    }
+    if (typeof window !== 'undefined') window.addEventListener('focus', onFocus)
+    const cleanup = () => {
+      if (typeof window !== 'undefined') window.removeEventListener('focus', onFocus)
+    }
+    void cleanup
     return () => unsub()
   }, [configured, config])
 
   const value = useMemo<AuthContextValue>(() => {
+    async function getIdToken(forceRefresh = false): Promise<string | null> {
+      try {
+        return (await authRef.current?.currentUser?.getIdToken(forceRefresh)) ?? null
+      } catch {
+        return null
+      }
+    }
+
     async function signIn(email: string, password: string): Promise<AuthResult> {
       if (!authRef.current) return { ok: false, error: 'Auth is not configured.' }
       try {
@@ -147,8 +181,8 @@ export function FirebaseAuthProvider({
       }
     }
 
-    return { user, loading, configured, signIn, signUp, signInWithGoogle, signOut }
-  }, [user, loading, configured])
+    return { user, loading, configured, claims, getIdToken, signIn, signUp, signInWithGoogle, signOut }
+  }, [user, loading, configured, claims])
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }

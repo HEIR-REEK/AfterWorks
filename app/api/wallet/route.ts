@@ -1,117 +1,106 @@
+import { NextRequest } from 'next/server'
+import { consumeBucket, json, maintenanceBlockForApi, requireUser, routeError } from '@/lib/guards'
+import { getExchangeRateUsdToKes } from '@/lib/afterworks-data'
+import { site } from '@/lib/site'
+
 /**
- * GET /api/wallet
+ * GET /api/wallet — the member's money, read the way the ledger wrote it.
  *
- * Reads the authenticated user's wallet balance from Firestore via Firebase Admin SDK.
- * The client sends a Firebase ID token in the Authorization header.
- * We verify the token, look up the user document in Firestore, and return wallet data.
+ * Two fixes in one:
+ *  1. The route used to carry its own copy of the Admin-SDK bootstrap (a second, weaker parser
+ *     than `lib/firestore-admin`), so a base64/escaped-newline service account that worked for KYC
+ *     silently failed here. One initialiser now, one behaviour.
+ *  2. Balances are server-derived, and the response includes *when* each pending amount clears and
+ *     which training entitlements were paid for. The client no longer gets to decide either.
  */
 
 export const dynamic = 'force-dynamic'
 
-import { NextRequest, NextResponse } from 'next/server'
-import * as admin from 'firebase-admin'
-import * as fs from 'fs'
-import * as path from 'path'
-
-// Initialise the Firebase Admin SDK once (singleton pattern for Next.js)
-function getAdminApp(): admin.app.App {
-  if (admin.apps.length > 0) {
-    return admin.apps[0] as admin.app.App
-  }
-
-  const projectId = process.env.FIREBASE_PROJECT_ID
-
-  // 1. Prefer inline JSON (for Render / cloud deployments — set via env var)
-  const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON
-  if (serviceAccountJson) {
-    try {
-      const serviceAccount = JSON.parse(serviceAccountJson) as admin.ServiceAccount
-      return admin.initializeApp({
-        credential: admin.credential.cert(serviceAccount),
-        projectId: (serviceAccount as unknown as { project_id: string }).project_id || projectId,
-      })
-    } catch (err) {
-      console.warn('[Admin] Could not parse FIREBASE_SERVICE_ACCOUNT_JSON:', err)
-    }
-  }
-
-  // 2. Fall back to file path (for local development)
-  const serviceAccountPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH
-  if (serviceAccountPath) {
-    try {
-      const resolvedPath = path.resolve(
-        process.cwd(),
-        serviceAccountPath.replace(/^\.\//, ''),
-      )
-      const raw = fs.readFileSync(resolvedPath, 'utf8')
-      const serviceAccount = JSON.parse(raw) as admin.ServiceAccount
-      return admin.initializeApp({
-        credential: admin.credential.cert(serviceAccount),
-        projectId: (serviceAccount as unknown as { project_id: string }).project_id || projectId,
-      })
-    } catch (err) {
-      console.warn('[Admin] Could not load service account file:', err)
-    }
-  }
-
-  // 3. Fall back to Application Default Credentials (GCP / Cloud Run)
-  return admin.initializeApp({
-    credential: admin.credential.applicationDefault(),
-    projectId,
-  })
-}
-
 export async function GET(req: NextRequest) {
+  const blocked = await maintenanceBlockForApi(req)
+  if (blocked) return blocked
+
+  const guard = await requireUser(req)
+  if (!guard.ok) return guard.response
+
+  const bucket = consumeBucket('wallet-read', 120, 60_000, guard.value.uid)
+  if (!bucket.ok) {
+    return json({ ok: false, error: 'Wallet lookups are rate limited. Please wait a moment.' }, { status: 429 })
+  }
+
   try {
-    const authHeader = req.headers.get('Authorization')
-
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return NextResponse.json(
-        { error: 'Authorization header with Bearer token required' },
-        { status: 401 },
-      )
-    }
-
-    const idToken = authHeader.split('Bearer ')[1].trim()
-
-    // Verify the Firebase ID token
-    let uid: string
-    try {
-      const app = getAdminApp()
-      const decodedToken = await admin.auth(app).verifyIdToken(idToken)
-      uid = decodedToken.uid
-    } catch (err) {
-      console.error('Token verification failed:', err)
-      return NextResponse.json({ error: 'Invalid or expired token' }, { status: 401 })
-    }
-
-    // Fetch the user's document from Firestore
-    const app = getAdminApp()
-    const db = admin.firestore(app)
-    const snap = await db.collection('users').doc(uid).get()
-
-    if (!snap.exists) {
-      // User document doesn't exist yet — return zero balances
-      return NextResponse.json({
+    const firestore = await import('@/lib/firestore-admin')
+    const db = firestore.dbOrNull()
+    if (!db) {
+      return json({
+        ok: true,
         pendingUsd: 0,
         availableUsd: 0,
         payoutNumber: '',
+        unavailable: true,
+        note: 'The datastore is not reachable from this server, so balances are shown as zero rather than cached values.',
       })
     }
 
-    const data = snap.data() as Record<string, unknown>
-    const wallet = (data?.wallet as Record<string, unknown>) ?? {}
+    const uid = guard.value.uid
+    const [userSnap, ledgerSnap] = await Promise.all([
+      db.collection('users').doc(uid).get(),
+      db
+        .collection('wallet_ledger')
+        .where('uid', '==', uid)
+        .orderBy('createdAt', 'desc')
+        .limit(10)
+        .get()
+        .catch(() => null),
+    ])
 
-    return NextResponse.json({
-      pendingUsd: (wallet.pendingUsd as number) ?? 0,
-      availableUsd: (wallet.availableUsd as number) ?? 0,
-      payoutNumber: (wallet.payoutNumber as string) ?? '',
+    const data = (userSnap.exists ? userSnap.data() : {}) as Record<string, unknown>
+    const wallet = (data.wallet ?? {}) as Record<string, unknown>
+
+    const entries = ledgerSnap
+      ? ledgerSnap.docs.map((d) => {
+          const row = (d.data() ?? {}) as Record<string, unknown>
+          return {
+            id: d.id,
+            kind: String(row.kind ?? 'earning'),
+            amountUsd: Number(row.amountUsd ?? 0) || 0,
+            status: String(row.status ?? 'pending'),
+            createdAt: String(row.createdAt ?? ''),
+            clearedAt: (row.clearedAt as string) ?? null,
+            jobTitle: (row.jobTitle as string) ?? '',
+            applicationId: (row.applicationId as string) ?? '',
+          }
+        })
+      : []
+
+    const nextClearing = entries
+      .filter((e) => e.status === 'pending' && e.clearedAt)
+      .map((e) => e.clearedAt as string)
+      .sort()[0]
+
+    const paidTrainings = Array.isArray(data.paidTrainings) ? (data.paidTrainings as string[]) : []
+    const rate = getExchangeRateUsdToKes()
+    const availableUsd = Number(wallet.availableUsd ?? 0) || 0
+    const pendingUsd = Number(wallet.pendingUsd ?? 0) || 0
+
+    return json({
+      ok: true,
+      pendingUsd,
+      availableUsd,
+      payoutNumber: String(wallet.payoutNumber ?? data.phone ?? ''),
+      preferredPayoutMethod: String(data.preferredPayoutMethod ?? 'M-Pesa'),
+      entries,
+      paidTrainings,
+      clearingHours: site.clearingWindowHours,
+      nextClearingAt: nextClearing ?? null,
+      minWithdrawalUsd: site.minWithdrawalUsd,
+      fx: { usdToKes: rate, availableKes: Math.round(availableUsd * rate) },
+      qualityScore: Number(data.qualityScore ?? 100) || 100,
+      jobsCompleted: Number(data.jobsCompleted ?? 0) || 0,
+      accountState: String(data.accountState ?? 'active'),
+      asOf: new Date().toISOString(),
     })
-  } catch (error) {
-    console.error('Wallet API error:', error)
-    return NextResponse.json(
-      { error: 'Failed to fetch wallet data' },
-      { status: 500 },
-    )
+  } catch (err) {
+    return routeError('wallet:GET', err)
   }
 }

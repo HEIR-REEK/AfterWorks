@@ -1,4 +1,26 @@
 # AfterWorks Features — Complete Specification
+# Accuracy notice (read before trusting anything below)
+
+This file is a **specification**, written before the platform was built, and it still describes
+things that do not exist in this repository: a Node/Express + Prisma backend, PostgreSQL/SQLite
+tables, `/auth/session`-style endpoints, Twilio OTP, Accura Scan ABIS, device fingerprinting and a
+15-model schema. `package.json` has no express or prisma dependency and there is no `prisma/`
+directory; the real server is the route handlers in `app/api/**` and the data lives in Firestore.
+
+What is actually implemented, and where to look instead:
+
+| Claimed | Reality |
+| --- | --- |
+| `POST /auth/session`, Prisma models | Firebase Auth ID tokens verified per request in `lib/guards.ts`; profiles in `users/{uid}` |
+| Twilio OTP phone verification | not implemented; profile keeps a `phone` field only |
+| Accura Scan ABIS | not used; identity verification is Didit (`lib/didit.ts`, `app/api/kyc/**`) |
+| Server-side job/payment admin "endpoints" | `app/api/admin/**` route handlers, guarded by `requireAdmin` |
+| Maintenance mode | `lib/maintenance-shared.ts` + `middleware.ts` (edge 503 + `Retry-After`), console at `/admin/maintenance` |
+| Audit trail | `admin_logs`, written only by the server, redacted, exposed at `/admin/audit-log` |
+
+Read `SECURITY_HARDENING.md` for the enforced behaviour and `README.md` for the layout. The rest of
+this document is kept as product intent — useful for what the platform is *for*, not as a description
+of the code.
 
 Comprehensive documentation of all implemented features in the AfterWorks platform.
 

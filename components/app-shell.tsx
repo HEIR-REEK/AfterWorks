@@ -1,21 +1,25 @@
 'use client'
 
-import Image from 'next/image'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import {
   Briefcase,
+  Info,
   LayoutDashboard,
   ListChecks,
   LogOut,
   Shield,
   ShieldCheck,
   User,
+  Wrench,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/components/firebase-auth-provider'
 import { useAfterWorks } from '@/components/afterworks-provider'
-import logo from '@/components/logo.png'
+import { NotificationsBell } from '@/components/notifications-bell'
+import { useMaintenance } from '@/components/maintenance-provider'
+import { BrandLink } from '@/components/brand'
+import { site } from '@/lib/site'
 
 import { isUserAdmin } from '@/lib/admin'
 
@@ -35,13 +39,19 @@ const baseNav = [
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
   const router = useRouter()
-  const { user, signOut } = useAuth()
-  const { worker } = useAfterWorks()
+  const { user, signOut, claims } = useAuth()
+  const { worker, mode } = useAfterWorks()
+  const { view } = useMaintenance()
 
   const displayName = user?.displayName || user?.email || 'Worker'
   const avatar = initials(displayName).toUpperCase() || 'W'
 
-  const isAdmin = isUserAdmin(user, worker)
+  // Cosmetic only: decides whether to show the Admin link. The console itself is gated by
+  // useAdminSession() + the API guard, so a wrong answer here grants nothing.
+  const isAdmin = isUserAdmin({ idTokenResult: { claims: (claims as Record<string, unknown>) ?? null } }, worker)
+  // Three states worth a strip: banner mode, and a scoped blackout (only some areas are down).
+  const scopedBlackout = view.blocking && !view.blocksAll
+  const bannerVisible = (view.bannerOnly || scopedBlackout) && !view.unknown
 
   const nav = isAdmin
     ? [...baseNav, { href: '/admin', label: 'Admin', icon: Shield, isAdminLink: true }]
@@ -49,6 +59,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   async function handleSignOut() {
     await signOut()
+    // Also drop the signed staff cookie so a shared device does not keep bypassing maintenance.
+    try {
+      const { terminateAdminSession } = await import('@/lib/admin')
+      await terminateAdminSession()
+    } catch {
+      /* best effort */
+    }
     router.replace('/sign-in')
   }
 
@@ -62,16 +79,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       {/* Top Header */}
       <header className="sticky top-0 z-40 border-b border-border bg-background/85 backdrop-blur">
         <div className="mx-auto flex h-14 w-full max-w-6xl items-center gap-4 px-4 sm:h-16 sm:gap-6 sm:px-6">
-          <Link href="/" className="flex items-center gap-2 sm:gap-3">
-            <Image
-              src={logo}
-              alt="AfterWorks"
-              width={36}
-              height={36}
-              className="h-8 w-8 object-contain sm:h-10 sm:w-10"
-            />
-            <span className="text-sm font-semibold tracking-tight sm:text-base">AfterWorks</span>
-          </Link>
+          <BrandLink href="/" label={site.name} size={40} wordmarkClass="sm:text-base" />
 
           {/* Desktop nav */}
           <nav className="hidden items-center gap-1 md:flex" aria-label="Primary">
@@ -109,6 +117,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 Verified
               </span>
             )}
+            <NotificationsBell />
             <div
               className="flex size-8 items-center justify-center rounded-full bg-accent text-xs font-semibold text-accent-foreground sm:size-9 sm:text-sm"
               title={displayName}
@@ -128,8 +137,41 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       </header>
 
+      {/* Maintenance strip: the platform works, but parts of it are paused. */}
+      {bannerVisible && (
+        <div
+          role="status"
+          className={cn(
+            'px-4 py-2 text-center text-xs font-medium sm:text-sm',
+            scopedBlackout
+              ? 'border-b border-destructive/30 bg-destructive/[0.07] text-destructive'
+              : 'border-b border-amber-500/30 bg-amber-500/10 text-amber-900 dark:text-amber-200',
+          )}
+        >
+          <span className="inline-flex flex-wrap items-center justify-center gap-x-2 gap-y-1">
+            <Wrench className="size-3.5 shrink-0" />
+            {scopedBlackout
+              ? `Some parts are under maintenance: ${view.blockedPaths.join(', ')} — everything else works as usual.`
+              : view.banner || 'Maintenance in progress.'}
+            <Link href="/status" className="underline decoration-amber-500/50 underline-offset-2 hover:decoration-amber-500">
+              Details
+            </Link>
+          </span>
+        </div>
+      )}
+
       {/* Page content — extra bottom padding on mobile to clear the bottom nav */}
-      <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-5 pb-24 sm:px-6 sm:py-8 sm:pb-8 md:pb-8">
+      <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-4 px-4 py-5 pb-24 sm:px-6 sm:py-8 md:pb-8 sm:pb-8">
+        {mode === 'demo' && (
+          <div className="flex items-start gap-2.5 rounded-xl border border-border bg-muted/40 px-3.5 py-2.5 text-xs text-muted-foreground">
+            <Info className="mt-0.5 size-3.5 shrink-0 text-primary" />
+            <span>
+              Demo mode — Firebase is not configured on this deployment, so jobs shown here are sample data and
+              applications are not saved. Set the <code className="rounded bg-background px-1 font-mono text-[11px]">FIREBASE_*</code> variables
+              to go live.
+            </span>
+          </div>
+        )}
         {children}
       </main>
 

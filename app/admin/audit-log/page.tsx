@@ -1,197 +1,235 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
-import {
-  Calendar,
-  CheckCircle2,
-  ChevronDown,
-  ChevronRight,
-  Clock,
-  Filter,
-  RefreshCw,
-  ScrollText,
-  Search,
-  Shield,
-  User,
-} from 'lucide-react'
-import { subscribeToAdminAuditLogs, type AdminAuditLog } from '@/lib/firestore'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Download, Loader2, Lock, ScrollText, Search, ShieldCheck } from 'lucide-react'
+import { adminApi, useAdminSession } from '@/lib/admin'
+import { AdminCard, inputClass, useToasts } from '@/components/admin-ui'
 import { Button } from '@/components/ui/button'
+import { StatusBadge } from '@/components/status-badge'
 import { cn } from '@/lib/utils'
 
+/**
+ * Audit log.
+ *
+ * Read from `admin_logs` through the server, filtered there rather than by pulling everything into
+ * the tab, with CSV export for compliance. `details` arrive already redacted: `lib/security.ts`
+ * strips token/secret/password/cookie keys on write, so a leaked export cannot become a session.
+ */
+
+type Row = {
+  id: string
+  action: string
+  details?: Record<string, unknown>
+  actorEmail?: string
+  timestamp: string
+  serverWritten?: boolean
+}
+
+const GROUPS = [
+  ['all', 'Everything'],
+  ['ADMIN_LOGIN_FAILED', 'Failed sign-ins'],
+  ['ADMIN_LOGIN', 'Sign-ins'],
+  ['MAINTENANCE', 'Maintenance'],
+  ['APPLICATION', 'QA decisions'],
+  ['WALLET', 'Wallet'],
+  ['KYC', 'KYC'],
+  ['USER', 'Accounts'],
+] as const
+
 export default function AdminAuditLogPage() {
-  const [logs, setLogs] = useState<AdminAuditLog[]>([])
+  const session = useAdminSession()
+  const { push, toasts } = useToasts()
+
+  const [rows, setRows] = useState<Row[]>([])
+  const [actions, setActions] = useState<string[]>([])
+  const [exportUrl, setExportUrl] = useState<string>('/api/admin/audit?format=csv&limit=200')
+  const [group, setGroup] = useState<string>('all')
+  const [limit, setLimit] = useState(80)
+  const [searchInput, setSearchInput] = useState('')
   const [search, setSearch] = useState('')
-  const [actionFilter, setActionFilter] = useState<string>('all')
-  const [expandedLogId, setExpandedLogId] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [expanded, setExpanded] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [unlocked, setUnlocked] = useState<Set<string>>(new Set())
 
   useEffect(() => {
-    const unsub = subscribeToAdminAuditLogs(setLogs)
-    return () => unsub()
-  }, [])
+    const id = setTimeout(() => setSearch(searchInput.trim()), 350)
+    return () => clearTimeout(id)
+  }, [searchInput])
 
-  const uniqueActions = useMemo(() => {
-    const set = new Set<string>()
-    logs.forEach((l) => {
-      if (l.action) set.add(l.action)
-    })
-    return Array.from(set)
-  }, [logs])
-
-  const filteredLogs = useMemo(() => {
-    return logs.filter((log) => {
-      const q = search.toLowerCase()
-      const matchSearch =
-        !search ||
-        log.action?.toLowerCase().includes(q) ||
-        log.actorEmail?.toLowerCase().includes(q) ||
-        JSON.stringify(log.details || {}).toLowerCase().includes(q)
-
-      const matchAction = actionFilter === 'all' || log.action === actionFilter
-      return matchSearch && matchAction
-    })
-  }, [logs, search, actionFilter])
-
-  const getActionColor = (action: string) => {
-    if (action.includes('DELETE') || action.includes('BANNED') || action.includes('FAILED')) {
-      return 'bg-destructive/15 text-destructive border-destructive/30'
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      const data = await adminApi.auditLogs({ limit, action: group, search })
+      setRows(data.logs as Row[])
+      setActions(data.actions)
+      setExportUrl(data.exportUrl)
+      setError(null)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'The audit ledger is not reachable.')
+    } finally {
+      setLoading(false)
     }
-    if (action.includes('ENABLE') || action.includes('UPDATE') || action.includes('GRANT')) {
-      return 'bg-primary/15 text-primary border-primary/30'
+  }, [limit, group, search])
+
+  useEffect(() => {
+    if (session.status === 'authorized') void load()
+  }, [session.status, load])
+
+  const stats = useMemo(() => {
+    const failures = rows.filter((row) => row.action === 'ADMIN_LOGIN_FAILED').length
+    const moneyish = rows.filter((row) => /WALLET|PAYOUT|CREDIT|APPROVE_QA|COMPLET/i.test(row.action)).length
+    const notServer = rows.filter((row) => row.serverWritten !== true).length
+    return { failures, moneyish, notServer }
+  }, [rows])
+
+  const unlock = async (fragment: string) => {
+    try {
+      await adminApi.operatorAction({ action: 'unlock', fragment })
+      setUnlocked((prev) => new Set(prev).add(fragment))
+      push('success', `Lockout counters touching “${fragment}” were cleared.`)
+    } catch (err) {
+      push('error', err instanceof Error ? err.message : 'Could not clear the lockout.')
     }
-    if (action.includes('MAINTENANCE')) {
-      return 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30'
-    }
-    return 'bg-secondary text-secondary-foreground border-border'
   }
 
   return (
-    <div className="flex flex-col gap-6 max-w-5xl">
-      {/* Search & Header */}
-      <div className="flex flex-col gap-4 rounded-2xl border border-border bg-card p-4 sm:p-5 shadow-sm">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div>
-            <h2 className="text-lg font-bold text-foreground">Immutable Audit Logs</h2>
-            <p className="text-xs text-muted-foreground">
-              Real-time administrative ledger: <span className="font-mono font-semibold text-foreground">{logs.length}</span> events captured
-            </p>
+    <div className="flex flex-col gap-4">
+      {toasts}
+
+      <AdminCard
+        title="Audit log"
+        description="Append-only record of console actions: who did what, when, and why."
+        icon={<ScrollText className="size-4" />}
+        actions={
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative">
+              <Search className="absolute left-2.5 top-2.5 size-3.5 text-muted-foreground" />
+              <input
+                value={searchInput}
+                onChange={(event) => setSearchInput(event.target.value)}
+                placeholder="uid, job, email…"
+                aria-label="Search audit log"
+                className={cn(inputClass, 'h-8 w-40 pl-8 text-xs sm:w-52')}
+              />
+            </div>
+            <select value={group} onChange={(event) => setGroup(event.target.value)} className={cn(inputClass, 'h-8 w-auto py-1 text-xs')} aria-label="Filter by action">
+              {GROUPS.map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
+            </select>
+            <select value={limit} onChange={(event) => setLimit(Number(event.target.value))} className={cn(inputClass, 'h-8 w-auto py-1 text-xs')} aria-label="Rows to read">
+              {[40, 80, 150, 200].map((value) => (
+                <option key={value} value={value}>
+                  {value} rows
+                </option>
+              ))}
+            </select>
+            <Button variant="outline" size="sm" className="gap-1.5" onClick={() => void load()} disabled={loading}>
+              <Loader2 className={cn('size-3.5', loading && 'animate-spin')} />
+              Refresh
+            </Button>
+            <a href={exportUrl} className="inline-flex h-8 items-center gap-1.5 rounded-xl border border-border bg-card px-3 text-xs font-medium text-foreground transition-colors hover:bg-muted">
+              <Download className="size-3.5" />
+              CSV
+            </a>
           </div>
+        }
+      >
+        <div className="mb-3 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+          <StatusBadge tone={stats.failures ? 'danger' : 'success'}>{stats.failures} failed sign-ins in view</StatusBadge>
+          <StatusBadge tone="info">{stats.moneyish} money-moving entries</StatusBadge>
+          {stats.notServer > 0 && <StatusBadge tone="warning">{stats.notServer} legacy rows written before the server guard</StatusBadge>}
+          <span className="ml-auto">{actions.length} distinct actions in this page</span>
+        </div>
 
-          <div className="relative w-full sm:w-72">
-            <Search className="absolute left-3 top-2.5 size-4 text-muted-foreground" />
-            <input
-              type="text"
-              placeholder="Search action or email..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="w-full rounded-xl border border-border bg-background py-2 pl-9 pr-4 text-xs text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none"
-            />
+        {error && <p className="mb-3 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-[11px] text-destructive">{error}</p>}
+
+        {loading && rows.length === 0 ? (
+          <div className="flex items-center justify-center gap-2 py-16 text-xs text-muted-foreground">
+            <Loader2 className="size-4 animate-spin" />
+            Reading the ledger…
           </div>
-        </div>
-
-        {/* Action Type Filter Pills */}
-        <div className="flex flex-wrap items-center gap-1.5 border-t border-border/60 pt-3 text-xs">
-          <span className="text-muted-foreground font-medium mr-1">Filter action:</span>
-          <button
-            type="button"
-            onClick={() => setActionFilter('all')}
-            className={cn(
-              'rounded-lg px-2.5 py-1 font-medium transition-colors',
-              actionFilter === 'all'
-                ? 'bg-primary text-primary-foreground'
-                : 'bg-muted text-muted-foreground hover:text-foreground',
-            )}
-          >
-            All Actions
-          </button>
-          {uniqueActions.map((act) => (
-            <button
-              key={act}
-              type="button"
-              onClick={() => setActionFilter(act)}
-              className={cn(
-                'rounded-lg px-2.5 py-1 font-mono text-[11px] font-medium transition-colors',
-                actionFilter === act
-                  ? 'bg-primary text-primary-foreground'
-                  : 'bg-muted text-muted-foreground hover:text-foreground',
-              )}
-            >
-              {act}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Audit Log Timeline Feed */}
-      {filteredLogs.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-border p-12 text-center text-sm text-muted-foreground bg-card">
-          No audit log records match your search criteria.
-        </div>
-      ) : (
-        <div className="flex flex-col gap-3">
-          {filteredLogs.map((log) => {
-            const isExpanded = expandedLogId === log.id
-            const hasDetails = log.details && Object.keys(log.details).length > 0
-
-            return (
-              <div
-                key={log.id}
-                className={cn(
-                  'rounded-2xl border bg-card p-4 sm:p-5 shadow-sm transition-all',
-                  isExpanded ? 'border-primary/50 ring-1 ring-primary/20' : 'border-border',
-                )}
-              >
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
-                  <div className="flex items-center gap-2.5 flex-wrap">
-                    <span
-                      className={cn(
-                        'rounded-lg border px-2.5 py-1 font-mono text-xs font-bold',
-                        getActionColor(log.action),
+        ) : rows.length === 0 ? (
+          <p className="py-12 text-center text-xs text-muted-foreground">No entries match. Actions appear here the moment they are taken.</p>
+        ) : (
+          <ul className="flex flex-col divide-y divide-border/60">
+            {rows.map((row) => {
+              const danger = /FAIL|REJECT|BAN|SUSPEND|LOCK|REVOK/i.test(row.action)
+              const good = /APPROV|COMPLET|RESTORE|GRANT|ENABLE/i.test(row.action)
+              const isOpen = expanded === row.id
+              return (
+                <li key={row.id}>
+                  <button
+                    type="button"
+                    onClick={() => setExpanded(isOpen ? null : row.id)}
+                    className="flex w-full flex-wrap items-start gap-2 py-2.5 text-left transition-colors hover:bg-muted/40"
+                    aria-expanded={isOpen}
+                  >
+                    <span className={cn('mt-1 size-2 shrink-0 rounded-full', danger ? 'bg-destructive' : good ? 'bg-success' : 'bg-primary/60')} />
+                    <span className="shrink-0 font-mono text-[11px] font-semibold uppercase tracking-tight text-foreground">{row.action}</span>
+                    <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{summarise(row.details)}</span>
+                    <span className="shrink-0 text-[11px] text-muted-foreground">{row.actorEmail?.split('@')[0] || 'system'}</span>
+                    <time className="shrink-0 font-mono text-[11px] text-muted-foreground/80">{row.timestamp ? new Date(row.timestamp).toLocaleString() : ''}</time>
+                  </button>
+                  {isOpen && (
+                    <div className="mb-2.5 rounded-xl border border-border/70 bg-background/60 p-3">
+                      <pre className="overflow-x-auto whitespace-pre-wrap break-all font-mono text-[11px] leading-relaxed text-muted-foreground">
+{JSON.stringify(row.details ?? {}, null, 2)}
+                      </pre>
+                      {row.action === 'ADMIN_LOGIN_FAILED' && (
+                        <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-border/70 pt-2">
+                          <p className="text-[11px] text-muted-foreground">
+                            Clear the in-memory lockout counters for any address or IP fragment mentioned above.
+                          </p>
+                          {unlocked.has(row.id) ? (
+                            <StatusBadge tone="success">
+                              <ShieldCheck className="size-3" />
+                              Cleared
+                            </StatusBadge>
+                          ) : (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 gap-1.5 text-[11px]"
+                              onClick={async (event) => {
+                                event.stopPropagation()
+                                const hint = String((row.details as { emailFragment?: string; ipFragment?: string } | undefined)?.emailFragment ?? (row.details as { ipFragment?: string } | undefined)?.ipFragment ?? row.actorEmail ?? '')
+                                if (hint.length < 3) {
+                                  push('error', 'This entry does not carry a usable fragment (older log format).')
+                                  return
+                                }
+                                await unlock(hint)
+                              }}
+                            >
+                              <Lock className="size-3" />
+                              Clear lockout
+                            </Button>
+                          )}
+                        </div>
                       )}
-                    >
-                      {log.action}
-                    </span>
-
-                    <span className="text-xs text-muted-foreground flex items-center gap-1">
-                      by <strong className="text-foreground">{log.actorEmail || 'System Admin'}</strong>
-                    </span>
-                  </div>
-
-                  <div className="flex items-center gap-3 text-xs text-muted-foreground font-mono">
-                    <span className="flex items-center gap-1">
-                      <Clock className="size-3.5 text-primary" />
-                      {new Date(log.timestamp).toLocaleString()}
-                    </span>
-
-                    {hasDetails && (
-                      <button
-                        type="button"
-                        onClick={() => setExpandedLogId(isExpanded ? null : log.id)}
-                        className="inline-flex items-center gap-1 font-sans text-primary hover:underline text-xs font-semibold"
-                      >
-                        {isExpanded ? 'Hide Payload' : 'View Payload'}
-                        {isExpanded ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                {/* Expanded JSON Inspector */}
-                {isExpanded && hasDetails && (
-                  <div className="mt-3.5 rounded-xl border border-border/80 bg-muted/40 p-3.5">
-                    <div className="flex items-center justify-between text-[11px] font-bold text-muted-foreground mb-1.5">
-                      <span>EVENT METADATA & PAYLOAD</span>
-                      <span className="font-mono">{log.id}</span>
                     </div>
-                    <pre className="overflow-x-auto rounded-lg bg-background p-3 font-mono text-[11px] text-foreground">
-                      {JSON.stringify(log.details, null, 2)}
-                    </pre>
-                  </div>
-                )}
-              </div>
-            )
-          })}
-        </div>
-      )}
+                  )}
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </AdminCard>
     </div>
   )
+}
+
+function summarise(details?: Record<string, unknown>): string {
+  if (!details) return '—'
+  const parts: string[] = []
+  for (const [key, value] of Object.entries(details)) {
+    if (value === undefined || value === null) continue
+    if (typeof value === 'object') continue
+    parts.push(`${key}=${String(value).slice(0, 60)}`)
+    if (parts.length >= 4) break
+  }
+  return parts.length ? parts.join(' · ') : '—'
 }

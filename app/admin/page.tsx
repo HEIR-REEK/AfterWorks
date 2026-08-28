@@ -1,419 +1,414 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import {
+  Activity,
   AlertTriangle,
   ArrowRight,
   Briefcase,
   CheckCircle2,
-  Clock,
-  CreditCard,
+  Clock3,
   DollarSign,
-  FileCheck,
+  FileCheck2,
   ListChecks,
   RefreshCw,
   ScrollText,
-  ShieldCheck,
-  Sparkles,
+  ShieldAlert,
   Users,
+  Wallet,
   Wrench,
-  XCircle,
 } from 'lucide-react'
-import {
-  subscribeToAllUsers,
-  subscribeToJobs,
-  subscribeToAllApplications,
-  subscribeToAdminAuditLogs,
-  subscribeToMaintenanceConfig,
-  subscribeToTransactions,
-  saveJobToFirestore,
-  createAdminAuditLog,
-  type UserDocument,
-  type AdminAuditLog,
-  type MaintenanceConfig,
-  type PaymentTransaction,
-  DEFAULT_MAINTENANCE_CONFIG,
-} from '@/lib/firestore'
-import {
-  seedJobs,
-  formatUsd,
-  formatKes,
-  type Job,
-  type Application,
-} from '@/lib/afterworks-data'
+import { adminApi, useAdminSession } from '@/lib/admin'
+import { AdminCard, AdminStat, LiveDot } from '@/components/admin-ui'
 import { Button } from '@/components/ui/button'
-import { useAuth } from '@/components/firebase-auth-provider'
+import { StatusBadge } from '@/components/status-badge'
+import { formatKes, formatUsd } from '@/lib/afterworks-data'
+import { site } from '@/lib/site'
+import { cn } from '@/lib/utils'
+
+/**
+ * Console overview.
+ *
+ * This page used to open six live Firestore listeners (every user document, every application, every
+ * payment, every log line) to render eight numbers, and then recompute them in the browser on every
+ * snapshot tick. That is expensive for the project, slow on a laptop with 20k users, and it ships the
+ * entire member table to a browser tab. Now the server aggregates behind a 20s cache and the page
+ * polls, so the numbers are consistent between tabs and cost one request.
+ */
+
+type Stats = {
+  totals: {
+    users: number
+    kycVerified: number
+    kycPending: number
+    suspended: number
+    activeLast7d?: number
+    activeLast24h?: number
+    /** From Firebase Auth. `null` means the credential store is not connected to this deployment. */
+    accounts?: number | null
+    accountsDisabled?: number | null
+    accountsWithoutProfile?: number | null
+  }
+  jobs: { open: number; paused: number; closed: number; totalSlots: number; filledSlots: number }
+  applications: { total: number; underReview: number; active: number; completed: number; rejected: number }
+  money: { liabilityUsd: number; pendingUsd: number; availableUsd: number; revenueKes: number; paidOutKes: number }
+  payments: { successful: number; pending: number; failed: number; last7dVolumeKes: number }
+  security: {
+    failedLogins24h: number
+    lockouts: { tracked: number; totalAttempts: number; totalBlocked: number; locked: { key: string; until: number }[] }
+    posture: { id: string; label: string; severity: 'pass' | 'warn' | 'fail'; detail: string; fix?: string }[]
+  }
+  activity: { id: string; label: string; at: string; tone: string }[]
+  maintenance: {
+    enabled: boolean
+    title: string
+    message: string
+    estimatedEnd: string | null
+    mode: string
+    updatedBy?: string
+    updatedAt: string | null
+  }
+  maintenanceStatus: { active: boolean; bannerOnly: boolean; retryAfterSec: number; remainingMs: number | null }
+  generatedAt: string
+}
+
+const REFRESH_MS = 60_000
 
 export default function AdminOverviewPage() {
-  const { user } = useAuth()
-  const [users, setUsers] = useState<UserDocument[]>([])
-  const [jobs, setJobs] = useState<Job[]>([])
-  const [applications, setApplications] = useState<Application[]>([])
-  const [auditLogs, setAuditLogs] = useState<AdminAuditLog[]>([])
-  const [transactions, setTransactions] = useState<PaymentTransaction[]>([])
-  const [maintenance, setMaintenance] = useState<MaintenanceConfig>(DEFAULT_MAINTENANCE_CONFIG)
-  const [seeding, setSeeding] = useState(false)
-  const [seedSuccess, setSeedSuccess] = useState(false)
+  const session = useAdminSession()
+  const [stats, setStats] = useState<Stats | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [updatedAt, setUpdatedAt] = useState<number | null>(null)
 
-  // Real-time subscriptions
-  useEffect(() => {
-    const unsubUsers = subscribeToAllUsers(setUsers)
-    const unsubJobs = subscribeToJobs(setJobs)
-    const unsubApps = subscribeToAllApplications(setApplications)
-    const unsubLogs = subscribeToAdminAuditLogs(setAuditLogs)
-    const unsubMaint = subscribeToMaintenanceConfig(setMaintenance)
-    const unsubTxs = subscribeToTransactions(setTransactions)
-
-    return () => {
-      unsubUsers()
-      unsubJobs()
-      unsubApps()
-      unsubLogs()
-      unsubMaint()
-      unsubTxs()
+  const load = useCallback(async (refresh = false) => {
+    if (!refresh) setLoading(true)
+    try {
+      const data = await adminApi.stats(refresh)
+      setStats(data as unknown as Stats)
+      setError(null)
+      setUpdatedAt(Date.now())
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Metrics unavailable.')
+    } finally {
+      setLoading(false)
     }
   }, [])
 
-  // Aggregate metrics
-  const totalUsers = users.length
-  const kycVerifiedUsers = users.filter((u) => u.kycVerified === true).length
-  const kycRate = totalUsers > 0 ? Math.round((kycVerifiedUsers / totalUsers) * 100) : 0
-  const activeUsers = users.filter((u) => u.accountState === 'active').length
+  useEffect(() => {
+    if (session.status !== 'authorized') return
+    void load()
+    const id = setInterval(() => {
+      if (document.visibilityState === 'visible') void load(true)
+    }, REFRESH_MS)
+    return () => clearInterval(id)
+  }, [session.status, load])
 
-  const totalPendingUsd = users.reduce((acc, u) => acc + (u.wallet?.pendingUsd || 0), 0)
-  const totalAvailableUsd = users.reduce((acc, u) => acc + (u.wallet?.availableUsd || 0), 0)
-  const totalPlatformLiability = totalPendingUsd + totalAvailableUsd
-
-  const openJobs = jobs.filter((j) => j.status === 'open').length
-  const pausedJobs = jobs.filter((j) => j.status === 'paused').length
-
-  const pendingApps = applications.filter((a) => a.status === 'under_review').length
-  const approvedApps = applications.filter((a) => a.status === 'approved' || a.status === 'in_progress').length
-  const completedApps = applications.filter((a) => a.status === 'completed').length
-  const rejectedApps = applications.filter((a) => a.status === 'rejected' || a.status === 'failed_qa').length
-
-  const totalPaymentsVolumeKes = transactions
-    .filter((t) => t.status === 'success')
-    .reduce((acc, t) => acc + (t.amountKes || 0), 0)
-
-
+  const issues = useMemo(() => (stats?.security.posture ?? []).filter((c) => c.severity !== 'pass'), [stats])
+  const slotFill = stats && stats.jobs.totalSlots > 0 ? Math.round((stats.jobs.filledSlots / stats.jobs.totalSlots) * 100) : 0
 
   return (
-    <div className="flex flex-col gap-6 sm:gap-8">
-      {/* Maintenance Status Banner */}
-      {maintenance.enabled ? (
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 sm:p-5">
-          <div className="flex items-start gap-3">
-            <div className="rounded-xl bg-amber-500/20 p-2 text-amber-600 dark:text-amber-400">
-              <Wrench className="size-6 animate-pulse" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="font-bold text-amber-700 dark:text-amber-400">
-                  SYSTEM MAINTENANCE MODE ACTIVE
-                </span>
-                <span className="size-2 rounded-full bg-amber-500 animate-ping" />
-              </div>
-              <p className="mt-1 text-xs text-amber-900/80 dark:text-amber-200/80">
-                Non-admin users are currently seeing the maintenance screen.
-                {maintenance.estimatedEnd && ` Estimated return: ${new Date(maintenance.estimatedEnd).toLocaleString()}`}
-              </p>
-            </div>
+    <div className="flex flex-col gap-5">
+      {/* Status strip */}
+      <div
+        className={cn(
+          'flex flex-col gap-4 rounded-2xl border p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:p-5',
+          stats?.maintenanceStatus.active ? 'border-amber-500/40 bg-amber-500/[0.08]' : 'border-border bg-card',
+        )}
+      >
+        <div className="flex items-start gap-3">
+          <div className={cn('rounded-xl p-2.5', stats?.maintenanceStatus.active ? 'bg-amber-500/20 text-amber-600' : 'bg-success/12 text-success')}>
+            {stats?.maintenanceStatus.active ? <Wrench className="size-6 animate-pulse" /> : <CheckCircle2 className="size-6" />}
           </div>
-          <Button
-            render={<Link href="/admin/maintenance" />}
-            size="sm"
-            className="shrink-0 bg-amber-600 hover:bg-amber-700 text-white"
-          >
-            Configure Maintenance
-          </Button>
-        </div>
-      ) : (
-        <div className="flex items-center justify-between rounded-2xl border border-border/80 bg-card p-3.5 px-4 text-xs">
-          <div className="flex items-center gap-2 text-muted-foreground">
-            <span className="size-2.5 rounded-full bg-success animate-pulse" />
-            <span>Platform Status: <strong className="text-foreground">Live & Operational</strong></span>
-          </div>
-          <Link href="/admin/maintenance" className="font-semibold text-primary hover:underline">
-            Manage Maintenance Mode →
-          </Link>
-        </div>
-      )}
-
-      {/* Primary KPI Grid */}
-      <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        {/* Total Users */}
-        <div className="rounded-2xl border border-border bg-card p-4 sm:p-5 shadow-sm transition-all hover:border-primary/40">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-              Total Registered Users
-            </span>
-            <div className="rounded-xl bg-primary/10 p-2 text-primary">
-              <Users className="size-4" />
-            </div>
-          </div>
-          <p className="mt-3 font-mono text-3xl font-bold text-foreground">{totalUsers}</p>
-          <div className="mt-2 flex items-center justify-between text-xs text-muted-foreground">
-            <span>{activeUsers} active accounts</span>
-            <Link href="/admin/users" className="text-primary hover:underline font-medium">
-              Manage users
-            </Link>
-          </div>
-        </div>
-
-        {/* KYC Verified */}
-        <div className="rounded-2xl border border-border bg-card p-4 sm:p-5 shadow-sm transition-all hover:border-primary/40">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-              KYC Verification
-            </span>
-            <div className="rounded-xl bg-success/15 p-2 text-success">
-              <ShieldCheck className="size-4" />
-            </div>
-          </div>
-          <p className="mt-3 font-mono text-3xl font-bold text-foreground">{kycVerifiedUsers}</p>
-          <div className="mt-2 flex items-center justify-between text-xs text-muted-foreground">
-            <span className="font-medium text-success">{kycRate}% of user base verified</span>
-            <span>Didit integrated</span>
-          </div>
-        </div>
-
-        {/* Open Jobs */}
-        <div className="rounded-2xl border border-border bg-card p-4 sm:p-5 shadow-sm transition-all hover:border-primary/40">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-              Jobs In Catalog
-            </span>
-            <div className="rounded-xl bg-accent/20 p-2 text-foreground">
-              <Briefcase className="size-4" />
-            </div>
-          </div>
-          <p className="mt-3 font-mono text-3xl font-bold text-foreground">{jobs.length}</p>
-          <div className="mt-2 flex items-center justify-between text-xs text-muted-foreground">
-            <span>{openJobs} Open • {pausedJobs} Paused</span>
-            <Link href="/admin/jobs" className="text-primary hover:underline font-medium">
-              Manage jobs
-            </Link>
-          </div>
-        </div>
-
-        {/* Platform Balances */}
-        <div className="rounded-2xl border border-border bg-card p-4 sm:p-5 shadow-sm transition-all hover:border-primary/40">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-              Total Wallet Liability
-            </span>
-            <div className="rounded-xl bg-primary/10 p-2 text-primary">
-              <DollarSign className="size-4" />
-            </div>
-          </div>
-          <p className="mt-3 font-mono text-2xl sm:text-3xl font-bold text-foreground">
-            {formatUsd(totalPlatformLiability)}
-          </p>
-          <div className="mt-2 flex items-center justify-between text-xs text-muted-foreground">
-            <span>Avail: {formatUsd(totalAvailableUsd)}</span>
-            <span>Pend: {formatUsd(totalPendingUsd)}</span>
-          </div>
-        </div>
-      </section>
-
-      {/* Applications & Quick Actions Grid */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        {/* Applications Breakdown */}
-        <div className="flex flex-col justify-between rounded-2xl border border-border bg-card p-5 shadow-sm lg:col-span-2">
-          <div>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <ListChecks className="size-5 text-primary" />
-                <h2 className="text-base font-bold text-foreground">Applications Lifecycle</h2>
-              </div>
-              <Link href="/admin/applications" className="text-xs font-semibold text-primary hover:underline">
-                View all ({applications.length}) →
-              </Link>
-            </div>
-
-            <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <div className="rounded-xl border border-border/60 bg-muted/30 p-3.5">
-                <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                  <Clock className="size-3.5 text-info" />
-                  <span>Pending Review</span>
-                </div>
-                <p className="mt-2 font-mono text-2xl font-bold text-foreground">{pendingApps}</p>
-              </div>
-
-              <div className="rounded-xl border border-border/60 bg-muted/30 p-3.5">
-                <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                  <FileCheck className="size-3.5 text-primary" />
-                  <span>In Progress</span>
-                </div>
-                <p className="mt-2 font-mono text-2xl font-bold text-foreground">{approvedApps}</p>
-              </div>
-
-              <div className="rounded-xl border border-border/60 bg-muted/30 p-3.5">
-                <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                  <CheckCircle2 className="size-3.5 text-success" />
-                  <span>Completed</span>
-                </div>
-                <p className="mt-2 font-mono text-2xl font-bold text-success">{completedApps}</p>
-              </div>
-
-              <div className="rounded-xl border border-border/60 bg-muted/30 p-3.5">
-                <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                  <XCircle className="size-3.5 text-destructive" />
-                  <span>Rejected / Failed</span>
-                </div>
-                <p className="mt-2 font-mono text-2xl font-bold text-destructive">{rejectedApps}</p>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Quick Admin Actions */}
-        <div className="flex flex-col justify-between rounded-2xl border border-border bg-card p-5 shadow-sm">
-          <div>
-            <h2 className="text-base font-bold text-foreground">Administrative Actions</h2>
-            <p className="text-xs text-muted-foreground mt-1">
-              Direct access to system operations
+          <div className="min-w-0">
+            <h1 className="text-base font-semibold tracking-tight sm:text-lg">
+              {stats?.maintenanceStatus.active ? 'Maintenance blackout is live' : 'Platform operational'}
+            </h1>
+            <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+              {stats?.maintenanceStatus.active
+                ? `${stats.maintenance.title}. Traffic outside the console is being answered with 503 + Retry-After${
+                    stats.maintenance.estimatedEnd ? ` until ${new Date(stats.maintenance.estimatedEnd).toLocaleString()}` : ''
+                  }.`
+                : `All members can sign in, apply, submit work and get paid. Signed in as ${session.email ?? 'staff'} — metrics refresh every ${REFRESH_MS / 1000}s.`}
             </p>
-
-            <div className="mt-4 flex flex-col gap-2.5">
-              <Link
-                href="/admin/users"
-                className="flex items-center justify-between rounded-xl border border-border/70 bg-muted/20 p-3 text-xs font-medium text-foreground transition-colors hover:bg-muted"
-              >
-                <div className="flex items-center gap-2.5">
-                  <Users className="size-4 text-primary" />
-                  <span>Inspect & Manage Users</span>
-                </div>
-                <ArrowRight className="size-3.5 text-muted-foreground" />
-              </Link>
-
-              <Link
-                href="/admin/jobs"
-                className="flex items-center justify-between rounded-xl border border-border/70 bg-muted/20 p-3 text-xs font-medium text-foreground transition-colors hover:bg-muted"
-              >
-                <div className="flex items-center gap-2.5">
-                  <Briefcase className="size-4 text-primary" />
-                  <span>Add / Edit Job Postings</span>
-                </div>
-                <ArrowRight className="size-3.5 text-muted-foreground" />
-              </Link>
-
-              <Link
-                href="/admin/applications"
-                className="flex items-center justify-between rounded-xl border border-border/70 bg-muted/20 p-3 text-xs font-medium text-foreground transition-colors hover:bg-muted"
-              >
-                <div className="flex items-center gap-2.5">
-                  <ListChecks className="size-4 text-primary" />
-                  <span>Review Submissions & QA</span>
-                </div>
-                <ArrowRight className="size-3.5 text-muted-foreground" />
-              </Link>
-
-              <Link
-                href="/admin/maintenance"
-                className="flex items-center justify-between rounded-xl border border-border/70 bg-muted/20 p-3 text-xs font-medium text-foreground transition-colors hover:bg-muted"
-              >
-                <div className="flex items-center gap-2.5">
-                  <Wrench className="size-4 text-amber-500" />
-                  <span>Maintenance Mode Controls</span>
-                </div>
-                <ArrowRight className="size-3.5 text-muted-foreground" />
-              </Link>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <StatusBadge tone={stats?.maintenanceStatus.active ? 'warning' : 'success'}>
+                {stats?.maintenanceStatus.active ? 'Blocking' : 'Live'}
+              </StatusBadge>
+              {issues.length > 0 && (
+                <StatusBadge tone={issues.some((i) => i.severity === 'fail') ? 'danger' : 'warning'}>
+                  <ShieldAlert className="size-3" />
+                  {issues.length} security {issues.length === 1 ? 'note' : 'notes'}
+                </StatusBadge>
+              )}
+              {updatedAt && <LiveDot tone="success" label={`refreshed ${new Date(updatedAt).toLocaleTimeString()}`} />}
             </div>
           </div>
+        </div>
 
-          <div className="mt-4 rounded-xl border border-border/60 bg-muted/10 p-3 text-[11px] text-muted-foreground">
-            🔒 All administrative actions are recorded in the immutable audit log.
-          </div>
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          <Button variant="outline" size="sm" className="gap-1.5" onClick={() => void load(true)} disabled={loading}>
+            <RefreshCw className={cn('size-3.5', loading && 'animate-spin')} />
+            Refresh
+          </Button>
+          <Button render={<Link href="/admin/maintenance" />} size="sm" className="gap-1.5">
+            <Wrench className="size-3.5" />
+            Maintenance
+          </Button>
         </div>
       </div>
 
-      {/* Real Payment Transactions Feed */}
-      <section className="rounded-2xl border border-border bg-card p-5 shadow-sm">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <CreditCard className="size-5 text-primary" />
-            <h2 className="text-base font-bold text-foreground">Real Payment Activity (Paystack)</h2>
+      {error && (
+        <div className="flex items-start gap-2.5 rounded-xl border border-destructive/30 bg-destructive/10 p-3.5 text-xs text-destructive" role="alert">
+          <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+          <div>
+            <p className="font-semibold">{error}</p>
+            <p className="mt-1 opacity-90">
+              Metrics come from the server. If the datastore is not configured on this deployment, check{' '}
+              <code className="font-mono">FIREBASE_SERVICE_ACCOUNT_JSON</code>.
+            </p>
           </div>
-          <span className="text-xs text-muted-foreground font-mono">
-            Settled Volume: <strong className="text-foreground font-bold">KES {totalPaymentsVolumeKes.toLocaleString()}</strong>
-          </span>
         </div>
+      )}
 
-        {transactions.length === 0 ? (
-          <div className="mt-4 rounded-xl border border-dashed border-border p-6 text-center text-xs text-muted-foreground">
-            No live payment transactions recorded yet. Real training payments processed via Paystack will stream here live.
-          </div>
-        ) : (
-          <div className="mt-4 divide-y divide-border/60">
-            {transactions.slice(0, 5).map((tx) => (
-              <div key={tx.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 py-3 text-xs">
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <span
-                    className={`rounded-md px-2 py-0.5 font-mono text-[11px] font-bold ${
-                      tx.status === 'success'
-                        ? 'bg-success/15 text-success'
-                        : tx.status === 'failed'
-                        ? 'bg-destructive/15 text-destructive'
-                        : 'bg-amber-500/15 text-amber-600'
-                    }`}
-                  >
-                    {tx.status.toUpperCase()}
-                  </span>
-                  <span className="truncate text-muted-foreground">
-                    <strong className="text-foreground">{tx.email}</strong> • Ref: <span className="font-mono text-foreground">{tx.reference}</span>
-                  </span>
+      {/* KPI grid */}
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <AdminStat
+          label="Accounts"
+          value={stats?.totals.accounts ?? stats?.totals.users ?? '—'}
+          sub={
+            stats?.totals.accounts == null
+              ? `${stats?.totals.users ?? 0} profiles · Auth not connected`
+              : `${stats.totals.users} profiles · ${stats.totals.activeLast7d ?? 0} signed in this week`
+          }
+          icon={<Users className="size-4" />}
+          tone={stats && stats.totals.accounts != null && stats.totals.accounts !== stats.totals.users ? 'warning' : 'default'}
+        />
+        <AdminStat
+          label="Platform liability"
+          value={formatUsd(stats?.money.liabilityUsd ?? 0)}
+          sub={`≈ ${formatKes(stats?.money.liabilityUsd ?? 0)} owed to workers`}
+          icon={<Wallet className="size-4" />}
+          tone="primary"
+        />
+        <AdminStat
+          label="In review"
+          value={stats?.applications.underReview ?? '—'}
+          sub={`${stats?.applications.active ?? 0} active applications`}
+          icon={<ListChecks className="size-4" />}
+          tone={(stats?.applications.underReview ?? 0) > 25 ? 'warning' : 'default'}
+        />
+        <AdminStat
+          label="Training revenue (7d)"
+          value={`KES ${(stats?.payments.last7dVolumeKes ?? 0).toLocaleString()}`}
+          sub={`${stats?.payments.successful ?? 0} successful charges total`}
+          icon={<DollarSign className="size-4" />}
+          tone="success"
+        />
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-3">
+        {/* Queues */}
+        <AdminCard title="Work queues" description="What needs a human decision today." icon={<Clock3 className="size-4" />}>
+          <ul className="flex flex-col divide-y divide-border/60">
+            <QueueRow
+              label="KYC awaiting decision"
+              value={stats?.totals.kycPending ?? 0}
+              href="/admin/users?state=kyc_on_hold"
+              tone={stats && stats.totals.kycPending > 10 ? 'warning' : 'neutral'}
+              hint="Verify or decline from Users & KYC."
+            />
+            <QueueRow label="Applications to triage" value={stats?.applications.underReview ?? 0} href="/admin/applications?status=under_review" tone="neutral" hint="Approve reserves a slot." />
+            <QueueRow label="Submissions in QA" value={Math.max(0, (stats?.applications.active ?? 0) - (stats?.applications.underReview ?? 0))} href="/admin/applications" tone="neutral" hint="Approving pays the worker." />
+            <QueueRow label="Restricted accounts" value={stats?.totals.suspended ?? 0} href="/admin/users?state=suspended" tone={stats && stats.totals.suspended > 0 ? 'danger' : 'neutral'} hint="Suspended or banned." />
+          </ul>
+        </AdminCard>
+
+        {/* Catalogue */}
+        <AdminCard
+          title="Job catalogue"
+          description="Live slots and payout exposure."
+          icon={<Briefcase className="size-4" />}
+          actions={
+            <Button render={<Link href="/admin/jobs" />} variant="outline" size="sm">
+              Manage
+            </Button>
+          }
+        >
+          <div className="flex flex-col gap-3">
+            <div className="grid grid-cols-3 gap-2 text-center">
+              {(['open', 'paused', 'closed'] as const).map((key) => (
+                <div key={key} className="rounded-xl border border-border/70 bg-background/60 p-2.5">
+                  <p className="font-mono text-lg font-semibold tabular">{stats?.jobs[key] ?? 0}</p>
+                  <p className="text-[11px] capitalize text-muted-foreground">{key}</p>
                 </div>
-                <div className="flex items-center gap-3 text-xs font-mono text-muted-foreground shrink-0">
-                  <span className="font-bold text-foreground">
-                    KES {tx.amountKes?.toLocaleString() ?? 0}
-                  </span>
-                  <span>{new Date(tx.createdAt).toLocaleTimeString()}</span>
-                </div>
+              ))}
+            </div>
+            <div>
+              <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                <span>Slot fill</span>
+                <span className="font-mono">
+                  {stats?.jobs.filledSlots ?? 0}/{stats?.jobs.totalSlots ?? 0} · {slotFill}%
+                </span>
               </div>
-            ))}
+              <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-muted">
+                <div className={cn('h-full rounded-full transition-all', slotFill > 85 ? 'bg-warning' : 'bg-primary')} style={{ width: `${Math.min(100, slotFill)}%` }} />
+              </div>
+            </div>
+            <p className="text-[11px] leading-relaxed text-muted-foreground">
+              Completed work pays {formatUsd(stats?.money.pendingUsd ?? 0)} pending + {formatUsd(stats?.money.availableUsd ?? 0)} available.{' '}
+              {site.payoutSla}
+            </p>
           </div>
-        )}
-      </section>
+        </AdminCard>
 
-      {/* Recent Admin Audit Logs Feed */}
-      <section className="rounded-2xl border border-border bg-card p-5 shadow-sm">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <ScrollText className="size-5 text-primary" />
-            <h2 className="text-base font-bold text-foreground">Recent Audit Log Activity</h2>
+        {/* Security */}
+        <AdminCard
+          title="Security notes"
+          description="Posture the server can actually verify."
+          icon={<ShieldAlert className="size-4" />}
+          actions={
+            <Button render={<Link href="/admin/security" />} variant="outline" size="sm">
+              Open
+            </Button>
+          }
+        >
+          {issues.length === 0 ? (
+            <p className="flex items-center gap-2 text-xs text-success">
+              <CheckCircle2 className="size-4" />
+              No outstanding configuration warnings.
+            </p>
+          ) : (
+            <ul className="flex flex-col gap-2">
+              {issues.slice(0, 3).map((issue) => (
+                <li key={issue.id} className="flex items-start gap-2 rounded-xl border border-border/70 bg-background/50 p-2.5">
+                  <span className={cn('mt-1 size-2 shrink-0 rounded-full', issue.severity === 'fail' ? 'bg-destructive' : 'bg-warning')} />
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold text-foreground">{issue.label}</p>
+                    <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">{issue.detail}</p>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+          <div className="mt-3 grid grid-cols-2 gap-2 border-t border-border/60 pt-3 text-[11px] text-muted-foreground">
+            <span>
+              Failed sign-ins (ledger): <strong className="font-mono text-foreground">{stats?.security.failedLogins24h ?? 0}</strong>
+            </span>
+            <span>
+              Address lockouts: <strong className="font-mono text-foreground">{stats?.security.lockouts.locked.length ?? 0}</strong>
+            </span>
           </div>
-          <Link href="/admin/audit-log" className="text-xs font-semibold text-primary hover:underline">
-            View full log ({auditLogs.length}) →
-          </Link>
+        </AdminCard>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-3">
+        <AdminCard
+          className="lg:col-span-2"
+          title="Payments & training"
+          description="Charges verified by Paystack, from the server ledger."
+          icon={<FileCheck2 className="size-4" />}
+          actions={
+            <div className="flex items-center gap-1">
+              <Button render={<Link href="/admin/money" />} variant="ghost" size="sm" className="gap-1.5">
+                <Wallet className="size-3.5" />
+                Money ledger
+              </Button>
+              <Button render={<Link href="/status" />} variant="ghost" size="sm" className="gap-1.5">
+                <Activity className="size-3.5" />
+                Feed
+              </Button>
+            </div>
+          }
+        >
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <MiniStat label="Successful" value={stats?.payments.successful ?? 0} tone="success" />
+            <MiniStat label="Pending" value={stats?.payments.pending ?? 0} tone="warning" />
+            <MiniStat label="Failed" value={stats?.payments.failed ?? 0} tone="danger" />
+            <MiniStat label="Lifetime" value={`KES ${(stats?.money.revenueKes ?? 0).toLocaleString()}`} />
+          </div>
+          <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">
+            Training revenue is KES-denominated; worker earnings are USD and settle through mobile money. Payouts issued for completed work:{' '}
+            <span className="font-mono">KES {(stats?.money.paidOutKes ?? 0).toLocaleString()}</span>.
+          </p>
+        </AdminCard>
+
+        <AdminCard title="Recent console activity" description="Tail of the audit ledger." icon={<ScrollText className="size-4" />}>
+          {(stats?.activity.length ?? 0) === 0 ? (
+            <p className="text-xs text-muted-foreground">No console actions recorded yet. Every moderation, payout and maintenance change will appear here.</p>
+          ) : (
+            <ul className="flex flex-col gap-2">
+              {stats!.activity.slice(0, 7).map((row) => (
+                <li key={row.id} className="flex items-start gap-2 text-[11px]">
+                  <span className={cn('mt-1 size-1.5 shrink-0 rounded-full', row.tone === 'danger' ? 'bg-destructive' : row.tone === 'success' ? 'bg-success' : 'bg-primary/60')} />
+                  <div className="min-w-0">
+                    <p className="truncate text-foreground">{row.label}</p>
+                    <p className="text-muted-foreground">{row.at ? new Date(row.at).toLocaleString() : ''}</p>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+          <Button render={<Link href="/admin/audit-log" />} variant="ghost" size="sm" className="mt-3 w-full justify-center gap-1.5">
+            Full audit log
+            <ArrowRight className="size-3.5" />
+          </Button>
+        </AdminCard>
+      </div>
+    </div>
+  )
+}
+
+function QueueRow({
+  label,
+  value,
+  hint,
+  href,
+  tone,
+}: {
+  label: string
+  value: number
+  hint: string
+  href: string
+  tone: 'neutral' | 'warning' | 'danger'
+}) {
+  return (
+    <li>
+      <Link href={href} className="flex items-center justify-between gap-3 py-2.5 transition-colors hover:bg-muted/40">
+        <div className="min-w-0">
+          <p className="text-xs font-medium text-foreground">{label}</p>
+          <p className="text-[11px] text-muted-foreground">{hint}</p>
         </div>
+        <span
+          className={cn(
+            'shrink-0 rounded-lg px-2 py-1 font-mono text-sm font-semibold tabular',
+            tone === 'warning' && 'bg-warning/15 text-warning-foreground',
+            tone === 'danger' && 'bg-destructive/10 text-destructive',
+            tone === 'neutral' && 'bg-secondary text-secondary-foreground',
+          )}
+        >
+          {value}
+        </span>
+      </Link>
+    </li>
+  )
+}
 
-        {auditLogs.length === 0 ? (
-          <div className="mt-4 rounded-xl border border-dashed border-border p-6 text-center text-xs text-muted-foreground">
-            No audit logs recorded yet. Changes made in the admin console will appear here in real-time.
-          </div>
-        ) : (
-          <div className="mt-4 divide-y divide-border/60">
-            {auditLogs.slice(0, 5).map((log) => (
-              <div key={log.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 py-3 text-xs">
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <span className="rounded-md bg-secondary px-2 py-0.5 font-mono text-[11px] font-semibold text-foreground shrink-0">
-                    {log.action}
-                  </span>
-                  <span className="truncate text-muted-foreground">
-                    by <strong className="text-foreground">{log.actorEmail || 'Admin'}</strong>
-                  </span>
-                </div>
-                <div className="text-[11px] font-mono text-muted-foreground shrink-0">
-                  {new Date(log.timestamp).toLocaleString()}
-                </div>
-              </div>
-            ))}
-          </div>
+function MiniStat({ label, value, tone = 'default' }: { label: string; value: number | string; tone?: 'default' | 'success' | 'warning' | 'danger' }) {
+  return (
+    <div className="rounded-xl border border-border/70 bg-background/60 p-2.5">
+      <p className="text-[11px] uppercase tracking-wider text-muted-foreground">{label}</p>
+      <p
+        className={cn(
+          'mt-1 font-mono text-base font-semibold tabular',
+          tone === 'success' && 'text-success',
+          tone === 'warning' && 'text-amber-600 dark:text-amber-400',
+          tone === 'danger' && 'text-destructive',
         )}
-      </section>
+      >
+        {value}
+      </p>
     </div>
   )
 }

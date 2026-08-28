@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import Image from 'next/image'
 import { usePathname } from 'next/navigation'
 import {
   Activity,
@@ -23,7 +22,7 @@ import { StatusBadge } from '@/components/status-badge'
 import { cn } from '@/lib/utils'
 import { useAdminSession } from '@/lib/admin'
 import { useMaintenance } from '@/components/maintenance-provider'
-import logo from '@/components/logo.png'
+import { BrandMark } from '@/components/brand'
 import AdminLoginPage from './login/page'
 
 const adminNavItems = [
@@ -79,7 +78,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       <header className="sticky top-0 z-40 border-b border-border bg-background/90 backdrop-blur">
         <div className="mx-auto flex h-14 w-full max-w-7xl items-center gap-3 px-4 sm:px-6">
           <Link href="/admin" className="flex items-center gap-2.5">
-            <Image src={logo} alt="" width={32} height={32} className="h-8 w-8 object-contain" />
+            <BrandMark size={32} />
             <span className="text-sm font-semibold tracking-tight">
               AfterWorks
               <span className="ml-1.5 rounded-md bg-primary/10 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-primary">

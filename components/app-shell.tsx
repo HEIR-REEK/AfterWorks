@@ -1,6 +1,5 @@
 'use client'
 
-import Image from 'next/image'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import {
@@ -19,7 +18,8 @@ import { useAuth } from '@/components/firebase-auth-provider'
 import { useAfterWorks } from '@/components/afterworks-provider'
 import { NotificationsBell } from '@/components/notifications-bell'
 import { useMaintenance } from '@/components/maintenance-provider'
-import logo from '@/components/logo.png'
+import { BrandLink } from '@/components/brand'
+import { site } from '@/lib/site'
 
 import { isUserAdmin } from '@/lib/admin'
 
@@ -79,16 +79,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       {/* Top Header */}
       <header className="sticky top-0 z-40 border-b border-border bg-background/85 backdrop-blur">
         <div className="mx-auto flex h-14 w-full max-w-6xl items-center gap-4 px-4 sm:h-16 sm:gap-6 sm:px-6">
-          <Link href="/" className="flex items-center gap-2 sm:gap-3">
-            <Image
-              src={logo}
-              alt="AfterWorks"
-              width={36}
-              height={36}
-              className="h-8 w-8 object-contain sm:h-10 sm:w-10"
-            />
-            <span className="text-sm font-semibold tracking-tight sm:text-base">AfterWorks</span>
-          </Link>
+          <BrandLink href="/" label={site.name} size={40} wordmarkClass="sm:text-base" />
 
           {/* Desktop nav */}
           <nav className="hidden items-center gap-1 md:flex" aria-label="Primary">

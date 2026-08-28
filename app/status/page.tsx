@@ -11,7 +11,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
-import Image from 'next/image'
 import {
   Activity,
   ArrowRight,
@@ -28,7 +27,7 @@ import { Button } from '@/components/ui/button'
 import { StatusBadge } from '@/components/status-badge'
 import { site } from '@/lib/site'
 import { cn } from '@/lib/utils'
-import logo from '@/components/logo.png'
+import { BrandMark } from '@/components/brand'
 
 type Check = { id: string; label: string; status: 'operational' | 'degraded' | 'maintenance' | 'outage'; detail: string; latencyMs?: number }
 type Health = {
@@ -120,7 +119,7 @@ export default function StatusPage() {
       <header className="border-b border-border bg-background/85 backdrop-blur">
         <div className="mx-auto flex h-14 w-full max-w-3xl items-center justify-between px-4 sm:px-6">
           <Link href="/" className="flex items-center gap-2.5">
-            <Image src={logo} alt="" width={32} height={32} className="h-8 w-8 object-contain" />
+            <BrandMark size={32} />
             <span className="text-sm font-semibold tracking-tight">{site.name} status</span>
           </Link>
           <button

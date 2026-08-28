@@ -78,6 +78,15 @@ misunderstanding. The override is environment-only by design (a broken database 
 traffic), so **the way to clear it is to unset the variable in Render/Vercel and let the instance restart** —
 `MAINTENANCE_FORCE_PATHS` scopes it to listed prefixes and `MAINTENANCE_FORCE_UNTIL` makes it expire on its own.
 
+**When it goes back live is an operator-set field, not a guess.** `estimatedEnd` is stored as a UTC ISO
+instant, edited through a date-and-time control that states the browser timezone (so a Nairobi operator
+cannot drift three hours against a UTC document), offers `+30m … +8h / Tomorrow 09:00` presets, echoes the
+resolved local minute, and shows the `Retry-After` the edge will publish before anything is saved. A past
+ETA is labelled overdue rather than silently honoured, `autoResolve` lifts the gate on that minute, and the
+console hero counts the remaining time down live with `+30m / +1h / +3h` extensions that write through the
+same audited `PUT`. The outage page prints the same instant the server used for `Retry-After`, so the
+worker-facing promise and the machine-facing header cannot disagree.
+
 Two modes: `blackout` (reject traffic) and `banner` (site works, warning strip in the app shell) —
 for the common case where the platform is degraded, not down. A window may be scheduled
 (`scheduledStart`) and `autoResolve` lifts the gate when the ETA passes, so finishing an upgrade at

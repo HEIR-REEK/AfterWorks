@@ -25,6 +25,27 @@ export const dynamic = 'force-dynamic'
 
 const EMAIL_CAP = 200
 
+/**
+ * What the console needs to know about the *effective* window. Kept in one place because the page
+ * reuses the object after every save: a field missing here silently disappears from the UI after a
+ * write, which reads as "my setting did not stick".
+ */
+function maintenanceStatusProjection(status: ReturnType<typeof resolveMaintenance>) {
+  return {
+    active: status.active,
+    blocksAll: status.blocksAll,
+    scope: status.scope,
+    blockedPaths: status.blockedPaths,
+    bannerOnly: status.bannerOnly,
+    pending: status.pending,
+    stale: status.stale,
+    retryAfterSec: status.retryAfterSec,
+    remainingMs: status.remainingMs,
+    endsAt: status.endsAt,
+    startsAt: status.startsAt,
+  }
+}
+
 function validatePatch(body: Record<string, unknown>): { ok: true; patch: Partial<MaintenanceConfig> } | { ok: false; error: string } {
   const patch: Partial<MaintenanceConfig> = {}
 
@@ -153,17 +174,7 @@ export async function GET(req: NextRequest) {
       forced: isMaintenanceForced(),
       ok: true,
       config,
-      status: {
-        active: status.active,
-        blocksAll: status.blocksAll,
-        scope: status.scope,
-        blockedPaths: status.blockedPaths,
-        bannerOnly: status.bannerOnly,
-        pending: status.pending,
-        stale: status.stale,
-        retryAfterSec: status.retryAfterSec,
-        remainingMs: status.remainingMs,
-      },
+      status: maintenanceStatusProjection(status),
       defaults: DEFAULT_MAINTENANCE_CONFIG,
     })
   } catch (err) {
@@ -234,12 +245,7 @@ async function save(req: NextRequest) {
         : {}),
       config,
       changed,
-      effective: {
-        blocking: status.active,
-        bannerOnly: status.bannerOnly,
-        pending: status.pending,
-        retryAfterSec: status.retryAfterSec,
-      },
+      effective: maintenanceStatusProjection(status),
       savedAt: config.updatedAt,
     })
   } catch (err) {
@@ -261,6 +267,7 @@ export async function DELETE(req: NextRequest) {
     return json({
       ok: true,
       config,
+      effective: maintenanceStatusProjection(resolveMaintenance(config)),
       forced: isMaintenanceForced(),
       ...(isMaintenanceForced()
         ? { warning: 'The stored window is cleared, but MAINTENANCE_FORCE is still set in the environment — traffic stays gated until it is removed.' }

@@ -24,7 +24,12 @@ export type ShellOptions = {
   supportEmail: string
   /** Absolute URL for the public status page, if the deployment publishes one. */
   statusPath?: string
+  /** Public path of the brand mark, so an outage page still carries the real logo. */
+  logoPath?: string
 }
+
+/** The mark is 3 KB and lives in the public bucket, so an outage page still shows the real logo. */
+const DEFAULT_LOGO_PATH = '/brand/mark-64.png'
 
 const ESCAPES: Record<string, string> = {
   '&': '&amp;',
@@ -69,7 +74,8 @@ const STYLES = [
   '.grid{position:fixed;inset:0;pointer-events:none;opacity:.05;background-image:radial-gradient(var(--fg) 1px,transparent 1px);background-size:22px 22px}',
   '.wrap{width:100%;max-width:620px;display:flex;flex-direction:column;gap:20px;position:relative}',
   '.brand{display:flex;align-items:center;gap:10px;font-size:13px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}',
-  '.mark{width:34px;height:34px;border-radius:11px;background:var(--primary);color:var(--primaryFg);display:flex;align-items:center;justify-content:center;flex:none}',
+  '.mark{width:36px;height:36px;border-radius:11px;background:#f7f8f6;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;flex:none;overflow:hidden}',
+  '.mark-img{width:100%;height:100%;object-fit:contain;padding:2px;display:block}',
   '.card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:28px;box-shadow:0 1px 2px rgba(0,0,0,.04)}',
   '.icon{width:44px;height:44px;border-radius:14px;background:color-mix(in oklab,var(--warn) 22%,transparent);color:var(--warnFg);display:flex;align-items:center;justify-content:center;margin-bottom:16px}',
   'h1{margin:0;font-size:26px;line-height:1.2;font-weight:600;letter-spacing:-.01em;text-wrap:balance}',
@@ -136,8 +142,10 @@ export function renderMaintenanceShell(status: MaintenanceStatus, options: Shell
   const icon =
     '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18v3h3l6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.3-.6-.6-2.3z"/></svg>'
 
-  const logo =
-    '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 18 12 4l8 14"/><path d="M8.5 14h7"/></svg>'
+  // The real picture logo, from the public bucket: `.png` paths are skipped by the gate, so this
+  // costs one static fetch and never depends on the app rendering. If the asset cannot be served the
+  // tile still reads as a logo plate, so the page degrades instead of breaking.
+  const logo = `<img src="${esc(options.logoPath ?? DEFAULT_LOGO_PATH)}" alt="AfterWorks" width="34" height="34" class="mark-img">`
 
   return `<!doctype html>
 <html lang="en">
@@ -148,6 +156,7 @@ export function renderMaintenanceShell(status: MaintenanceStatus, options: Shell
 <meta name="description" content="${esc(config.message.slice(0, 150))}">
 <meta name="robots" content="noindex,nofollow">
 <meta name="theme-color" content="#2f5fe0">
+<link rel="icon" href="/brand/mark-64.png" type="image/png">
 ${bannerOnly || status.remainingMs === null ? '' : `<meta http-equiv="refresh" content="${refreshSeconds}">`}
 <style>${STYLES}</style>
 </head>

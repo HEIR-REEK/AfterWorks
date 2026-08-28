@@ -222,7 +222,10 @@ export const adminApi = {
       body: patch,
     }),
   disableMaintenance: () =>
-    apiFetch<{ ok: boolean; config: MaintenanceConfig; forced?: boolean; warning?: string }>('/api/admin/maintenance', { method: 'DELETE' }),
+    apiFetch<{ ok: boolean; config: MaintenanceConfig; effective?: Record<string, unknown>; forced?: boolean; warning?: string }>(
+      '/api/admin/maintenance',
+      { method: 'DELETE' },
+    ),
   users: (query: { pageSize?: number; cursor?: string | null; search?: string; state?: string }) =>
     apiFetch<{ ok: boolean; rows: AdminUserRow[]; nextCursor: string | null; hasMore: boolean; degraded?: string }>('/api/admin/users', { query }),
   userDetail: (uid: string) => apiFetch<{ ok: boolean; user: Record<string, unknown> }>('/api/admin/users', { query: { uid } }),

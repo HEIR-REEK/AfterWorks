@@ -1,7 +1,6 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import Image from 'next/image'
 import Link from 'next/link'
 import {
   Activity,
@@ -18,7 +17,7 @@ import { Button } from '@/components/ui/button'
 import { StatusBadge } from '@/components/status-badge'
 import { site } from '@/lib/site'
 import type { MaintenanceView } from '@/lib/maintenance-shared'
-import logo from '@/components/logo.png'
+import { BrandMark } from '@/components/brand'
 
 /**
  * The maintenance screen a worker sees during a blackout.
@@ -125,7 +124,7 @@ export function MaintenanceScreen({
       {!embedded && (
         <header className="z-10 flex w-full max-w-4xl items-center justify-between py-3">
           <div className="flex items-center gap-2.5">
-            <Image src={logo} alt="" width={36} height={36} priority className="h-8 w-8 object-contain sm:h-9 sm:w-9" />
+            <BrandMark size={40} />
             <span className="text-base font-semibold tracking-tight sm:text-lg">{site.name}</span>
           </div>
           <span className="inline-flex items-center gap-2 rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-xs font-semibold text-amber-700 dark:text-amber-300">

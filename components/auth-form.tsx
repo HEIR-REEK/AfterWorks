@@ -1,13 +1,12 @@
 'use client'
 
 import { useState, Suspense } from 'react'
-import Image from 'next/image'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { CheckCircle2, Loader2, ShieldCheck, Eye, EyeOff } from 'lucide-react'
 import { Button } from './ui/button'
 import { useAuth } from './firebase-auth-provider'
-import logo from '@/components/logo.png'
+import { BrandLockup } from '@/components/brand'
 
 // Inner component that reads search params (must be inside Suspense)
 function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
@@ -68,13 +67,7 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
   return (
     <div className="mx-auto flex min-h-dvh w-full max-w-md flex-col justify-center px-4 py-10">
       <div className="mb-8 flex flex-col items-center text-center">
-        <Image
-          src={logo}
-          alt="AfterWorks"
-          width={96}
-          height={96}
-          className="mb-4 h-24 w-24 object-contain"
-        />
+        <BrandLockup width={210} className="mb-4" />
         <h1 className="text-2xl font-semibold tracking-tight text-balance">
           {isSignUp ? 'Create your AfterWorks account' : 'Welcome back to AfterWorks'}
         </h1>

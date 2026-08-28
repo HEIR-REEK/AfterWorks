@@ -48,6 +48,10 @@ verifier from `npm run hash:admin-password`. Without those it fails closed and s
   member-owned profile fields only, and `firestore.rules` enforces that split.
 * **Fail closed.** A missing secret, unreachable datastore or unsigned webhook produces an
   honest error, not a permissive default.
+* **Images are pre-sized, not optimised at runtime.** `sharp` is not a dependency, so `/_next/image`
+  returns 400 in production and any `next/image` source that relies on it silently fails to load. Brand
+  art is therefore generated at the right size up-front (`npm run brand:build`) and rendered with
+  `unoptimized`. Install `sharp` before removing that flag or adding photographic content.
 * **Theme**: tokens in `app/globals.css` (`bg-card`, `border-border`, `text-muted-foreground`,
   `bg-primary`), `components/ui/*`, `StatusBadge tone`, Inter + JetBrains Mono for numerics and ids.
   New UI should read as the same product, not a dashboard bolted on.
@@ -56,7 +60,14 @@ verifier from `npm run hash:admin-password`. Without those it fails closed and s
 
 * Public status page: `/status` (polls `/api/health`, shows service states and the maintenance window).
 * Maintenance is edited at `/admin/maintenance` and enforced at the edge (`503` + `Retry-After`), not
-  only in the client. See `SECURITY_HARDENING.md`.
+  only in the client. The window carries a **back-live date & time** — pick it from the picker, or use
+  `+30 min / +1 h / +2 h / +4 h / +8 h / Tomorrow 09:00`; the console shows the resolved local time,
+  what is left on the countdown, the `Retry-After` a crawler will be handed, and `+30m +1h +3h` buttons
+  to push an active window out without reloading the form. With *Auto-resolve at the ETA* the gate lifts
+  itself on that minute. See `SECURITY_HARDENING.md`.
+* Brand assets are generated: `npm run brand:build` re-crops `brand/logo-source.png` (source artwork,
+  never shipped) into `public/brand/*`, `app/icon.png` and `app/apple-icon.png`. `components/brand.tsx`
+  is the only thing that renders them — the monogram in chrome, the full lockup on centred screens.
 * Deploy rules + indexes: `npm run deploy:rules` after editing `firestore.rules` / `firestore.indexes.json`.
 * `render.yaml` is the deployment blueprint; every secret there is `sync: false` on purpose.
 

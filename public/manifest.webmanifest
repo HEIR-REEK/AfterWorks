@@ -1,0 +1,24 @@
+{
+  "name": "AfterWorks — verified microwork",
+  "short_name": "AfterWorks",
+  "description": "AfterWorks connects verified workers with paid microwork. Browsing and applying are always free.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#F7F8F6",
+  "theme_color": "#F7F8F6",
+  "lang": "en-KE",
+  "categories": ["business", "productivity", "finance"],
+  "icons": [
+    { "src": "/brand/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/brand/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/brand/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Job board", "url": "/jobs", "icons": [{ "src": "/brand/icon-192.png", "sizes": "192x192" }] },
+    { "name": "My applications", "url": "/applications", "icons": [{ "src": "/brand/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Wallet", "url": "/profile?tab=wallet", "icons": [{ "src": "/brand/icon-192.png", "sizes": "192x192" }] }
+  ]
+}

@@ -58,7 +58,7 @@ export async function generateMetadata(): Promise<Metadata> {
       title: `${site.name} — ${site.tagline}`,
       description: site.description,
       url: site.url,
-      images: [{ url: '/opengraph-image', width: 1200, height: 630, alt: `${site.name} — verified microwork` }],
+      images: [{ url: '/brand/opengraph.png', width: 1200, height: 630, alt: `${site.name} — verified microwork` }],
       locale: 'en_KE',
     },
     twitter: {
@@ -73,7 +73,10 @@ export async function generateMetadata(): Promise<Metadata> {
       googleBot: { index: false, follow: true, 'max-image-preview': 'large' },
     },
     alternates: { canonical: '/' },
-    icons: { icon: '/icon.png', apple: '/apple-icon.png' },
+    icons: {
+      icon: [{ url: '/icon.png', type: 'image/png', sizes: '64x64' }],
+      apple: '/apple-icon.png',
+    },
     manifest: '/manifest.webmanifest',
   } satisfies Metadata
 

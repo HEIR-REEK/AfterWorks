@@ -56,10 +56,25 @@ export default function AdminMaintenancePage() {
   const { push, toasts } = useToasts()
 
   const [config, setConfig] = useState<MaintenanceConfig | null>(null)
-  const [status, setStatus] = useState<{ active: boolean; bannerOnly: boolean; pending: boolean; retryAfterSec: number } | null>(null)
+  const [status, setStatus] = useState<{
+    active: boolean
+    blocksAll: boolean
+    scope: 'full' | 'sections'
+    blockedPaths: string[]
+    bannerOnly: boolean
+    pending: boolean
+    stale: boolean
+    retryAfterSec: number
+    remainingMs: number | null
+    endsAt: string | null
+    startsAt: string | null
+  } | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [preview, setPreview] = useState(false)
+  // Ticks so the "back live in 1h 20m" read-out counts down while the console sits open, instead of
+  // freezing at the value the API returned a while ago.
+  const [nowTick, setNowTick] = useState(0)
   const [forced, setForced] = useState(false)
 
   // Editable copy of the config.
@@ -111,6 +126,13 @@ export default function AdminMaintenancePage() {
       setLoading(false)
     }
   }, [push])
+
+  useEffect(() => {
+    if (!status?.endsAt) return
+    setNowTick(Date.now())
+    const id = setInterval(() => setNowTick(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [status?.endsAt])
 
   useEffect(() => {
     if (session.status === 'authorized') void load()
@@ -172,7 +194,7 @@ export default function AdminMaintenancePage() {
     [enabled, mode, scope, resolvedPaths, title, message, banner, estimatedEnd, contactEmail, services, config],
   )
 
-  const save = async () => {
+  const save = async (overrides?: Partial<Parameters<typeof adminApi.saveMaintenance>[0]>) => {
     setSaving(true)
     try {
       const result = await adminApi.saveMaintenance({
@@ -191,6 +213,7 @@ export default function AdminMaintenancePage() {
         contactEmail: contactEmail.trim(),
         allowedEmails: parseEmails(allowedEmailsText),
         affectedServices: services,
+        ...overrides,
       })
       setConfig(result.config)
       setStatus(result.effective as typeof status)
@@ -204,6 +227,14 @@ export default function AdminMaintenancePage() {
     } finally {
       setSaving(false)
     }
+    return true
+  }
+
+  /** Push the ETA out without touching anything else the operator has typed. */
+  const extendWindow = async (minutes: number) => {
+    const iso = new Date(Date.now() + minutes * 60_000).toISOString()
+    setEstimatedEnd(toLocalInput(iso))
+    await save({ estimatedEnd: iso, enabled: true })
   }
 
   const applyPreset = async (minutes: number | null) => {
@@ -276,6 +307,47 @@ export default function AdminMaintenancePage() {
                 v{config.version} · last saved {config.updatedAt ? new Date(config.updatedAt).toLocaleString() : 'never'} by {config.updatedBy || 'System'}
               </p>
             )}
+
+            {/* The one thing everybody asks during a window: when is it back? Editable right here. */}
+            <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-2">
+              <p className="inline-flex items-center gap-1.5 rounded-lg border border-border/70 bg-background/70 px-2 py-1 text-[11px]">
+                <Clock3 className="size-3 text-amber-600 dark:text-amber-400" />
+                {status?.active && (status.endsAt ? nowTick > 0 : status.remainingMs !== null) ? (
+                  <>
+                    <span className="font-mono font-semibold tabular-nums text-foreground">
+                      back live in{' '}
+                      {status.endsAt && nowTick > 0
+                        ? humanise(Math.max(0, new Date(status.endsAt).getTime() - nowTick))
+                        : humanise(status.remainingMs ?? 0)}
+                    </span>
+                    {config?.estimatedEnd && (
+                      <span className="text-muted-foreground">
+                        at {new Date(config.estimatedEnd).toLocaleString('en-KE', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false })}
+                      </span>
+                    )}
+                  </>
+                ) : status?.pending ? (
+                  <span className="font-mono font-semibold tabular-nums text-foreground">scheduled {config?.scheduledStart ? new Date(config.scheduledStart).toLocaleString() : ''}</span>
+                ) : (
+                  <span className="text-muted-foreground">no window running</span>
+                )}
+              </p>
+              {status?.active ? (
+                <span className="flex items-center gap-1.5">
+                  {[30, 60, 180].map((minutes) => (
+                    <button
+                      key={minutes}
+                      type="button"
+                      onClick={() => void extendWindow(minutes)}
+                      disabled={saving}
+                      className="rounded-lg border border-border/70 bg-background/60 px-2 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:bg-primary/[0.06] hover:text-foreground disabled:opacity-50"
+                    >
+                      +{minutes < 60 ? `${minutes}m` : `${minutes / 60}h`}
+                    </button>
+                  ))}
+                </span>
+              ) : null}
+            </div>
           </div>
         </div>
 
@@ -329,6 +401,7 @@ export default function AdminMaintenancePage() {
             onClick={async () => {
               try {
                 const result = await adminApi.disableMaintenance()
+                if (result.effective) setStatus(result.effective as typeof status)
                 if (result.warning) push('warning', result.warning, 9000)
                 else push('success', 'Maintenance disabled — traffic is flowing again.')
                 await load()
@@ -494,13 +567,21 @@ export default function AdminMaintenancePage() {
 
           <AdminCard title="Timing & access" description="Scheduled start, ETA, and who gets through." icon={<Clock3 className="size-4" />}>
             <div className="flex flex-col gap-4">
-              <div className="grid gap-4 sm:grid-cols-2">
-                <Field label="Start at (optional)" hint="Leave empty to switch on immediately when you save.">
-                  <input type="datetime-local" value={scheduledStart} onChange={(event) => setScheduledStart(event.target.value)} className={cn(inputClass, 'font-mono')} />
-                </Field>
-                <Field label="Expected back online" hint="Drives the countdown, Retry-After and auto-resolve.">
-                  <input type="datetime-local" value={estimatedEnd} onChange={(event) => setEstimatedEnd(event.target.value)} className={cn(inputClass, 'font-mono')} />
-                </Field>
+              <div className="grid gap-4 lg:grid-cols-2">
+                <ScheduleField
+                  label="Back live at (date & time)"
+                  value={estimatedEnd}
+                  onChange={setEstimatedEnd}
+                  presets
+                  autoResolve={autoResolve}
+                  hint="The moment you expect to be serving normally again. Workers see it as a countdown, crawlers get it as Retry-After, and auto-resolve lifts the gate on this minute."
+                />
+                <ScheduleField
+                  label="Start at (optional)"
+                  value={scheduledStart}
+                  onChange={setScheduledStart}
+                  hint="Leave empty to switch on as soon as you save. A future time schedules the window instead."
+                />
               </div>
 
               <div className="grid gap-3 sm:grid-cols-2">
@@ -650,6 +731,156 @@ function ActivityIcon() {
   return <Info className="size-3.5" />
 }
 
+/**
+ * Date-and-time control for the maintenance window.
+ *
+ * A bare `datetime-local` input is a footgun for this job: it shows no timezone, so an operator in
+ * Nairobi and a document stored in UTC drift by three hours, and "back in an hour" means typing into
+ * two boxes. This one labels the local zone, offers the presets people actually use, and mirrors what
+ * the platform will do with the value (public countdown, `Retry-After`, auto-resolve) before it is saved.
+ */
+const END_PRESETS: Array<[string, number | 'tomorrow-09']> = [
+  ['+30 min', 30],
+  ['+1 h', 60],
+  ['+2 h', 120],
+  ['+4 h', 240],
+  ['+8 h', 480],
+  ['Tomorrow 09:00', 'tomorrow-09'],
+]
+
+function localInputValue(date: Date): string {
+  const offset = date.getTimezoneOffset() * 60_000
+  return new Date(date.getTime() - offset).toISOString().slice(0, 16)
+}
+
+function ScheduleField({
+  label,
+  value,
+  onChange,
+  hint,
+  presets = false,
+  autoResolve = true,
+}: {
+  label: string
+  value: string
+  onChange: (next: string) => void
+  hint: string
+  presets?: boolean
+  autoResolve?: boolean
+}) {
+  const [now, setNow] = useState(() => Date.now())
+
+  // Tick so the "in 1h 24m" read-out stays honest while the form is open. `now` starts as the mount
+  // time on the client only, which keeps server and client markup identical on first paint.
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 15_000)
+    return () => clearInterval(id)
+  }, [])
+
+  const ms = value ? new Date(value).getTime() : Number.NaN
+  const valid = Number.isFinite(ms)
+  const deltaMs = valid ? ms - now : null
+  const past = deltaMs !== null && deltaMs <= 0
+  const timeZone = typeof Intl !== 'undefined' ? Intl.DateTimeFormat().resolvedOptions().timeZone : 'local time'
+
+  const applyPreset = (preset: number | 'tomorrow-09') => {
+    const base = new Date()
+    if (preset === 'tomorrow-09') {
+      base.setDate(base.getDate() + 1)
+      base.setHours(9, 0, 0, 0)
+    } else {
+      base.setTime(base.getTime() + preset * 60_000)
+    }
+    onChange(localInputValue(base))
+  }
+
+  const relative = useMemo(() => {
+    if (deltaMs === null) return null
+    const abs = Math.abs(deltaMs)
+    const mins = Math.round(abs / 60_000)
+    if (mins < 1) return 'less than a minute'
+    if (mins < 60) return `${mins} minute${mins === 1 ? '' : 's'}`
+    const hours = Math.floor(mins / 60)
+    const rest = mins % 60
+    if (hours < 24) return rest ? `${hours}h ${rest}m` : `${hours}h`
+    return `${Math.floor(hours / 24)}d ${hours % 24}h`
+  }, [deltaMs])
+
+  return (
+    <Field label={label} hint={hint}>
+      <div className="flex flex-col gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            type="datetime-local"
+            step={60}
+            value={value}
+            min={localInputValue(new Date(now - 30 * 60_000))}
+            onChange={(event) => onChange(event.target.value)}
+            className={cn(inputClass, 'font-mono tabular-nums')}
+            aria-label={label}
+          />
+          {value ? (
+            <button
+              type="button"
+              onClick={() => onChange('')}
+              className="rounded-lg border border-border/70 px-2 py-1.5 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              Clear
+            </button>
+          ) : null}
+        </div>
+
+        {presets ? (
+          <div className="flex flex-wrap gap-1.5">
+            {END_PRESETS.map(([title, preset]) => (
+              <button
+                key={title}
+                type="button"
+                onClick={() => applyPreset(preset)}
+                className="rounded-lg border border-border/70 bg-background/60 px-2 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:bg-primary/[0.06] hover:text-foreground"
+              >
+                {title}
+              </button>
+            ))}
+          </div>
+        ) : null}
+
+        {valid ? (
+          <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
+            <span className="font-medium text-foreground tabular-nums">
+              {new Date(ms).toLocaleString('en-KE', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false })}
+            </span>
+            <span className="rounded-md bg-muted/70 px-1.5 py-0.5 font-mono text-[10px]">{timeZone}</span>
+            <span>
+              {past ? (
+                <span className="text-destructive">{relative} ago</span>
+              ) : (
+                <>in {relative}</>
+              )}
+            </span>
+            {presets && relative ? (
+              <span className="text-muted-foreground/80">
+                · crawlers retry in {Math.min(86_400, Math.max(30, Math.ceil((ms - now) / 1000)))}s
+                {autoResolve ? ' · gate lifts itself on this minute' : ' · gate stays until you switch it off'}
+              </span>
+            ) : null}
+          </p>
+        ) : (
+          <p className="text-[11px] text-muted-foreground">{presets ? 'No return time set — the screen will say “back online shortly” and the gate will not lift itself.' : 'Runs immediately.'}</p>
+        )}
+
+        {value && !valid ? <p className="text-[11px] font-medium text-destructive">That is not a readable date — pick one from the picker.</p> : null}
+        {value && valid && past ? (
+          <p className="flex items-start gap-1.5 text-[11px] font-medium text-destructive">
+            <AlertTriangle className="mt-0.5 size-3 shrink-0" />
+            This time has already passed. Saved as the return time, the window is treated as overdue — use it to lift a window, or choose a later minute.
+          </p>
+        ) : null}
+      </div>
+    </Field>
+  )
+}
+
 function parseEmails(text: string): string[] {
   return Array.from(
     new Set(
@@ -659,6 +890,17 @@ function parseEmails(text: string): string[] {
         .filter(Boolean),
     ),
   )
+}
+
+/** "1h 20m" style duration for the console read-out. */
+function humanise(ms: number): string {
+  const mins = Math.max(0, Math.round(ms / 60_000))
+  if (mins < 1) return 'under a minute'
+  if (mins < 60) return `${mins}m`
+  const hours = Math.floor(mins / 60)
+  const rest = mins % 60
+  if (hours < 24) return rest ? `${hours}h ${rest}m` : `${hours}h`
+  return `${Math.floor(hours / 24)}d ${hours % 24}h`
 }
 
 function toUtc(localValue: string): string | null {

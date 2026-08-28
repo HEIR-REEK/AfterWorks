@@ -313,6 +313,9 @@ export type MaintenanceStatus = {
   config: MaintenanceConfig
   /** Seconds for the Retry-After header; 0 when unknown. */
   retryAfterSec: number
+  /** ISO instants the decision was made from, so a UI can show the same clock the edge used. */
+  startsAt: string | null
+  endsAt: string | null
   /** Millis until estimatedEnd; null when no ETA. */
   remainingMs: number | null
 }
@@ -404,6 +407,8 @@ export function resolveMaintenance(configInput: MaintenanceConfig, now: number =
     config: expired ? { ...config, enabled: false } : pending ? { ...config, enabled: false } : config,
     retryAfterSec,
     remainingMs,
+    startsAt: config.scheduledStart,
+    endsAt: config.estimatedEnd,
   }
 }
 

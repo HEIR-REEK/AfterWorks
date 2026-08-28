@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import Image from 'next/image'
 import { useRouter } from 'next/navigation'
 import {
   AlertCircle,
@@ -20,7 +19,7 @@ import { Button } from '@/components/ui/button'
 import { authenticateAdminSession, useAdminCapabilities, useAdminSession } from '@/lib/admin'
 import { useMaintenance } from '@/components/maintenance-provider'
 import { site } from '@/lib/site'
-import logo from '@/components/logo.png'
+import { BrandLockup } from '@/components/brand'
 
 /**
  * Administrator sign-in.
@@ -81,7 +80,7 @@ export default function AdminLoginPage() {
       <div className="w-full max-w-md">
         <div className="mb-7 flex flex-col items-center text-center">
           <Link href="/" className="mb-4 inline-flex items-center justify-center transition-transform hover:scale-[1.03]" aria-label={`${site.name} home`}>
-            <Image src={logo} alt="" width={76} height={76} priority className="h-19 w-19 object-contain drop-shadow-sm sm:h-20 sm:w-20" />
+            <BrandLockup width={200} className="drop-shadow-sm" />
           </Link>
           <span className="mb-2 inline-flex items-center gap-1.5 rounded-full border border-primary/20 bg-primary/10 px-3 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-primary">
             <ShieldCheck className="size-3.5" />

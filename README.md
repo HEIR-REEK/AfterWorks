@@ -73,6 +73,8 @@ verifier from `npm run hash:admin-password`. Without those it fails closed and s
 
 ## Documentation map
 
-`SECURITY_HARDENING.md` (what is enforced and how to verify it) · `DEPLOYMENT.md` (Render/Firebase
-setup) · `FEATURES.md` and `IMPLEMENTATION_STATUS.md` are **specification** documents: they describe
-several features that were never built, and each file opens with a list of what is actually true.
+`SECURITY_HARDENING.md` (what is enforced and how to verify it) · `ADMIN_DATA.md` (which system each
+console figure is read from, and what a zero means) · `DEPLOYMENT.md` (Render/Firebase setup) ·
+`FEATURES.md` and `IMPLEMENTATION_STATUS.md` are
+**specification** documents: they describe several features that were never built, and each file opens
+with a list of what is actually true.

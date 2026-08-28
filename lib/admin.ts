@@ -228,8 +228,20 @@ export const adminApi = {
     ),
   users: (query: { pageSize?: number; cursor?: string | null; search?: string; state?: string }) =>
     apiFetch<{ ok: boolean; rows: AdminUserRow[]; nextCursor: string | null; hasMore: boolean; degraded?: string }>('/api/admin/users', { query }),
-  userDetail: (uid: string) => apiFetch<{ ok: boolean; user: Record<string, unknown> }>('/api/admin/users', { query: { uid } }),
-  userAction: (body: Record<string, unknown>) => apiFetch<{ ok: boolean; note?: string }>('/api/admin/users', { method: 'PATCH', body }),
+  userDetail: (uid: string) =>
+    apiFetch<{ ok: boolean; user: Record<string, unknown>; account?: AdminUserRow['auth'] }>('/api/admin/users', { query: { uid } }),
+  userAction: (body: Record<string, unknown>) =>
+    apiFetch<{
+      ok: boolean
+      note?: string
+      accountState?: string
+      credentialDisabled?: boolean
+      temporaryPassword?: string
+      link?: string
+      removed?: Record<string, number>
+    }>('/api/admin/users', { method: 'PATCH', body }),
+  ledger: (query: { source?: string; kind?: string; status?: string; search?: string; pageSize?: number; cursor?: string | null }) =>
+    apiFetch<AdminLedgerPage>('/api/admin/ledger', { query }),
   applications: (query: { pageSize?: number; cursor?: string | null; status?: string; search?: string }) =>
     apiFetch<{ ok: boolean; rows: AdminApplicationRow[]; nextCursor: string | null; hasMore: boolean; degraded?: string }>('/api/admin/applications', { query }),
   applicationAction: (body: Record<string, unknown>) => apiFetch<{ ok: boolean; message?: string; status?: string }>('/api/admin/applications', { method: 'PATCH', body }),
@@ -278,6 +290,43 @@ export type AdminUserRow = {
   country?: string
   phoneMasked?: string
   paidTrainingsCount: number
+  /** What Firebase Auth says about this uid — whether they can sign in at all. */
+  auth?: {
+    exists: boolean
+    disabled: boolean
+    emailVerified: boolean
+    createdAt: string | null
+    lastSignInAt: string | null
+    providers: string[]
+    orphaned?: boolean
+  } | null
+}
+
+/** One money movement, from `wallet_ledger` (earnings/withdrawals) or `transactions` (Paystack). */
+export type AdminLedgerRow = {
+  id: string
+  source: 'wallet' | 'payment'
+  kind: string
+  status: string
+  amountUsd: number | null
+  amountKes: number | null
+  currency: string
+  reference: string
+  uid: string
+  email: string
+  label: string
+  createdAt: string | null
+  clearedAt: string | null
+}
+
+export type AdminLedgerPage = {
+  ok: boolean
+  rows: AdminLedgerRow[]
+  nextCursor: string | null
+  hasMore: boolean
+  pageSize: number
+  totals: { entries: number; paidOutUsd: number; pendingUsd: number; revenueKes: number }
+  degraded?: string
 }
 
 /** Row shape for the QA desk. */

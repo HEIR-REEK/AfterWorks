@@ -102,18 +102,20 @@ export async function GET() {
       label: 'Payments',
       status: env('PAYSTACK_SECRET_KEY') ? 'operational' : 'degraded',
       detail: env('PAYSTACK_SECRET_KEY')
-        ? `Paystack ${env('PAYSTACK_SECRET_KEY').startsWith('sk_live') ? 'live' : 'test'} keys are configured; webhook verification is ${envBool('PAYSTACK_VERIFY_WEBHOOK', true) ? 'on' : 'off'}.`
+        ? `Paystack ${env('PAYSTACK_SECRET_KEY').startsWith('sk_live') ? 'live' : 'test'} key configured; webhook signatures are always required and amounts are re-checked against the API.`
         : 'PAYSTACK_SECRET_KEY is missing — training checkout cannot run.',
     },
     {
       id: 'identity',
       label: 'ID verification',
-      status: env('DIDIT_CLIENT_ID') && env('DIDIT_WORKFLOW_ID') ? (env('DIDIT_WEBHOOK_SECRET') ? 'operational' : 'degraded') : 'degraded',
-      detail: !env('DIDIT_CLIENT_ID')
-        ? 'Didit is not configured, so KYC sessions run in demo mode.'
-        : env('DIDIT_WEBHOOK_SECRET')
-          ? 'Didit sessions + signed webhooks configured.'
-          : 'Sessions work but DIDIT_WEBHOOK_SECRET is unset — results cannot be trusted in production.',
+      status: env('DIDIT_API_KEY') && env('DIDIT_WORKFLOW_ID') ? (env('DIDIT_WEBHOOK_SECRET') ? 'operational' : 'degraded') : 'degraded',
+      detail: !env('DIDIT_API_KEY')
+        ? 'DIDIT_API_KEY is not set, so KYC sessions run in demo mode.'
+        : !env('DIDIT_WORKFLOW_ID')
+          ? 'Key present but DIDIT_WORKFLOW_ID is unset — no verification flow can start.'
+          : env('DIDIT_WEBHOOK_SECRET')
+            ? 'Didit sessions + signed webhooks configured.'
+            : 'Sessions work but DIDIT_WEBHOOK_SECRET is unset — results cannot be trusted in production.',
     },
     {
       id: 'console',

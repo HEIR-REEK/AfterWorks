@@ -38,7 +38,18 @@ import { cn } from '@/lib/utils'
  */
 
 type Stats = {
-  totals: { users: number; kycVerified: number; kycPending: number; suspended: number }
+  totals: {
+    users: number
+    kycVerified: number
+    kycPending: number
+    suspended: number
+    activeLast7d?: number
+    activeLast24h?: number
+    /** From Firebase Auth. `null` means the credential store is not connected to this deployment. */
+    accounts?: number | null
+    accountsDisabled?: number | null
+    accountsWithoutProfile?: number | null
+  }
   jobs: { open: number; paused: number; closed: number; totalSlots: number; filledSlots: number }
   applications: { total: number; underReview: number; active: number; completed: number; rejected: number }
   money: { liabilityUsd: number; pendingUsd: number; availableUsd: number; revenueKes: number; paidOutKes: number }
@@ -163,7 +174,17 @@ export default function AdminOverviewPage() {
 
       {/* KPI grid */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <AdminStat label="Members" value={stats?.totals.users ?? '—'} sub={`${stats?.totals.kycVerified ?? 0} verified · ${stats?.totals.kycPending ?? 0} pending`} icon={<Users className="size-4" />} />
+        <AdminStat
+          label="Accounts"
+          value={stats?.totals.accounts ?? stats?.totals.users ?? '—'}
+          sub={
+            stats?.totals.accounts == null
+              ? `${stats?.totals.users ?? 0} profiles · Auth not connected`
+              : `${stats.totals.users} profiles · ${stats.totals.activeLast7d ?? 0} signed in this week`
+          }
+          icon={<Users className="size-4" />}
+          tone={stats && stats.totals.accounts != null && stats.totals.accounts !== stats.totals.users ? 'warning' : 'default'}
+        />
         <AdminStat
           label="Platform liability"
           value={formatUsd(stats?.money.liabilityUsd ?? 0)}
@@ -289,10 +310,16 @@ export default function AdminOverviewPage() {
           description="Charges verified by Paystack, from the server ledger."
           icon={<FileCheck2 className="size-4" />}
           actions={
-            <Button render={<Link href="/status" />} variant="ghost" size="sm" className="gap-1.5">
-              <Activity className="size-3.5" />
-              Feed
-            </Button>
+            <div className="flex items-center gap-1">
+              <Button render={<Link href="/admin/money" />} variant="ghost" size="sm" className="gap-1.5">
+                <Wallet className="size-3.5" />
+                Money ledger
+              </Button>
+              <Button render={<Link href="/status" />} variant="ghost" size="sm" className="gap-1.5">
+                <Activity className="size-3.5" />
+                Feed
+              </Button>
+            </div>
           }
         >
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">

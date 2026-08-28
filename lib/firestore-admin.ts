@@ -646,6 +646,24 @@ export type AdminUserRow = {
   country?: string
   phoneMasked?: string
   paidTrainingsCount: number
+  /**
+   * The account as Firebase Auth sees it. A Firestore profile is what the operator edits; Auth is what
+   * actually lets somebody sign in, so the two must be compared, not assumed equal. Absent when the
+   * Admin SDK is unusable or the profile has no matching account.
+   */
+  auth?: AuthAccountState
+}
+
+/** Everything the console needs from the Auth record; `null` values mean "Auth has no such account". */
+export type AuthAccountState = {
+  exists: boolean
+  disabled: boolean
+  emailVerified: boolean
+  createdAt: string | null
+  lastSignInAt: string | null
+  providers: string[]
+  /** Profile exists but the account is gone (or was created without one) — worth telling the operator. */
+  orphaned?: boolean
 }
 
 function maskPhone(value: unknown): string {
@@ -722,6 +740,7 @@ export async function listUsersPage(opts: {
     const snap = await (ref as admin.firestore.Query).get()
     const docs = snap.docs.slice(0, pageSize)
     const rows = docs.map((d) => toRow(d.id, (d.data() ?? {}) as Record<string, unknown>))
+    await attachAuthAccountState(rows)
     const last = docs[docs.length - 1]
 
     return {
@@ -844,6 +863,424 @@ export async function setUserAdminFlagByEmail(email: string, isAdmin: boolean, a
   return true
 }
 
+// ─── Firebase Auth: the account side of the directory ────────────────────────
+//
+// Firestore holds the profile the operator edits; Firebase Auth holds the credential that actually
+// grants access. Console numbers are only "accurate data" when both are consulted: a banned profile
+// with a live Auth account can still sign in, a count of `users` documents is not a count of accounts,
+// and "active this week" is only knowable from Auth's last-sign-in timestamp.
+// Everything here degrades to `null`/`{ ok: false }` when the Admin SDK is not configured, and callers
+// say so out loud instead of showing a zero.
+
+function authOrNull(): admin.auth.Auth | null {
+  try {
+    if (!isFirebaseAdminUsable()) return null
+    return admin.auth(getAdminApp())
+  } catch (err) {
+    console.warn('[FirestoreAdmin] Firebase Auth unavailable:', err instanceof Error ? err.message : err)
+    return null
+  }
+}
+
+export type AuthAccountSummary = {
+  accounts: number
+  disabled: number
+  emailUnverified: number
+  signedIn24h: number
+  signedIn7d: number
+  /** Accounts whose credential exists but which have no Firestore profile. */
+  withoutProfile: number
+  passwordAccounts: number
+  googleAccounts: number
+  /** True when the scan stopped at the safety cap, so the totals are a floor, not the whole set. */
+  capped: boolean
+  scannedAt: string
+}
+
+let authSummaryCache: { at: number; value: AuthAccountSummary } | null = null
+
+/**
+ * Scans Auth (max 1 000 per page, capped by AUTH_SCAN_CAP) and cross-checks the profile collection in
+ * one pass. Cached, because it is the only "expensive" read in the console and its staleness is measured
+ * in minutes, not security decisions.
+ */
+export async function getAuthAccountSummary(opts: { fresh?: boolean } = {}): Promise<AuthAccountSummary | null> {
+  const auth = authOrNull()
+  const db = dbOrNull()
+  if (!auth || !db) return null
+
+  const ttlMs = Number(process.env.ADMIN_STATS_CACHE_MS ?? 90_000)
+  if (!opts.fresh && authSummaryCache && Date.now() - authSummaryCache.at < ttlMs) return authSummaryCache.value
+
+  const cap = Math.max(1_000, Number(process.env.AUTH_SCAN_CAP ?? 5_000) || 5_000)
+  const dayMs = 86_400_000
+  const since24h = Date.now() - dayMs
+  const since7d = Date.now() - 7 * dayMs
+
+  const summary: AuthAccountSummary = {
+    accounts: 0,
+    disabled: 0,
+    emailUnverified: 0,
+    signedIn24h: 0,
+    signedIn7d: 0,
+    withoutProfile: 0,
+    passwordAccounts: 0,
+    googleAccounts: 0,
+    capped: false,
+    scannedAt: new Date().toISOString(),
+  }
+
+  try {
+    // Which uids have profiles? One projected read, not a read per account.
+    const profileUids = new Set<string>()
+    try {
+      const profiles = await db.collection('users').select('uid').limit(cap).get()
+      profiles.forEach((d) => profileUids.add(d.id))
+    } catch (err) {
+      console.warn('[FirestoreAdmin] profile uid projection skipped:', err)
+    }
+
+    let page = await auth.listUsers(1_000)
+    for (;;) {
+      for (const rec of page.users) {
+        summary.accounts += 1
+        if (rec.disabled) summary.disabled += 1
+        if (!rec.emailVerified) summary.emailUnverified += 1
+        const created = rec.metadata?.creationTime ? Date.parse(rec.metadata.creationTime) : Number.NaN
+        // Auth only reports one timestamp, the most recent sign-in across providers.
+        const last = rec.metadata?.lastSignInTime ? Date.parse(rec.metadata.lastSignInTime) : Number.NaN
+        if (Number.isFinite(last) && last >= since24h) summary.signedIn24h += 1
+        else if (Number.isFinite(last) && last >= since7d) summary.signedIn7d += 1
+        const providers = (rec.providerData ?? []).map((p: admin.auth.UserInfo) => p.providerId)
+        if (providers.includes('password')) summary.passwordAccounts += 1
+        if (providers.includes('google.com')) summary.googleAccounts += 1
+        if (!rec.uid || !profileUids.has(rec.uid)) summary.withoutProfile += 1
+        void created
+        if (summary.accounts >= cap) {
+          summary.capped = true
+          break
+        }
+      }
+      if (summary.capped || !page.pageToken) break
+      page = await auth.listUsers(1_000, page.pageToken)
+    }
+  } catch (err) {
+    console.warn('[FirestoreAdmin] Auth summary failed:', err instanceof Error ? err.message : err)
+    return authSummaryCache?.value ?? null
+  }
+
+  authSummaryCache = { at: Date.now(), value: summary }
+  return summary
+}
+
+/** Auth state for a single account, for the detail drawer. */
+export async function getAuthAccountStateForUid(uid: string): Promise<AuthAccountState | null> {
+  const auth = authOrNull()
+  if (!auth) return null
+  try {
+    const rec = await auth.getUser(uid)
+    return {
+      exists: true,
+      disabled: rec.disabled === true,
+      emailVerified: rec.emailVerified === true,
+      createdAt: rec.metadata?.creationTime ?? null,
+      lastSignInAt: rec.metadata?.lastSignInTime ?? null,
+      providers: (rec.providerData ?? []).map((p: admin.auth.UserInfo) => p.providerId),
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : ''
+    if (/USER_NOT_FOUND|no such user/i.test(message)) return { exists: false, disabled: false, emailVerified: false, createdAt: null, lastSignInAt: null, providers: [], orphaned: true }
+    return null
+  }
+}
+
+/** Batch-attaches Auth state to a page of profile rows. Never throws: the table must still render. */
+export async function attachAuthAccountState(rows: AdminUserRow[]): Promise<void> {
+  const auth = authOrNull()
+  if (!auth || rows.length === 0) return
+  try {
+    const got = await auth.getUsers(rows.map((row) => ({ uid: row.uid })))
+    const byUid = new Map<string, (typeof got.users)[number]>(got.users.map((rec) => [rec.uid, rec]))
+    for (const row of rows) {
+      const rec = byUid.get(row.uid)
+      row.auth = rec
+        ? {
+            exists: true,
+            disabled: rec.disabled === true,
+            emailVerified: rec.emailVerified === true,
+            createdAt: rec.metadata?.creationTime ?? null,
+            lastSignInAt: rec.metadata?.lastSignInTime ?? null,
+            providers: (rec.providerData ?? []).map((p: admin.auth.UserInfo) => p.providerId),
+          }
+        : { exists: false, disabled: false, emailVerified: false, createdAt: null, lastSignInAt: null, providers: [], orphaned: true }
+    }
+  } catch (err) {
+    console.warn('[FirestoreAdmin] Auth enrichment skipped:', err instanceof Error ? err.message : err)
+  }
+}
+
+export type AccountActionResult = { ok: boolean; error?: string; code?: string; note?: string; secret?: string; link?: string }
+
+/**
+ * Disables or enables the *credential*, not just the profile. `accountState: 'banned'` alone leaves a
+ * worker able to sign in and read their data, which is the difference between a moderation and a note.
+ */
+export async function setAccountEnabled(uid: string, enabled: boolean, actorEmail: string): Promise<AccountActionResult> {
+  const auth = authOrNull()
+  if (!auth) return { ok: false, error: 'Firebase Auth is not reachable from this server.', code: 'auth_unavailable' }
+  try {
+    await auth.updateUser(uid, { disabled: !enabled })
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Unknown error'
+    if (/uid-not-found|USER_NOT_FOUND|no such user/i.test(message)) {
+      return { ok: false, error: 'No Firebase Auth account for this profile.', code: 'account_missing' }
+    }
+    return { ok: false, error: 'The account state could not be changed.', code: 'auth_write_failed' }
+  }
+  await createAuditEntry(enabled ? 'ACCOUNT_ENABLED' : 'ACCOUNT_DISABLED', { uid }, actorEmail)
+  invalidateGuardCaches?.(uid)
+  return { ok: true, note: enabled ? 'Credential re-enabled; the member can sign in again.' : 'Credential disabled — existing sessions stop working at the next token refresh.' }
+}
+
+/**
+ * Emergency credential reset. The temporary password is returned once for the operator to relay and is
+ * never written to the audit log, the database or a response cache.
+ */
+export async function setTemporaryPassword(uid: string, actorEmail: string): Promise<AccountActionResult> {
+  const auth = authOrNull()
+  if (!auth) return { ok: false, error: 'Firebase Auth is not reachable from this server.', code: 'auth_unavailable' }
+  const secret = await import('crypto').then((crypto) => crypto.randomBytes(9).toString('base64url'))
+  try {
+    await auth.updateUser(uid, { password: secret })
+  } catch (err) {
+    void err
+    return { ok: false, error: 'The password could not be reset.', code: 'auth_write_failed' }
+  }
+  await createAuditEntry('ACCOUNT_PASSWORD_RESET', { uid, actor: actorEmail }, actorEmail)
+  return {
+    ok: true,
+    secret,
+    note: 'Show this once, then have the member change it — it is not stored anywhere on the server.',
+  }
+}
+
+/**
+ * Auth has no email transport of its own, so this mints the link the provider would have emailed and
+ * hands it to the operator. Deliberately not a "sent ✓" claim: nothing was sent.
+ */
+export async function issueEmailVerificationLink(email: string, actorEmail: string): Promise<AccountActionResult> {
+  const auth = authOrNull()
+  if (!auth) return { ok: false, error: 'Firebase Auth is not reachable from this server.', code: 'auth_unavailable' }
+  try {
+    const link = await auth.generateEmailVerificationLink(email.trim().toLowerCase())
+    await createAuditEntry('ACCOUNT_VERIFICATION_LINK_ISSUED', { email: email.trim().toLowerCase() }, actorEmail)
+    return { ok: true, link, note: 'Link is valid for one hour. Send it from your own channel.' }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Unknown error'
+    if (/EMAIL_NOT_FOUND/i.test(message)) return { ok: false, error: 'No account uses that address.', code: 'account_missing' }
+    return { ok: false, error: 'A verification link could not be generated for this address.', code: 'auth_write_failed' }
+  }
+}
+
+/**
+ * Hard deletion: the profile, the credential and — importantly — the ability to sign in again with the
+ * same account. Financial rows are kept by default because a payout record without a counterparty is
+ * worse for everybody than a tombstone; pass `eraseLedger` to remove the earnings entries too.
+ */
+export async function hardDeleteAccount(
+  uid: string,
+  opts: { actorEmail: string; reason: string; eraseLedger?: boolean },
+): Promise<AccountActionResult & { removed?: Record<string, number> }> {
+  const db = dbOrNull()
+  const auth = authOrNull()
+  if (!db) return { ok: false, error: 'The datastore is unreachable, so nothing was deleted.', code: 'storage_unavailable' }
+
+  const removed: Record<string, number> = { profile: 0, applications: 0, ledger: 0, notifications: 0, auth: 0 }
+  try {
+    const [profile, apps, ledger, notes] = await Promise.all([
+      db.collection('users').doc(uid).get(),
+      db.collection('applications').where('workerUid', '==', uid).limit(400).get().catch(() => null),
+      db.collection('wallet_ledger').where('uid', '==', uid).limit(400).get().catch(() => null),
+      db.collection('notifications').where('uid', '==', uid).limit(400).get().catch(() => null),
+    ])
+    if (profile.exists) {
+      await profile.ref.delete()
+      removed.profile = 1
+    }
+    const batch = db.batch()
+    apps?.docs.forEach((d) => batch.delete(d.ref))
+    notes?.docs.forEach((d) => batch.delete(d.ref))
+    if (opts.eraseLedger) ledger?.docs.forEach((d) => batch.delete(d.ref))
+    else
+      ledger?.docs.forEach((d) =>
+        batch.set(d.ref, { redactedAt: new Date().toISOString(), redactedBy: opts.actorEmail, jobTitle: '[redacted]', note: '[redacted]' }, { merge: true }),
+      )
+    await batch.commit()
+    removed.applications = apps?.size ?? 0
+    removed.ledger = ledger?.size ?? 0
+    removed.notifications = notes?.size ?? 0
+
+    if (auth) {
+      await auth.deleteUser(uid)
+      removed.auth = 1
+    }
+    invalidateGuardCaches?.(uid)
+    await createAuditEntry(
+      'ACCOUNT_HARD_DELETED',
+      { uid, removed, eraseLedger: opts.eraseLedger === true, reason: opts.reason.slice(0, 400) },
+      opts.actorEmail,
+    )
+    return { ok: true, removed, note: opts.eraseLedger ? 'Ledger rows deleted.' : 'Ledger amounts kept with the personal fields redacted.' }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Unknown error'
+    console.error('[FirestoreAdmin] hardDeleteAccount failed:', err)
+    return { ok: false, error: `Deletion stopped part-way: ${message.slice(0, 160)}. Retry or finish it by hand.`, code: 'partial_delete', removed }
+  }
+}
+
+// ─── Ledger: earnings, withdrawals and payments in one feed ────────────────────
+
+export type LedgerRow = {
+  id: string
+  source: 'wallet' | 'payment'
+  kind: string
+  status: string
+  amountUsd: number | null
+  amountKes: number | null
+  currency: string
+  reference: string
+  uid: string
+  email: string
+  label: string
+  createdAt: string | null
+  clearedAt: string | null
+}
+
+export type LedgerPage = {
+  rows: LedgerRow[]
+  nextCursor: string | null
+  hasMore: boolean
+  pageSize: number
+  totals: { entries: number; paidOutUsd: number; pendingUsd: number; revenueKes: number }
+  degraded?: string
+}
+
+function asNumber(value: unknown): number | null {
+  const n = Number(value)
+  return Number.isFinite(n) ? n : null
+}
+
+/**
+ * `wallet_ledger` (work credits + withdrawals) and `transactions` (Paystack) are separate collections by
+ * design — different lifecycles — but an operator answering "where is my money?" needs them side by side,
+ * so they are normalised into one newest-first feed with the same paging shape as the other tables.
+ */
+export async function listLedgerPage(opts: {
+  source?: 'wallet' | 'payment' | 'all'
+  kind?: string
+  status?: string
+  search?: string
+  pageSize?: number
+  cursor?: string | null
+}): Promise<LedgerPage> {
+  const db = dbOrNull()
+  const pageSize = Math.min(100, Math.max(10, opts.pageSize ?? 25))
+  if (!db) {
+    return {
+      rows: [],
+      nextCursor: null,
+      hasMore: false,
+      pageSize,
+      totals: { entries: 0, paidOutUsd: 0, pendingUsd: 0, revenueKes: 0 },
+      degraded: 'Admin SDK unavailable',
+    }
+  }
+  const search = (opts.search ?? '').trim().toLowerCase()
+  const source = opts.source ?? 'all'
+
+  const mapRow = (id: string, data: Record<string, unknown>, src: 'wallet' | 'payment'): LedgerRow => ({
+    id,
+    source: src,
+    kind: String(data.kind ?? data.type ?? (src === 'wallet' ? 'earning' : 'payment')),
+    status: String(data.status ?? (src === 'payment' ? 'pending' : 'cleared')),
+    amountUsd: asNumber(data.amountUsd),
+    amountKes: asNumber(data.amountKes ?? data.amount),
+    currency: String(data.currency ?? (data.amountKes ? 'KES' : 'USD')),
+    reference: String(data.reference ?? data.id ?? id),
+    uid: String(data.uid ?? data.userId ?? data.workerUid ?? ''),
+    email: String(data.email ?? ''),
+    label: String(data.jobTitle ?? data.description ?? data.title ?? (src === 'wallet' ? 'Wallet entry' : 'Paystack charge')),
+    createdAt: typeof data.createdAt === 'string' ? data.createdAt : null,
+    clearedAt: typeof data.clearedAt === 'string' ? data.clearedAt : null,
+  })
+
+  const readOne = async (src: 'wallet' | 'payment'): Promise<LedgerRow[]> => {
+    const col = db.collection(src === 'wallet' ? 'wallet_ledger' : 'transactions')
+    let ref: admin.firestore.Query = col.orderBy('createdAt', 'desc')
+    if (opts.cursor && src !== 'payment') ref = ref.startAfter(opts.cursor)
+    if (opts.status) ref = ref.where('status', '==', opts.status)
+    if (opts.kind) ref = ref.where(src === 'wallet' ? 'kind' : 'type', '==', opts.kind)
+    try {
+      const snap = await ref.limit(pageSize + 1).get()
+      return snap.docs.slice(0, pageSize).map((d) => mapRow(d.id, (d.data() ?? {}) as Record<string, unknown>, src))
+    } catch (err) {
+      console.warn(`[FirestoreAdmin] ledger ${src} ordered read failed:`, err instanceof Error ? err.message : err)
+      const snap = await col.limit(pageSize + 1).get()
+      return snap.docs.map((d) => mapRow(d.id, (d.data() ?? {}) as Record<string, unknown>, src)).sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''))
+    }
+  }
+
+  const [wallet, payment] = await Promise.all([source === 'payment' ? Promise.resolve([] as LedgerRow[]) : readOne('wallet'), source === 'wallet' ? Promise.resolve([] as LedgerRow[]) : readOne('payment')])
+
+  let rows = [...wallet, ...payment].sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''))
+  let degraded: string | undefined
+  if (wallet.length && payment.length && source === 'all') degraded = 'Merged feed is capped per collection, so the newest page can interleave out of order at the tail.'
+
+  if (search) {
+    rows = rows.filter(
+      (row) =>
+        row.email.toLowerCase().includes(search) ||
+        row.uid.toLowerCase().includes(search) ||
+        row.reference.toLowerCase().includes(search) ||
+        row.label.toLowerCase().includes(search),
+    )
+  }
+
+  let paidOutUsd = 0
+  let pendingUsd = 0
+  let revenueKes = 0
+  let entries = 0
+  try {
+    const [creditCount, payoutCount, txCount] = await Promise.all([
+      safeCount(() => db.collection('wallet_ledger').where('kind', '==', 'earning')),
+      safeCount(() => db.collection('wallet_ledger').where('kind', '==', 'withdrawal')),
+      safeCount(() => db.collection('transactions').where('status', '==', 'success')),
+    ])
+    entries = creditCount + payoutCount + txCount
+  } catch {
+    /* totals stay zero and `degraded` already explains why the feed is short */
+  }
+  rows.forEach((row) => {
+    if (row.source === 'wallet' && row.kind === 'earning' && row.status === 'cleared') paidOutUsd += row.amountUsd ?? 0
+    if (row.source === 'wallet' && row.status === 'pending') pendingUsd += row.amountUsd ?? 0
+    if (row.source === 'payment' && row.status === 'success') revenueKes += row.amountKes ?? 0
+  })
+
+  return {
+    rows: rows.slice(0, pageSize),
+    nextCursor: rows.length > pageSize && rows[pageSize - 1]?.createdAt ? rows[pageSize - 1].createdAt as string : null,
+    hasMore: rows.length > pageSize,
+    pageSize,
+    totals: {
+      entries,
+      paidOutUsd: Math.round(paidOutUsd * 100) / 100,
+      pendingUsd: Math.round(pendingUsd * 100) / 100,
+      revenueKes: Math.round(revenueKes),
+    },
+    ...(degraded ? { degraded } : {}),
+  }
+}
+
 export async function verifyKycAdmin(
   uid: string,
   approve: boolean,
@@ -893,6 +1330,12 @@ export type PlatformStats = {
     kycPending: number
     suspended: number
     activeLast7d: number
+    activeLast24h: number
+    /** From Firebase Auth: the true account count. `null` when the Admin SDK is not configured. */
+    accounts: number | null
+    accountsDisabled: number | null
+    /** Auth accounts with no `users/<uid>` profile — registration that never finished, or a hard delete. */
+    accountsWithoutProfile: number | null
   }
   jobs: { open: number; paused: number; closed: number; totalSlots: number; filledSlots: number }
   applications: { total: number; underReview: number; active: number; completed: number; rejected: number }
@@ -922,11 +1365,23 @@ async function getRate(): Promise<number> {
 export async function getPlatformStats(): Promise<PlatformStats> {
   const db = dbOrNull()
   const maintenance = await getMaintenanceConfigServer()
+  const authSummary = await getAuthAccountSummary()
   const sevenDaysAgo = new Date(Date.now() - 7 * 86400_000).toISOString()
 
   if (!db) {
     return {
-      totals: { users: 0, kycVerified: 0, kycPending: 0, suspended: 0, activeLast7d: 0 },
+      totals: {
+        users: 0,
+        kycVerified: 0,
+        kycPending: 0,
+        suspended: 0,
+        activeLast7d: 0,
+        // null = "the account directory is not connected", which the console shows instead of a 0.
+        accounts: null,
+        accountsDisabled: null,
+        accountsWithoutProfile: null,
+        activeLast24h: 0,
+      },
       jobs: { open: 0, paused: 0, closed: 0, totalSlots: 0, filledSlots: 0 },
       applications: { total: 0, underReview: 0, active: 0, completed: 0, rejected: 0 },
       money: { liabilityUsd: 0, pendingUsd: 0, availableUsd: 0, revenueKes: 0, paidOutKes: 0 },
@@ -1038,7 +1493,13 @@ export async function getPlatformStats(): Promise<PlatformStats> {
       kycVerified: verified,
       kycPending: Math.max(0, totalUsers - verified - suspended),
       suspended,
-      activeLast7d: 0,
+      // From Auth, because "active" means somebody signed in — a `users` document only proves they
+      // registered once. Stays 0 (and `accounts` null) when the Admin SDK is not configured.
+      activeLast7d: authSummary ? authSummary.signedIn7d + authSummary.signedIn24h : 0,
+      accounts: authSummary?.accounts ?? null,
+      accountsDisabled: authSummary?.disabled ?? null,
+      accountsWithoutProfile: authSummary?.withoutProfile ?? null,
+      activeLast24h: authSummary ? authSummary.signedIn24h : 0,
     },
     jobs: { open: jobsOpen, paused: jobsPaused, closed: jobsClosed, totalSlots, filledSlots },
     applications: {

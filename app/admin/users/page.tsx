@@ -5,6 +5,8 @@ import { useSearchParams } from 'next/navigation'
 import {
   BadgeCheck,
   CircleSlash,
+  KeyRound,
+  MailCheck,
   Loader2,
   Lock,
   Search,
@@ -82,7 +84,17 @@ function UsersPageInner() {
   const [state, setState] = useState(searchParams.get('state') ?? 'all')
   const [selected, setSelected] = useState<UserDetail | null>(null)
   const [busy, setBusy] = useState(false)
-  const [confirm, setConfirm] = useState<{ action: string; title: string; description: string; tone: 'destructive' | 'default'; confirmLabel: string } | null>(null)
+  const [confirm, setConfirm] = useState<{
+    action: string
+    title: string
+    description: string
+    tone: 'destructive' | 'default'
+    confirmLabel: string
+    minReasonLength?: number
+    requireReason?: boolean
+  } | null>(null)
+  // `null` = not loaded yet (or Auth unreachable); a loaded record always exists as an object.
+  const [account, setAccount] = useState<NonNullable<AdminUserRow['auth']> | null>(null)
 
   useEffect(() => {
     const id = setTimeout(() => setSearch(searchInput.trim()), 350)
@@ -118,6 +130,7 @@ function UsersPageInner() {
     try {
       const data = await adminApi.userDetail(uid)
       setSelected(data.user as UserDetail)
+      setAccount((data.account as NonNullable<AdminUserRow['auth']> | undefined) ?? { exists: false, disabled: false, emailVerified: false, createdAt: null, lastSignInAt: null, providers: [], orphaned: true })
     } catch (err) {
       push('error', err instanceof Error ? err.message : 'Could not load that profile.')
     } finally {
@@ -129,9 +142,25 @@ function UsersPageInner() {
     setBusy(true)
     try {
       const result = await adminApi.userAction(body as { uid: string; action: string })
-      push('success', typeof result.note === 'string' ? result.note : 'Saved and written to the audit log.')
+      // Some results are only ever shown once (a temporary password) or are a link to relay by hand.
+      if (typeof result.temporaryPassword === 'string') {
+        const secret = result.temporaryPassword
+        try {
+          await navigator.clipboard.writeText(secret)
+          push('warning', `Temporary password copied to your clipboard: ${secret}. It is not stored anywhere — paste it to the member now.`, 45_000)
+        } catch {
+          push('warning', `Temporary password (copy it now, it will not be shown again): ${secret}`, 45_000)
+        }
+      } else if (typeof result.link === 'string') {
+        push('info', `Verification link generated — send it yourself: ${result.link}`, 45_000)
+      } else if (result.credentialDisabled !== undefined) {
+        push(result.credentialDisabled ? 'warning' : 'success', result.note ?? (result.credentialDisabled ? 'Sign-in credential disabled.' : 'Sign-in credential enabled.'))
+      } else {
+        push('success', typeof result.note === 'string' ? result.note : 'Saved and written to the audit log.')
+      }
       setConfirm(null)
       setSelected(null)
+      setAccount(null)
       await load(cursors[cursors.length - 1] ?? null)
     } catch (err) {
       push('error', err instanceof Error ? err.message : 'The action failed; nothing was changed.')
@@ -301,6 +330,36 @@ function UsersPageInner() {
               <Fact label="Provider" value={selected.kycProvider || '—'} />
             </div>
 
+            {/* Auth is the credential; the profile is only our description of it. Show both, and show
+                the disagreement — that is where "banned but still signing in" and ghost accounts live. */}
+            <div className="rounded-xl border border-border/70 bg-background/50 p-3">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Firebase Auth account</p>
+              {account === null ? (
+                <p className="mt-1 text-[11px] text-muted-foreground">Auth state not loaded — this deployment cannot reach the Admin SDK, so credential actions are unavailable.</p>
+              ) : !account.exists ? (
+                <p className="mt-1 text-[11px] font-medium text-destructive">No Auth account for this uid. The profile exists but nobody can sign in to it; treat this as a data artifact and erase it.</p>
+              ) : (
+                <>
+                  <div className="mt-2 grid grid-cols-2 gap-2">
+                    <Fact label="Credential" value={account.disabled ? 'Disabled' : 'Active'} tone={account.disabled ? 'warning' : 'success'} />
+                    <Fact label="Email verified" value={account.emailVerified ? 'Yes' : 'Not verified'} tone={account.emailVerified ? 'success' : 'warning'} />
+                    <Fact label="Last sign-in" value={account.lastSignInAt ? new Date(account.lastSignInAt).toLocaleString() : 'never'} />
+                    <Fact label="Providers" value={account.providers.length ? account.providers.join(', ').replace('.com', '') : '—'} />
+                  </div>
+                  {account.disabled && selected.accountState === 'active' ? (
+                    <p className="mt-2 text-[11px] font-medium text-amber-700 dark:text-amber-400">
+                      Profile says active while the credential is disabled. Restore access below, or ban the profile so the two agree.
+                    </p>
+                  ) : null}
+                  {!account.disabled && ['suspended', 'banned'].includes(selected.accountState) ? (
+                    <p className="mt-2 text-[11px] font-medium text-destructive">
+                      This member is restricted on paper but can still sign in. Disable the credential below.
+                    </p>
+                  ) : null}
+                </>
+              )}
+            </div>
+
             {selected.moderationReason && (
               <p className="rounded-xl border border-warning/40 bg-warning/10 px-3 py-2 text-[11px] text-warning-foreground">
                 <strong className="font-semibold">Moderation note:</strong> {selected.moderationReason}
@@ -345,6 +404,52 @@ function UsersPageInner() {
                   <ShieldCheck className="size-3.5" />
                   {selected.role === 'admin' ? 'Revoke staff' : 'Make staff'}
                 </Button>
+                <Button size="sm" variant="outline" className="gap-1.5" disabled={busy || account === null} onClick={() => setConfirm({
+                  action: account?.disabled ? 'credential-enable' : 'credential-disable',
+                  title: account?.disabled ? 'Re-enable sign-in' : 'Disable sign-in credential',
+                  description: account?.disabled
+                    ? 'The member can sign in again immediately. Their profile state is set back to active as well, so the two systems agree.'
+                    : 'Ends access now: existing sessions stop working at the next token refresh. Use this, not suspension alone, when a credential must die today.',
+                  confirmLabel: account?.disabled ? 'Enable credential' : 'Disable credential',
+                  tone: account?.disabled ? 'default' : 'destructive',
+                  requireReason: false,
+                })}>
+                  <KeyRound className="size-3.5" />
+                  {account?.disabled ? 'Enable sign-in' : 'Disable sign-in'}
+                </Button>
+                <Button size="sm" variant="outline" className="gap-1.5" disabled={busy} onClick={() => setConfirm({
+                  action: 'temp-password',
+                  title: 'Issue a temporary password',
+                  description: 'For a locked-out member who cannot receive a reset email. The password is shown once, is never stored, and this action is audited.',
+                  confirmLabel: 'Generate password',
+                  tone: 'destructive',
+                  minReasonLength: 4,
+                })}>
+                  <KeyRound className="size-3.5" />
+                  Temporary password
+                </Button>
+                <Button size="sm" variant="outline" className="gap-1.5" disabled={busy || account?.emailVerified === true} onClick={() => setConfirm({
+                  action: 'verification-link',
+                  title: 'Mint an email-verification link',
+                  description: 'The link is generated server-side and handed to you to send — nothing is emailed from this app. Valid one hour.',
+                  confirmLabel: 'Generate link',
+                  tone: 'default',
+                  requireReason: false,
+                })}>
+                  <MailCheck className="size-3.5" />
+                  Verification link
+                </Button>
+                <Button size="sm" variant="ghost" className="gap-1.5 text-destructive hover:bg-destructive/10 hover:text-destructive" disabled={busy} onClick={() => setConfirm({
+                  action: 'erase',
+                  title: 'Erase this account completely',
+                  description: 'Deletes the profile, the Firebase Auth credential, the notifications and any pending applications. Money rows are kept with names redacted unless you tick the box — a payout with no counterparty is worse for everybody.',
+                  confirmLabel: 'Erase permanently',
+                  tone: 'destructive',
+                  minReasonLength: 12,
+                })}>
+                  <Trash2 className="size-3.5" />
+                  Erase account
+                </Button>
                 <Button size="sm" variant="ghost" className="gap-1.5 text-destructive hover:bg-destructive/10 hover:text-destructive" disabled={busy} onClick={() => setConfirm({ action: 'delete', title: 'Flag for deletion', description: 'Bans the account and marks it for the retention job. Records are kept for financial audit; this is not an instant erase.', confirmLabel: 'Ban & flag', tone: 'destructive' })}>
                   <Trash2 className="size-3.5" />
                   Flag for deletion
@@ -370,7 +475,8 @@ function UsersPageInner() {
         confirmLabel={confirm?.confirmLabel}
         tone={confirm?.tone}
         busy={busy}
-        requireReason={confirm?.action !== 'restore'}
+        requireReason={confirm?.requireReason ?? confirm?.action !== 'restore'}
+        minReasonLength={confirm?.minReasonLength ?? 4}
         onCancel={() => setConfirm(null)}
         onConfirm={async (reason) => {
           if (!selected || !confirm) return
@@ -388,6 +494,23 @@ function UsersPageInner() {
               return act({ ...base, action: 'moderate', payload: { accountState: 'under_review' } })
             case 'delete':
               return act({ ...base, action: 'delete' })
+            case 'credential-disable':
+              return act({ ...base, action: 'account', payload: { enable: false } })
+            case 'credential-enable':
+              return act({ ...base, action: 'account', payload: { enable: true } })
+            case 'temp-password':
+              return act({ ...base, action: 'temp-password' })
+            case 'verification-link':
+              return act({ ...base, action: 'verification-link', payload: { email: selected.email } })
+            case 'erase': {
+              const typed = (document.getElementById('erase-uid') as HTMLInputElement | null)?.value.trim() ?? ''
+              if (typed !== selected.uid) {
+                push('error', `Type the uid exactly (${selected.uid.slice(0, 12)}…) to confirm.`)
+                return undefined
+              }
+              const eraseLedger = (document.getElementById('erase-ledger') as HTMLInputElement | null)?.checked === true
+              return act({ ...base, action: 'erase', payload: { confirm: typed, eraseLedger } })
+            }
             case 'role':
               return act({ ...base, action: 'role', payload: { isAdmin: selected.role !== 'admin', email: selected.email } })
             case 'wallet': {
@@ -404,7 +527,22 @@ function UsersPageInner() {
           }
         }}
         extra={
-          confirm?.action === 'wallet' && selected ? (
+          confirm?.action === 'erase' && selected ? (
+            <div className="mt-3 flex flex-col gap-3">
+              <Field label="Type the uid to confirm" hint={`${selected.uid} — this cannot be undone from the console.`}>
+                <input id="erase-uid" className={cn(inputClass, 'font-mono text-[11px]')} placeholder={selected.uid} autoComplete="off" />
+              </Field>
+              <label className="flex items-start gap-2.5 rounded-xl border border-border/70 bg-background/50 p-3">
+                <input id="erase-ledger" type="checkbox" className="mt-0.5 size-4 accent-[var(--primary)]" />
+                <span>
+                  <span className="block text-xs font-semibold text-foreground">Also delete the ledger rows</span>
+                  <span className="mt-0.5 block text-[11px] leading-snug text-muted-foreground">
+                    Off by default: amounts stay with the personal fields redacted, so a past payout can still be reconciled.
+                  </span>
+                </span>
+              </label>
+            </div>
+          ) : confirm?.action === 'wallet' && selected ? (
             <div className="mt-3 grid grid-cols-2 gap-3">
               <Field label="Pending (USD)">
                 <input id="adj-pending" type="number" step="0.01" min="0" defaultValue={selected.wallet.pendingUsd} className={inputClass} />

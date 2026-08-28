@@ -35,7 +35,13 @@ export const site = {
   reviewSlaHours: 48,
   /** Commission the platform keeps on a completed job (shown honestly in the FAQ). */
   workerFeePercent: 0,
-  trainingFeeUsd: envInt('TRAINING_FEE_USD', 10),
+  /**
+   * Keep this in step with `getTrainingFeeUsd()` in `lib/afterworks-data.ts`, which is what checkout
+   * actually charges. It used to read a different variable (`TRAINING_FEE_USD`), so the marketing copy
+   * could advertise one price while Paystack asked for another.
+   */
+  trainingFeeUsd: envInt('PAYSTACK_TRAINING_AMOUNT', 10),
+  trainingFeeKes: envInt('PAYSTACK_AMOUNT_KES', 0),
   services: [
     { id: 'jobs', label: 'Jobs & applications', description: 'Browsing, applying and the review queue.' },
     { id: 'wallet', label: 'Wallet & payouts', description: 'Balances, clearing and mobile money transfers.' },

@@ -31,7 +31,9 @@ export async function GET(req: NextRequest) {
     if (uid) {
       const detail = await firestore.getUserDetail(uid.slice(0, 128))
       if (!detail) return fail(404, 'No such user.', { code: 'user_not_found' })
-      return json({ ok: true, user: redactSecrets(detail) })
+      // The profile says what we know about them; Auth says whether they can actually sign in.
+      const account = await firestore.getAuthAccountStateForUid(uid.slice(0, 128))
+      return json({ ok: true, user: redactSecrets(detail), account })
     }
 
     const page = await firestore.listUsersPage({
@@ -44,6 +46,11 @@ export async function GET(req: NextRequest) {
   } catch (err) {
     return routeError('admin/users:GET', err)
   }
+}
+
+/** The address is usually already known to the console; accept it either way, never invent one. */
+function detail_email(payload: Record<string, unknown>): string {
+  return typeof payload.address === 'string' ? payload.address : ''
 }
 
 function redactSecrets(input: Record<string, unknown>): Record<string, unknown> {
@@ -98,6 +105,11 @@ export async function PATCH(req: NextRequest) {
         }
 
         await firestore.adminUpdateUser(uid, { accountState: state, moderationReason: reason }, guard.value.email, 'USER_MODERATED')
+
+        // A banned profile with a live credential is a note, not a moderation: the member can still
+        // sign in and read everything. Flip Auth too, and say in the response whether that worked.
+        const restrict = state === 'suspended' || state === 'banned'
+        const authResult = await firestore.setAccountEnabled(uid, !restrict, guard.value.email)
         await firestore.notifyUser(uid, {
           title: state === 'active' ? 'Account restored' : `Account ${state.replace(/_/g, ' ')}`,
           body:
@@ -113,7 +125,60 @@ export async function PATCH(req: NextRequest) {
           details: { uid, reason, from: detail.accountState },
           req,
         })
-        return json({ ok: true, accountState: state })
+        return json({
+          ok: true,
+          accountState: state,
+          credentialDisabled: restrict && authResult.ok,
+          note: authResult.ok
+            ? restrict
+              ? 'The sign-in credential is disabled too, so existing sessions end at the next refresh.'
+              : 'Sign-in re-enabled.'
+            : `${authResult.error ?? 'Credential could not be updated.'} The profile state was saved, so restrict again once Auth is reachable.`,
+        })
+      }
+
+      case 'account': {
+        // Direct credential control, for when Auth and the profile have drifted apart.
+        const enable = payload.enable === true
+        const result = await firestore.setAccountEnabled(uid, enable, guard.value.email)
+        if (!result.ok) return fail(502, result.error ?? 'The credential could not be updated.', { code: result.code ?? 'auth_write_failed' })
+        await firestore.adminUpdateUser(uid, { accountState: enable ? 'active' : 'suspended' }, guard.value.email, 'ACCOUNT_CREDENTIAL_UPDATED')
+        return json({ ok: true, note: result.note })
+      }
+
+      case 'temp-password': {
+        if (reason.length < 4) return fail(400, 'Say why the credential is being reset.', { code: 'reason_required' })
+        const result = await firestore.setTemporaryPassword(uid, guard.value.email)
+        if (!result.ok) return fail(502, result.error ?? 'The password could not be reset.', { code: result.code ?? 'auth_write_failed' })
+        await audit({ action: 'ADMIN_PASSWORD_RESET', actorEmail: guard.value.email, details: { uid, reason }, req })
+        // One chance to read it: the value is never stored, only relayed by the operator.
+        return json({ ok: true, temporaryPassword: result.secret, note: result.note })
+      }
+
+      case 'verification-link': {
+        const email = String(payload.email ?? detail_email(payload) ?? '').trim()
+        if (!email) return fail(400, 'An email address is required to mint a verification link.', { code: 'bad_request' })
+        const result = await firestore.issueEmailVerificationLink(email, guard.value.email)
+        if (!result.ok) return fail(502, result.error ?? 'No link could be generated.', { code: result.code ?? 'auth_write_failed' })
+        return json({ ok: true, link: result.link, note: result.note })
+      }
+
+      case 'erase': {
+        if (reason.length < 12) return fail(400, 'Hard deletion needs a written justification of at least 12 characters.', { code: 'reason_required' })
+        if (String(payload.confirm ?? '') !== uid) return fail(409, 'Type the uid to confirm an irreversible deletion.', { code: 'confirmation_mismatch' })
+        const target = await firestore.getUserDetail(uid)
+        if (!target) return fail(404, 'No such user.', { code: 'user_not_found' })
+        if (String(target.email ?? '').toLowerCase() === guard.value.email.toLowerCase()) {
+          return fail(400, 'You cannot erase your own account from the console.', { code: 'self_target' })
+        }
+        const result = await firestore.hardDeleteAccount(uid, {
+          actorEmail: guard.value.email,
+          reason,
+          eraseLedger: payload.eraseLedger === true,
+        })
+        if (!result.ok) return fail(502, result.error ?? 'Deletion failed.', { code: result.code ?? 'auth_write_failed', details: result.removed })
+        await audit({ action: 'USER_HARD_DELETED', actorEmail: guard.value.email, details: { uid, reason, removed: result.removed }, req })
+        return json({ ok: true, removed: result.removed, note: result.note })
       }
 
       case 'kyc': {

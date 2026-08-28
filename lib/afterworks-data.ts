@@ -10,6 +10,16 @@ export type JobCategory =
 
 export type JobStatus = 'open' | 'paused' | 'closed'
 
+/** Canonical category list — client forms and the server validator both read this. */
+export const JOB_CATEGORY_LIST: readonly JobCategory[] = [
+  'Data Entry',
+  'Transcription',
+  'Image Labeling',
+  'Content Review',
+  'Translation',
+  'Research',
+]
+
 export type Job = {
   id: string
   title: string

@@ -205,7 +205,7 @@ function TrainingPageInner({
   const { id } = params
   const router = useRouter()
   const searchParams = useSearchParams()
-  const { getJob, worker, applyToJob, refreshWallet, getApplicationForJob, isJobPaid, markJobAsPaid } = useAfterWorks()
+  const { getJob, worker, applyToJob, getApplicationForJob, isJobPaid, verifyTrainingPayment } = useAfterWorks()
   const { user } = useAuth()
 
   const [isMounted, setIsMounted] = useState(false)
@@ -227,30 +227,24 @@ function TrainingPageInner({
   const job = getJob(id)
 
   // ── Verify a reference and unlock training ──────────────────────────────
+  // The server (not this component) decides whether the course is paid: /api/paystack/verify
+  // confirms the reference against Paystack and writes the entitlement to the profile document.
   const verifyReference = useCallback(async (ref: string) => {
     setPayState('verifying')
-    try {
-      const res = await fetch(`/api/paystack/verify/${encodeURIComponent(ref)}`)
-      const data = await res.json()
-      if (data.paid) {
-        localStorage.removeItem(LS_REF_KEY)
-        await markJobAsPaid(id)
-        setPayState('paid')
-        // Refresh wallet after successful payment
-        await refreshWallet()
-      } else if (data.status === 'abandoned' || data.status === 'failed') {
-        localStorage.removeItem(LS_REF_KEY)
-        setPayState('error')
-        setErrorMsg('Payment was not completed. Please try again.')
-      } else {
-        // Still pending — keep polling
-        setPayState('awaiting_payment')
-      }
-    } catch {
-      setPayState('error')
-      setErrorMsg('Could not verify payment. Please refresh the page.')
+    const result = await verifyTrainingPayment(id, ref)
+    if (result.ok && result.paid) {
+      localStorage.removeItem(LS_REF_KEY)
+      setPayState('paid')
+      return
     }
-  }, [id, markJobAsPaid, refreshWallet])
+    if (result.ok && !result.paid) {
+      // Still pending on Paystack's side — keep polling instead of failing the worker.
+      setPayState('awaiting_payment')
+      return
+    }
+    setPayState('error')
+    setErrorMsg(result.error ?? 'Could not verify payment. Please refresh the page.')
+  }, [id, verifyTrainingPayment])
 
   // ── On mount: check if paid previously or returning from Paystack ────────
   useEffect(() => {
@@ -292,7 +286,7 @@ function TrainingPageInner({
   async function handleApplyAfterTraining() {
     if (isApplying) return
     setIsApplying(true)
-    const result = applyToJob(job!.id)
+    const result = await applyToJob(job!.id)
     if (!result.ok) {
       setApplyError(result.reason)
       setIsApplying(false)

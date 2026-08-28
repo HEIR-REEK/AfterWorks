@@ -80,6 +80,98 @@ function getAdminApp(): admin.app.App {
   })
 }
 
+// ─── Shared accessors ─────────────────────────────────────────────────────────
+
+let adminUsable: boolean | null = null
+
+/**
+ * True when the Admin SDK can actually serve reads/writes. Used by the security posture report
+ * and by the health endpoint so an operator sees "privileged writes are dead" instead of
+ * silently failing buttons.
+ */
+export function isFirebaseAdminUsable(): boolean {
+  if (adminUsable !== null) return adminUsable
+  const configured = Boolean(process.env.FIREBASE_SERVICE_ACCOUNT_JSON || process.env.FIREBASE_SERVICE_ACCOUNT_PATH)
+  if (!configured) {
+    adminUsable = false
+    return adminUsable
+  }
+  try {
+    getAdminApp()
+    adminUsable = true
+  } catch (err) {
+    console.warn('[FirestoreAdmin] Admin SDK unavailable:', err instanceof Error ? err.message : err)
+    adminUsable = false
+  }
+  return adminUsable
+}
+
+export function resetAdminUsabilityProbe(): void {
+  adminUsable = null
+}
+
+/** Admin Firestore handle, or null when the SDK is unavailable (callers must degrade). */
+export function dbOrNull(): admin.firestore.Firestore | null {
+  try {
+    return admin.firestore(getAdminApp())
+  } catch (err) {
+    console.warn('[FirestoreAdmin] Firestore handle unavailable:', err instanceof Error ? err.message : err)
+    return null
+  }
+}
+
+export function adminDb(): admin.firestore.Firestore {
+  const db = dbOrNull()
+  if (!db) throw new Error('Firebase Admin SDK is not configured (FIREBASE_SERVICE_ACCOUNT_JSON / _PATH).')
+  return db
+}
+
+const MAX_AUDIT_DETAIL_BYTES = 6_000
+
+/** Keep audit payloads small and PII-free before they hit the ledger. */
+function compactDetails(details: Record<string, unknown> | undefined): Record<string, unknown> {
+  if (!details) return {}
+  let out = details
+  try {
+    const serialized = JSON.stringify(details)
+    if (serialized.length > MAX_AUDIT_DETAIL_BYTES) {
+      out = { truncated: true, preview: serialized.slice(0, MAX_AUDIT_DETAIL_BYTES) }
+    }
+  } catch {
+    out = { unserializable: true }
+  }
+  return out
+}
+
+/**
+ * Non-throwing audit write used by the server guard layer. Server-side only: the client can no
+ * longer write to `admin_logs` at all (see firestore.rules), so the ledger cannot be poisoned.
+ */
+export async function createAuditEntry(
+  action: string,
+  details?: Record<string, unknown>,
+  actorEmail?: string,
+): Promise<void> {
+  const db = dbOrNull()
+  if (!db) {
+    console.warn(`[audit] Dropped "${action}" — Admin SDK unavailable.`)
+    return
+  }
+  try {
+    const logId = `log_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
+    await db.collection('admin_logs').doc(logId).set({
+      id: logId,
+      action: String(action).slice(0, 80),
+      details: compactDetails(details),
+      actorEmail: actorEmail || 'System',
+      timestamp: new Date().toISOString(),
+      serverWritten: true,
+    })
+  } catch (err) {
+    console.error('[FirestoreAdmin] createAuditEntry failed:', err)
+  }
+}
+
 // ─── Token Verification ───────────────────────────────────────────────────────
 
 /**
@@ -281,27 +373,14 @@ export async function recordPaidTrainingAdmin(
 
 /**
  * Creates an immutable admin audit log entry using Firebase Admin SDK.
+ * (Server-side only — client writes to `admin_logs` are denied by firestore.rules.)
  */
 export async function createAdminAuditLog(
   action: string,
   details?: Record<string, unknown>,
   actorEmail?: string,
 ): Promise<void> {
-  try {
-    const app = getAdminApp()
-    const db = admin.firestore(app)
-    const logId = `log_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`
-    const logRef = db.collection('admin_logs').doc(logId)
-    await logRef.set({
-      id: logId,
-      action,
-      details: details ?? {},
-      actorEmail: actorEmail || 'Admin',
-      timestamp: new Date().toISOString(),
-    })
-  } catch (err) {
-    console.error('[FirestoreAdmin] createAdminAuditLog failed:', err)
-  }
+  await createAuditEntry(action, details, actorEmail)
 }
 
 // ─── Payment Transactions Logging ─────────────────────────────────────────────
@@ -375,4 +454,1231 @@ export async function checkUserAdminRoleAdmin(email: string): Promise<boolean> {
     console.error('[FirestoreAdmin] checkUserAdminRoleAdmin failed for email:', email, err)
     return false
   }
+}
+// ══════════════════════════════════════════════════════════════════════════════
+// SERVER-SIDE OPERATIONS (privileged)
+//
+// Everything below is reachable only from server route handlers. The client SDK can no
+// longer write system config, audit logs, roles, KYC verdicts or wallet balances at all —
+// firestore.rules denies those collections to browsers, which is what makes "the API route is
+// the only way in" a real guarantee rather than a convention.
+// ══════════════════════════════════════════════════════════════════════════════
+
+import { invalidateGuardCaches } from '@/lib/guard-cache'
+import {
+  DEFAULT_MAINTENANCE_CONFIG,
+  normaliseMaintenanceConfig,
+  primeMaintenanceCache,
+  type MaintenanceConfig,
+} from '@/lib/maintenance-shared'
+
+// ─── Security settings (session revocation, blocklist) ────────────────────────
+
+export type SecuritySettings = {
+  revokedBefore: number
+  revokedJtis: string[]
+  updatedAt: string | null
+  updatedBy: string | null
+}
+
+const DEFAULT_SECURITY_SETTINGS: SecuritySettings = {
+  revokedBefore: 0,
+  revokedJtis: [],
+  updatedAt: null,
+  updatedBy: 'System',
+}
+
+export async function getSecuritySettings(): Promise<SecuritySettings> {
+  const db = dbOrNull()
+  if (!db) return DEFAULT_SECURITY_SETTINGS
+  try {
+    const snap = await db.collection('system').doc('security').get()
+    if (!snap.exists) return DEFAULT_SECURITY_SETTINGS
+    const data = (snap.data() ?? {}) as Record<string, unknown>
+    return {
+      revokedBefore: Number(data.revokedBefore ?? 0) || 0,
+      revokedJtis: Array.isArray(data.revokedJtis) ? (data.revokedJtis as string[]).slice(0, 100) : [],
+      updatedAt: (data.updatedAt as string) ?? null,
+      updatedBy: (data.updatedBy as string) ?? null,
+    }
+  } catch (err) {
+    console.warn('[FirestoreAdmin] getSecuritySettings failed:', err)
+    return DEFAULT_SECURITY_SETTINGS
+  }
+}
+
+export async function revokeAllAdminSessions(actorEmail: string): Promise<number> {
+  const db = dbOrNull()
+  const now = Date.now()
+  if (!db) throw new Error('Admin SDK unavailable')
+  await db.collection('system').doc('security').set(
+    {
+      revokedBefore: now,
+      revokedJtis: [],
+      updatedAt: new Date(now).toISOString(),
+      updatedBy: actorEmail,
+    },
+    { merge: true },
+  )
+  await createAuditEntry('ADMIN_SESSIONS_REVOKED', { scope: 'all', issuedAfter: new Date(now).toISOString() }, actorEmail)
+  return now
+}
+
+export async function revokeAdminSession(jti: string, actorEmail: string): Promise<void> {
+  const db = dbOrNull()
+  if (!db) throw new Error('Admin SDK unavailable')
+  const current = await getSecuritySettings()
+  const revokedJtis = Array.from(new Set([...current.revokedJtis, jti])).slice(-100)
+  await db
+    .collection('system')
+    .doc('security')
+    .set({ revokedJtis, updatedAt: new Date().toISOString(), updatedBy: actorEmail }, { merge: true })
+  await createAuditEntry('ADMIN_SESSION_REVOKED', { jti }, actorEmail)
+}
+
+// ─── Maintenance mode (authoritative write path) ──────────────────────────────
+
+export async function getMaintenanceConfigServer(): Promise<MaintenanceConfig> {
+  const db = dbOrNull()
+  if (!db) return DEFAULT_MAINTENANCE_CONFIG
+  try {
+    const snap = await db.collection('system').doc('maintenance').get()
+    if (!snap.exists) return DEFAULT_MAINTENANCE_CONFIG
+    const config = normaliseMaintenanceConfig(snap.data())
+    primeMaintenanceCache(config)
+    return config
+  } catch (err) {
+    console.warn('[FirestoreAdmin] getMaintenanceConfigServer failed:', err)
+    return DEFAULT_MAINTENANCE_CONFIG
+  }
+}
+
+export type MaintenanceWriteResult = {
+  config: MaintenanceConfig
+  changed: string[]
+}
+
+/**
+ * Merges a partial operator update into the maintenance document. Field names are whitelisted,
+ * values are normalised/clamped, and the middleware cache is primed so the change is visible on
+ * the very next request instead of after the TTL — that "save and it's live" behaviour is the
+ * whole point of an ops switch.
+ */
+export async function saveMaintenanceConfigServer(
+  patch: Partial<MaintenanceConfig>,
+  actorEmail: string,
+): Promise<MaintenanceWriteResult> {
+  const db = dbOrNull()
+  if (!db) throw new Error('Admin SDK unavailable')
+
+  const current = await getMaintenanceConfigServer()
+  const allowed: Array<keyof MaintenanceConfig> = [
+    'enabled',
+    'mode',
+    'title',
+    'message',
+    'banner',
+    'reason',
+    'scheduledStart',
+    'estimatedEnd',
+    'autoResolve',
+    'contactEmail',
+    'affectedServices',
+    'allowedEmails',
+    'allowSignIn',
+  ]
+
+  const merged: Record<string, unknown> = {}
+  const changed: string[] = []
+  for (const key of allowed) {
+    if (patch[key] === undefined) continue
+    merged[key] = patch[key]
+    if (JSON.stringify(patch[key]) !== JSON.stringify(current[key])) changed.push(String(key))
+  }
+
+  const next = normaliseMaintenanceConfig({
+    ...current,
+    ...merged,
+    version: (current.version ?? 0) + 1,
+    updatedAt: new Date().toISOString(),
+    updatedBy: actorEmail,
+  })
+
+  await db.collection('system').doc('maintenance').set(next as unknown as Record<string, unknown>)
+  primeMaintenanceCache(next)
+
+  await createAuditEntry(
+    next.enabled ? 'MAINTENANCE_ENABLED' : 'MAINTENANCE_DISABLED',
+    { mode: next.mode, changed, title: next.title, estimatedEnd: next.estimatedEnd, reason: next.reason, version: next.version },
+    actorEmail,
+  )
+
+  return { config: next, changed }
+}
+
+// ─── Users: paginated, redacted reads + privileged writes ─────────────────────
+
+export type AdminUserRow = {
+  uid: string
+  name: string
+  email: string
+  accountState: string
+  kycVerified: boolean
+  kycStatus?: string
+  role: string
+  qualityScore: number
+  jobsCompleted: number
+  memberSince: string
+  createdAt: string | null
+  lastActiveAt: string | null
+  wallet: { pendingUsd: number; availableUsd: number; payoutNumberMasked: string }
+  country?: string
+  phoneMasked?: string
+  paidTrainingsCount: number
+}
+
+function maskPhone(value: unknown): string {
+  const digits = String(value ?? '').replace(/\D/g, '')
+  if (digits.length < 4) return ''
+  return `${'•'.repeat(Math.max(2, digits.length - 6))}${digits.slice(-4)}`
+}
+
+function toRow(uid: string, data: Record<string, unknown>): AdminUserRow {
+  const wallet = (data.wallet ?? {}) as Record<string, unknown>
+  return {
+    uid,
+    name: String(data.name ?? ''),
+    email: String(data.email ?? ''),
+    accountState: String(data.accountState ?? 'active'),
+    kycVerified: data.kycVerified === true,
+    kycStatus: data.kycStatus ? String(data.kycStatus) : undefined,
+    role: data.isAdmin === true ? 'admin' : String(data.role ?? 'user'),
+    qualityScore: Number(data.qualityScore ?? 100) || 0,
+    jobsCompleted: Number(data.jobsCompleted ?? 0) || 0,
+    memberSince: String(data.memberSince ?? ''),
+    createdAt: (data.createdAt as string) ?? null,
+    lastActiveAt: (data.updatedAt as string) ?? null,
+    wallet: {
+      pendingUsd: Number(wallet.pendingUsd ?? 0) || 0,
+      availableUsd: Number(wallet.availableUsd ?? 0) || 0,
+      payoutNumberMasked: maskPhone(wallet.payoutNumber ?? data.phone),
+    },
+    country: data.country ? String(data.country) : undefined,
+    phoneMasked: maskPhone(data.phone),
+    paidTrainingsCount: Array.isArray(data.paidTrainings) ? (data.paidTrainings as unknown[]).length : 0,
+  }
+}
+
+export type UserPage = {
+  rows: AdminUserRow[]
+  nextCursor: string | null
+  hasMore: boolean
+  pageSize: number
+  degraded?: string
+}
+
+/**
+ * Cursor-paginated user list. The admin console used to stream the entire `users` collection
+ * into the browser through a live listener (every worker profile, bank field and wallet), which
+ * is a privacy problem and a memory/latency problem on the device. This reads one page, projects
+ * only what the table shows, and returns masked payout handles.
+ */
+export async function listUsersPage(opts: {
+  pageSize?: number
+  cursor?: string | null
+  search?: string
+  state?: string
+}): Promise<UserPage> {
+  const db = dbOrNull()
+  if (!db) return { rows: [], nextCursor: null, hasMore: false, pageSize: opts.pageSize ?? 25, degraded: 'Admin SDK unavailable' }
+
+  const pageSize = Math.min(50, Math.max(5, opts.pageSize ?? 25))
+  const search = (opts.search ?? '').trim().toLowerCase()
+  const state = (opts.state ?? 'all').trim()
+
+  try {
+    let ref: admin.firestore.Query = db.collection('users')
+    if (search) {
+      ref = ref.orderBy('email').startAt(search).endAt(`${search}\uf8ff`)
+    } else if (state && state !== 'all') {
+      ref = ref.where('accountState', '==', state).orderBy(admin.firestore.FieldPath.documentId(), 'asc')
+    } else {
+      ref = ref.orderBy(admin.firestore.FieldPath.documentId(), 'asc')
+    }
+    if (opts.cursor) ref = ref.startAfter(opts.cursor)
+    ref = ref.limit(pageSize + 1)
+
+    const snap = await (ref as admin.firestore.Query).get()
+    const docs = snap.docs.slice(0, pageSize)
+    const rows = docs.map((d) => toRow(d.id, (d.data() ?? {}) as Record<string, unknown>))
+    const last = docs[docs.length - 1]
+
+    return {
+      rows,
+      nextCursor: snap.size > pageSize && last ? last.id : null,
+      hasMore: snap.size > pageSize,
+      pageSize,
+    }
+  } catch (err) {
+    console.warn('[FirestoreAdmin] listUsersPage degraded:', err)
+    // Fallback: plain, index-free page read so the console still works during index roll-out.
+    try {
+      let ref = db.collection('users').limit(pageSize + 1)
+      if (opts.cursor) ref = ref.startAfter(opts.cursor)
+      const snap = await ref.get()
+      const docs = snap.docs.slice(0, pageSize)
+      return {
+        rows: docs
+          .map((d) => toRow(d.id, (d.data() ?? {}) as Record<string, unknown>))
+          .filter((row) => (!search ? true : row.email.toLowerCase().includes(search))),
+        nextCursor: docs.length === pageSize && snap.size > pageSize ? docs[docs.length - 1].id : null,
+        hasMore: snap.size > pageSize,
+        pageSize,
+        degraded: 'Ordered query fell back to an unindexed read — add the composite indexes in firestore.indexes.json.',
+      }
+    } catch (fallbackErr) {
+      console.error('[FirestoreAdmin] listUsersPage failed entirely:', fallbackErr)
+      return { rows: [], nextCursor: null, hasMore: false, pageSize, degraded: 'User directory unavailable' }
+    }
+  }
+}
+
+/** Full (unmasked) profile for the admin detail drawer — still server-gated, never streamed. */
+export async function getUserDetail(uid: string): Promise<Record<string, unknown> | null> {
+  const db = dbOrNull()
+  if (!db) return null
+  const snap = await db.collection('users').doc(uid).get()
+  if (!snap.exists) return null
+  return { uid: snap.id, ...(snap.data() ?? {}) }
+}
+
+const ADMIN_MUTABLE_USER_FIELDS = new Set([
+  'name',
+  'location',
+  'qualityScore',
+  'jobsCompleted',
+  'kycVerified',
+  'accountState',
+  'phone',
+  'preferredPayoutMethod',
+  'wallet',
+  'role',
+  'isAdmin',
+  'kycStatus',
+  'kycRejectionReason',
+])
+
+export async function adminUpdateUser(
+  uid: string,
+  fields: Record<string, unknown>,
+  actorEmail: string,
+  auditAction = 'ADMIN_USER_UPDATED',
+): Promise<{ applied: string[] }> {
+  const db = adminDb()
+  const clean: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(fields)) {
+    if (!ADMIN_MUTABLE_USER_FIELDS.has(key)) continue
+    if (value === undefined) continue
+    clean[key] = value
+  }
+  if (Object.keys(clean).length === 0) return { applied: [] }
+
+  clean.updatedAt = new Date().toISOString()
+  clean.lastModifiedBy = actorEmail
+  await db.collection('users').doc(uid).set(clean, { merge: true })
+
+  if ('role' in clean || 'isAdmin' in clean) {
+    await syncAdminClaimForUid(db, uid, clean.isAdmin === true || clean.role === 'admin')
+  }
+
+  await createAuditEntry(auditAction, { uid, fields: Object.keys(clean), values: redactAuditValues(clean) }, actorEmail)
+  return { applied: Object.keys(clean) }
+}
+
+function redactAuditValues(values: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(values)) {
+    out[k] = /wallet|phone|account|bank/i.test(k) ? '[set]' : v
+  }
+  return out
+}
+
+/**
+ * Keeps the `admin` custom claim in sync with the Firestore role so the middleware, the guards
+ * and firestore.rules can all trust the token instead of paying a document read per request.
+ */
+async function syncAdminClaimForUid(db: admin.firestore.Firestore, uid: string, isAdmin: boolean): Promise<void> {
+  try {
+    await admin.auth(getAdminApp()).setCustomUserClaims(uid, { admin: isAdmin })
+  } catch (err) {
+    console.warn('[FirestoreAdmin] setCustomUserClaims skipped:', err instanceof Error ? err.message : err)
+  }
+  try {
+    invalidateGuardCaches(uid)
+  } catch {
+    /* guard module optional */
+  }
+  void db
+}
+
+export async function setUserAdminFlagByEmail(email: string, isAdmin: boolean, actorEmail: string): Promise<boolean> {
+  const db = adminDb()
+  const clean = email.trim().toLowerCase()
+  const snap = await db.collection('users').where('email', '==', clean).limit(1).get()
+  if (snap.empty) return false
+  const doc = snap.docs[0]
+  await doc.ref.set({ isAdmin, role: isAdmin ? 'admin' : 'user', updatedAt: new Date().toISOString() }, { merge: true })
+  await syncAdminClaimForUid(db, doc.id, isAdmin)
+  await createAuditEntry(isAdmin ? 'ADMIN_ROLE_GRANTED' : 'ADMIN_ROLE_REVOKED', { email: clean }, actorEmail)
+  return true
+}
+
+export async function verifyKycAdmin(
+  uid: string,
+  approve: boolean,
+  reason: string,
+  actorEmail: string,
+): Promise<void> {
+  const db = adminDb()
+  const now = new Date().toISOString()
+  await db.collection('users').doc(uid).set(
+    approve
+      ? {
+          kycVerified: true,
+          kycStatus: 'approved',
+          accountState: 'active',
+          kycVerifiedAt: now,
+          kycRejectionReason: null,
+          kycProvider: 'admin-review',
+          updatedAt: now,
+        }
+      : {
+          kycVerified: false,
+          kycStatus: 'declined',
+          accountState: 'kyc_rejected',
+          kycRejectedAt: now,
+          kycRejectionReason: reason.slice(0, 300),
+          updatedAt: now,
+        },
+    { merge: true },
+  )
+  await createAuditEntry(approve ? 'KYC_APPROVED' : 'KYC_REJECTED', { uid, reason: approve ? undefined : reason.slice(0, 300) }, actorEmail)
+  await notifyUser(uid, {
+    title: approve ? 'Identity verified' : 'Verification needs another look',
+    body: approve
+      ? 'Your AfterWorks identity check is complete. You can now apply for paid jobs.'
+      : `Our review team could not verify your document.${reason ? ` Reason: ${reason.slice(0, 200)}` : ''} You can retry from Profile → Verification.`,
+    tone: approve ? 'success' : 'warning',
+    link: approve ? '/jobs' : '/profile',
+  })
+}
+
+// ─── Platform statistics (one cached server read instead of six live listeners) ─
+
+export type PlatformStats = {
+  totals: {
+    users: number
+    kycVerified: number
+    kycPending: number
+    suspended: number
+    activeLast7d: number
+  }
+  jobs: { open: number; paused: number; closed: number; totalSlots: number; filledSlots: number }
+  applications: { total: number; underReview: number; active: number; completed: number; rejected: number }
+  money: { liabilityUsd: number; pendingUsd: number; availableUsd: number; revenueKes: number; paidOutKes: number }
+  payments: { successful: number; pending: number; failed: number; last7dVolumeKes: number }
+  security: { failedLogins24h: number; lockouts: number }
+  maintenance: MaintenanceConfig
+  generatedAt: string
+}
+
+async function safeCount(build: () => admin.firestore.Query, fallbackLimit = 500): Promise<number> {
+  try {
+    // Aggregation count costs one query, not N document reads.
+    const snap = await build().count().get()
+    return snap.data().count
+  } catch {
+    const snap = await build().limit(fallbackLimit).get()
+    return snap.size
+  }
+}
+
+export async function getPlatformStats(): Promise<PlatformStats> {
+  const db = dbOrNull()
+  const maintenance = await getMaintenanceConfigServer()
+  const sevenDaysAgo = new Date(Date.now() - 7 * 86400_000).toISOString()
+
+  if (!db) {
+    return {
+      totals: { users: 0, kycVerified: 0, kycPending: 0, suspended: 0, activeLast7d: 0 },
+      jobs: { open: 0, paused: 0, closed: 0, totalSlots: 0, filledSlots: 0 },
+      applications: { total: 0, underReview: 0, active: 0, completed: 0, rejected: 0 },
+      money: { liabilityUsd: 0, pendingUsd: 0, availableUsd: 0, revenueKes: 0, paidOutKes: 0 },
+      payments: { successful: 0, pending: 0, failed: 0, last7dVolumeKes: 0 },
+      security: { failedLogins24h: 0, lockouts: 0 },
+      maintenance,
+      generatedAt: new Date().toISOString(),
+    }
+  }
+
+  const users = db.collection('users')
+  const jobsCol = db.collection('jobs')
+  const appsCol = db.collection('applications')
+  const txCol = db.collection('transactions')
+  const logsCol = db.collection('admin_logs')
+
+  const [
+    totalUsers,
+    verified,
+    suspended,
+    jobsOpen,
+    jobsPaused,
+    jobsClosed,
+    appsTotal,
+    appsReview,
+    appsCompleted,
+    appsRejected,
+    txSuccess,
+    txPending,
+    txFailed,
+    failedLogins,
+  ] = await Promise.all([
+    safeCount(() => users),
+    safeCount(() => users.where('kycVerified', '==', true)),
+    safeCount(() => users.where('accountState', 'in', ['suspended', 'banned'])),
+    safeCount(() => jobsCol.where('status', '==', 'open')),
+    safeCount(() => jobsCol.where('status', '==', 'paused')),
+    safeCount(() => jobsCol.where('status', '==', 'closed')),
+    safeCount(() => appsCol),
+    safeCount(() => appsCol.where('status', '==', 'under_review')),
+    safeCount(() => appsCol.where('status', '==', 'completed')),
+    safeCount(() => appsCol.where('status', 'in', ['rejected', 'failed_qa'])),
+    safeCount(() => txCol.where('status', '==', 'success')),
+    safeCount(() => txCol.where('status', '==', 'pending')),
+    safeCount(() => txCol.where('status', '==', 'failed')),
+    safeCount(() => logsCol.where('action', '==', 'ADMIN_LOGIN_FAILED')),
+  ])
+
+  // Liability needs the actual amounts; bounded + projected read (only two numeric fields).
+  let pendingUsd = 0
+  let availableUsd = 0
+  let revenueKes = 0
+  let last7dVolumeKes = 0
+  let paidOutKes = 0
+  let filledSlots = 0
+  let totalSlots = 0
+  try {
+    const wallets = await users.select('wallet').limit(1000).get()
+    wallets.forEach((d) => {
+      const w = ((d.data() ?? {}).wallet ?? {}) as Record<string, unknown>
+      pendingUsd += Number(w.pendingUsd ?? 0) || 0
+      availableUsd += Number(w.availableUsd ?? 0) || 0
+    })
+  } catch (err) {
+    console.warn('[FirestoreAdmin] wallet aggregation skipped:', err)
+  }
+  try {
+    const jobsSnap = await jobsCol.select('status', 'capacity', 'slotsRemaining').limit(200).get()
+    jobsSnap.forEach((d) => {
+      const data = (d.data() ?? {}) as Record<string, unknown>
+      const capacity = Number(data.capacity ?? 0) || 0
+      const remaining = Number(data.slotsRemaining ?? 0) || 0
+      totalSlots += capacity
+      if (data.status === 'open') filledSlots += Math.max(0, capacity - remaining)
+    })
+  } catch (err) {
+    console.warn('[FirestoreAdmin] job slot aggregation skipped:', err)
+  }
+  try {
+    const txSnap = await txCol.where('status', '==', 'success').select('amountKes', 'createdAt', 'type').limit(500).get()
+    txSnap.forEach((d) => {
+      const data = (d.data() ?? {}) as Record<string, unknown>
+      const amount = Number(data.amountKes ?? 0) || 0
+      revenueKes += amount
+      if (String(data.createdAt ?? '') >= sevenDaysAgo) last7dVolumeKes += amount
+    })
+  } catch (err) {
+    console.warn('[FirestoreAdmin] revenue aggregation skipped:', err)
+  }
+  try {
+    const payouts = await db
+      .collection('wallet_ledger')
+      .where('kind', '==', 'earning')
+      .select('amountUsd')
+      .limit(1000)
+      .get()
+    payouts.forEach((d) => {
+      paidOutKes += (Number(((d.data() ?? {}).amountUsd as number) ?? 0) || 0) * 129
+    })
+  } catch (err) {
+    console.warn('[FirestoreAdmin] payout aggregation skipped:', err)
+  }
+
+  return {
+    totals: {
+      users: totalUsers,
+      kycVerified: verified,
+      kycPending: Math.max(0, totalUsers - verified - suspended),
+      suspended,
+      activeLast7d: 0,
+    },
+    jobs: { open: jobsOpen, paused: jobsPaused, closed: jobsClosed, totalSlots, filledSlots },
+    applications: {
+      total: appsTotal,
+      underReview: appsReview,
+      active: Math.max(0, appsTotal - appsCompleted - appsRejected),
+      completed: appsCompleted,
+      rejected: appsRejected,
+    },
+    money: {
+      pendingUsd: Math.round(pendingUsd * 100) / 100,
+      availableUsd: Math.round(availableUsd * 100) / 100,
+      liabilityUsd: Math.round((pendingUsd + availableUsd) * 100) / 100,
+      revenueKes: Math.round(revenueKes),
+      paidOutKes: Math.round(paidOutKes),
+    },
+    payments: { successful: txSuccess, pending: txPending, failed: txFailed, last7dVolumeKes: Math.round(last7dVolumeKes) },
+    security: { failedLogins24h: failedLogins, lockouts: 0 },
+    maintenance,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+// ─── Jobs catalogue ──────────────────────────────────────────────────────────
+
+const JOB_CATEGORIES = ['Data Entry', 'Transcription', 'Image Labeling', 'Content Review', 'Translation', 'Research'] as const
+const JOB_STATUSES = ['open', 'paused', 'closed'] as const
+
+export type AdminJobInput = {
+  id?: string
+  title: string
+  category: string
+  description: string
+  responsibilities: string[]
+  payAmountUsd: number
+  estimatedMinutes: number
+  capacity: number
+  slotsRemaining?: number
+  trainingRequired: boolean
+  requiresVerified: boolean
+  status: string
+  closesAt?: string
+}
+
+function sanitizeJob(input: AdminJobInput, existing?: Record<string, unknown> | null) {
+  const title = String(input.title ?? '').replace(/\s+/g, ' ').trim().slice(0, 120)
+  if (!title) throw new Error('Job title is required.')
+  const capacity = Math.max(1, Math.min(100_000, Math.round(Number(input.capacity) || 0)))
+  const requested = Math.round(Number(input.slotsRemaining ?? capacity))
+  const slots = Math.max(0, Math.min(capacity, Number.isFinite(requested) ? requested : capacity))
+
+  return {
+    title,
+    category: (JOB_CATEGORIES as readonly string[]).includes(input.category) ? input.category : 'Data Entry',
+    description: String(input.description ?? '').trim().slice(0, 4000),
+    responsibilities: (Array.isArray(input.responsibilities) ? input.responsibilities : [])
+      .map((line) => String(line).replace(/\s+/g, ' ').trim().slice(0, 300))
+      .filter(Boolean)
+      .slice(0, 12),
+    payAmountUsd: Math.max(0.5, Math.min(10_000, Math.round(Number(input.payAmountUsd) * 100) / 100 || 0)),
+    estimatedMinutes: Math.max(5, Math.min(10_080, Math.round(Number(input.estimatedMinutes) || 60))),
+    capacity,
+    slotsRemaining: slots,
+    trainingRequired: input.trainingRequired === true,
+    requiresVerified: input.requiresVerified !== false,
+    status: (JOB_STATUSES as readonly string[]).includes(input.status) ? input.status : 'open',
+    closesAt: input.closesAt || (existing?.closesAt as string) || new Date(Date.now() + 7 * 86400_000).toISOString(),
+    postedAgo: (existing?.postedAgo as string) || 'just now',
+    updatedAt: new Date().toISOString(),
+  }
+}
+
+export async function upsertJob(input: AdminJobInput, actorEmail: string): Promise<{ id: string }> {
+  const db = adminDb()
+  const slug =
+    (input.id && input.id.trim()) ||
+    `job-${input.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').slice(0, 42)}`
+  const id = slug.slice(0, 80)
+
+  const ref = db.collection('jobs').doc(id)
+  const existingSnap = await ref.get()
+  const payload = sanitizeJob(input, existingSnap.exists ? (existingSnap.data() ?? {}) : null)
+
+  await ref.set({ id, ...payload, updatedBy: actorEmail }, { merge: true })
+  await createAuditEntry(existingSnap.exists ? 'JOB_UPDATED' : 'JOB_CREATED', { jobId: id, title: payload.title, status: payload.status }, actorEmail)
+  return { id }
+}
+
+export async function setJobStatus(jobId: string, status: string, actorEmail: string): Promise<void> {
+  if (!(JOB_STATUSES as readonly string[]).includes(status)) throw new Error('Unknown job status.')
+  const db = adminDb()
+  await db.collection('jobs').doc(jobId).set({ status, updatedAt: new Date().toISOString(), updatedBy: actorEmail }, { merge: true })
+  await createAuditEntry('JOB_STATUS_CHANGED', { jobId, status }, actorEmail)
+}
+
+export async function deleteJob(jobId: string, actorEmail: string): Promise<void> {
+  const db = adminDb()
+  const openApps = await db.collection('applications').where('jobId', '==', jobId).where('status', 'in', ['under_review', 'approved', 'in_progress']).limit(1).get()
+  if (!openApps.empty) {
+    throw new Error('This job still has active applications. Pause it instead of deleting.')
+  }
+  await db.collection('jobs').doc(jobId).delete()
+  await createAuditEntry('JOB_DELETED', { jobId }, actorEmail)
+}
+
+// ─── Applications: authoritative lifecycle (replaces browser-side state edits) ─
+
+export type ApplicationStatusValue =
+  | 'under_review'
+  | 'approved'
+  | 'rejected'
+  | 'in_progress'
+  | 'submitted_for_review'
+  | 'revision_requested'
+  | 'completed'
+  | 'failed_qa'
+
+const TRANSITIONS: Record<ApplicationStatusValue, ApplicationStatusValue[]> = {
+  under_review: ['approved', 'rejected'],
+  approved: ['in_progress', 'revision_requested', 'rejected'],
+  in_progress: ['submitted_for_review', 'revision_requested', 'rejected'],
+  submitted_for_review: ['completed', 'revision_requested', 'failed_qa'],
+  revision_requested: ['submitted_for_review', 'in_progress', 'failed_qa'],
+  completed: [],
+  rejected: [],
+  failed_qa: ['revision_requested'],
+}
+
+export const APPLICATION_TRANSITIONS = TRANSITIONS
+
+export class TransitionError extends Error {
+  constructor(message: string, readonly status: number = 400) {
+    super(message)
+    this.name = 'TransitionError'
+  }
+}
+
+/**
+ * Worker-side apply. Everything that gates an application (KYC, account state, slot capacity,
+ * duplicate applications) is checked *inside a Firestore transaction* so two devices clicking
+ * at once cannot oversubscribe a job or double-credit a worker.
+ */
+export async function createApplicationServer(uid: string, jobId: string): Promise<{ applicationId: string }> {
+  const db = adminDb()
+  const [userSnap, jobSnap] = await Promise.all([db.collection('users').doc(uid).get(), db.collection('jobs').doc(jobId).get()])
+
+  const user = (userSnap.data() ?? {}) as Record<string, unknown>
+  if (!userSnap.exists) throw new TransitionError('Profile not found. Please complete sign-up first.', 409)
+  const state = String(user.accountState ?? 'active')
+  if (state === 'suspended') throw new TransitionError('Your account is suspended. Contact support to appeal.', 403)
+  if (state === 'banned') throw new TransitionError('This account is not eligible for new applications.', 403)
+  if (user.kycVerified !== true) throw new TransitionError('Complete identity verification before applying for paid work.', 403)
+
+  if (!jobSnap.exists) throw new TransitionError('That job is no longer listed.', 404)
+  const job = (jobSnap.data() ?? {}) as Record<string, unknown>
+  if (job.status !== 'open') throw new TransitionError('This job is no longer open.', 409)
+  if (job.requiresVerified !== false && user.kycVerified !== true) throw new TransitionError('This job requires a verified profile.', 403)
+  if (job.trainingRequired === true) {
+    const paid = Array.isArray(user.paidTrainings) ? (user.paidTrainings as string[]) : []
+    if (!paid.includes(jobId)) throw new TransitionError('Finish the required training for this job before applying.', 403)
+  }
+  const closesAt = job.closesAt as string | undefined
+  if (closesAt && new Date(closesAt).getTime() < Date.now()) throw new TransitionError('The application window for this job has closed.', 409)
+
+  const applicationId = `app-${uid.slice(-6)}-${Date.now().toString(36)}`
+  const now = new Date().toISOString()
+  const appRef = db.collection('applications').doc(applicationId)
+
+  await db.runTransaction(async (tx) => {
+    const [jobTx, dupTx] = await Promise.all([tx.get(jobSnap.ref), tx.get(appRef)])
+    const jobData = (jobTx.data() ?? {}) as Record<string, unknown>
+    const slots = Number(jobData.slotsRemaining ?? 0)
+    if (jobData.status !== 'open') throw new TransitionError('This job closed while you were applying.', 409)
+    if (slots <= 0) throw new TransitionError('All slots for this job are full.', 409)
+
+    const duplicates = await tx.get(
+      db.collection('applications').where('jobId', '==', jobId).where('workerUid', '==', uid).limit(1),
+    )
+    if (!duplicates.empty) throw new TransitionError('You have already applied to this job.', 409)
+    void dupTx
+
+    // Slots are reserved on approval (spec 4.3), so applying never blocks other workers.
+    tx.set(appRef, {
+      id: applicationId,
+      jobId,
+      jobTitle: jobData.title ?? '',
+      workerUid: uid,
+      workerEmail: user.email ?? '',
+      payAmountUsd: jobData.payAmountUsd ?? 0,
+      status: 'under_review',
+      appliedAt: now,
+      reviewExpiresAt: new Date(Date.now() + 48 * 3600_000).toISOString(),
+      history: [{ status: 'under_review', at: now }],
+      source: 'api',
+    })
+  })
+
+  await notifyUser(uid, {
+    title: 'Application received',
+    body: `We are reviewing your application for “${String(job.title ?? 'this job')}”. Expect a decision within 48 hours.`,
+    tone: 'info',
+    link: '/applications',
+  })
+
+  return { applicationId }
+}
+
+export async function withdrawApplicationServer(uid: string, applicationId: string): Promise<void> {
+  const db = adminDb()
+  const ref = db.collection('applications').doc(applicationId)
+  const snap = await ref.get()
+  if (!snap.exists) throw new TransitionError('Application not found.', 404)
+  const data = (snap.data() ?? {}) as Record<string, unknown>
+  if (data.workerUid !== uid) throw new TransitionError('You can only withdraw your own applications.', 403)
+  const status = String(data.status)
+  if (status !== 'under_review' && status !== 'approved') {
+    throw new TransitionError(`Work already ${status.replace(/_/g, ' ')} cannot be withdrawn. Contact support.`, 409)
+  }
+  await ref.set({ status: 'withdrawn', history: admin.firestore.FieldValue.arrayUnion({ status: 'withdrawn', at: new Date().toISOString() }), updatedAt: new Date().toISOString() }, { merge: true })
+  await createAuditEntry('APPLICATION_WITHDRAWN', { applicationId, uid }, String(data.workerEmail ?? uid))
+}
+
+/**
+ * Admin QA transition. Writes the status, the ledger side-effects (pending earnings on
+ * completion, slot release on rejection after approval) and a worker notification atomically
+ * enough for a prototype, and is idempotent: re-running the same transition is a no-op.
+ */
+export async function transitionApplicationAdmin(input: {
+  applicationId: string
+  to: ApplicationStatusValue
+  actorEmail: string
+  note?: string
+  reason?: string
+}): Promise<{ status: ApplicationStatusValue; creditedUsd: number }> {
+  const db = adminDb()
+  const ref = db.collection('applications').doc(input.applicationId)
+  const snap = await ref.get()
+  if (!snap.exists) throw new TransitionError('Application not found.', 404)
+
+  const app = (snap.data() ?? {}) as Record<string, unknown>
+  const from = String(app.status) as ApplicationStatusValue
+  const to = input.to
+
+  if (from === to) return { status: to, creditedUsd: 0 }
+  if (!(TRANSITIONS[from] ?? []).includes(to)) {
+    throw new TransitionError(`Cannot move an application from ${from.replace(/_/g, ' ')} to ${to.replace(/_/g, ' ')}.`, 409)
+  }
+  if ((to === 'rejected' || to === 'failed_qa' || to === 'revision_requested') && !input.reason && !input.note) {
+    throw new TransitionError('A short reason is required so the worker knows what to fix.', 400)
+  }
+
+  const now = new Date().toISOString()
+  const jobId = String(app.jobId ?? '')
+  const uid = String(app.workerUid ?? '')
+  const payUsd = Number(app.payAmountUsd ?? 0) || 0
+  let creditedUsd = 0
+
+  const update: Record<string, unknown> = {
+    status: to,
+    updatedAt: now,
+    handledBy: input.actorEmail,
+    history: admin.firestore.FieldValue.arrayUnion({ status: to, at: now, by: input.actorEmail }),
+  }
+  if (input.note) update.revisionNote = String(input.note).slice(0, 500)
+  if (input.reason) update.rejectionReason = String(input.reason).slice(0, 500)
+
+  await ref.set(update, { merge: true })
+
+  if (to === 'completed' && uid && payUsd > 0) {
+    creditedUsd = payUsd
+    const ledgerId = `wd_${input.applicationId}`
+    const ledgerRef = db.collection('wallet_ledger').doc(ledgerId)
+    const already = await ledgerRef.get()
+    if (already.exists) {
+      creditedUsd = 0 // idempotent replay — never double-pay
+    } else {
+      const userRef = db.collection('users').doc(uid)
+      await db.runTransaction(async (tx) => {
+        const userSnapTx = await tx.get(userRef)
+        const userData = (userSnapTx.data() ?? {}) as Record<string, unknown>
+        const wallet = (userData.wallet ?? {}) as Record<string, unknown>
+        const nextPending = Math.round(((Number(wallet.pendingUsd ?? 0) || 0) + payUsd) * 100) / 100
+        tx.set(
+          userRef,
+          {
+            'wallet.pendingUsd': nextPending,
+            jobsCompleted: (Number(userData.jobsCompleted ?? 0) || 0) + 1,
+            qualityScore: Math.min(100, (Number(userData.qualityScore ?? 100) || 100) + 1),
+            updatedAt: now,
+          },
+          { merge: true },
+        )
+        tx.set(ledgerRef, {
+          id: ledgerId,
+          uid,
+          kind: 'earning',
+          amountUsd: payUsd,
+          currency: 'USD',
+          applicationId: input.applicationId,
+          jobId,
+          status: 'pending',
+          clearedAt: new Date(Date.now() + 72 * 3600_000).toISOString(),
+          createdAt: now,
+          createdBy: input.actorEmail,
+        })
+      })
+    }
+  }
+
+  if ((to === 'rejected' || to === 'failed_qa') && jobId && (from === 'approved' || from === 'in_progress' || from === 'submitted_for_review')) {
+    await db.collection('jobs').doc(jobId).set({ slotsRemaining: admin.firestore.FieldValue.increment(1) }, { merge: true })
+  }
+
+  if (to === 'approved' && jobId) {
+    await db
+      .collection('jobs')
+      .doc(jobId)
+      .set({ slotsRemaining: admin.firestore.FieldValue.increment(-1), applicationsApproved: admin.firestore.FieldValue.increment(1) }, { merge: true })
+  }
+
+  if (uid) {
+    const copy: Record<string, { title: string; body: string; tone: 'success' | 'info' | 'warning' | 'danger'; link: string }> = {
+      approved: { title: 'Application approved', body: 'You have been accepted for this job. Start the work whenever you are ready — your slot is reserved.', tone: 'success', link: '/applications' },
+      rejected: { title: 'Application not selected', body: `This time we went with other workers.${input.reason ? ` Note: ${String(input.reason).slice(0, 180)}` : ''}`, tone: 'warning', link: '/jobs' },
+      completed: { title: 'Work approved — payment issued', body: `${payUsd.toFixed(2)} USD is now in your pending balance and clears within 72 hours.`, tone: 'success', link: '/profile' },
+      revision_requested: { title: 'Revision requested', body: `${input.note ? String(input.note).slice(0, 180) : 'A few items need fixing.'} Resubmit from the Applications page.`, tone: 'warning', link: '/applications' },
+      failed_qa: { title: 'Submission failed QA', body: input.reason ? String(input.reason).slice(0, 180) : 'The submission did not meet the quality bar.', tone: 'danger', link: '/applications' },
+      in_progress: { title: 'Work window opened', body: 'Your submission window is open. Upload your work before the deadline.', tone: 'info', link: '/applications' },
+    }
+    const message = copy[to]
+    if (message) await notifyUser(uid, message)
+  }
+
+  await createAuditEntry(
+    'APPLICATION_STATUS_CHANGED',
+    { applicationId: input.applicationId, from, to, jobId, creditedUsd, reason: input.reason?.slice(0, 200) },
+    input.actorEmail,
+  )
+
+  return { status: to, creditedUsd }
+}
+
+// ─── Worker notifications (real in-app inbox, owner-scoped) ────────────────────
+
+export type NotificationInput = {
+  title: string
+  body: string
+  tone?: 'success' | 'info' | 'warning' | 'danger'
+  link?: string
+}
+
+export async function notifyUser(uid: string, input: NotificationInput): Promise<void> {
+  const db = dbOrNull()
+  if (!db) return
+  try {
+    const id = `ntf_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`
+    await db.collection('notifications').doc(id).set({
+      id,
+      uid,
+      title: String(input.title ?? '').slice(0, 90),
+      body: String(input.body ?? '').slice(0, 500),
+      tone: input.tone ?? 'info',
+      link: input.link ? String(input.link).slice(0, 120) : '',
+      read: false,
+      createdAt: new Date().toISOString(),
+    })
+  } catch (err) {
+    console.warn('[FirestoreAdmin] notifyUser skipped:', err instanceof Error ? err.message : err)
+  }
+}
+
+// ─── Audit log reads ───────────────────────────────────────────────────────────
+
+export async function listAuditLogs(opts: { limit?: number; action?: string; search?: string } = {}): Promise<AdminAuditRow[]> {
+  const db = dbOrNull()
+  if (!db) return []
+  const size = Math.min(200, Math.max(10, opts.limit ?? 60))
+  try {
+    let q: admin.firestore.Query = db.collection('admin_logs')
+    if (opts.action && opts.action !== 'all') q = q.where('action', '==', opts.action)
+    q = q.orderBy('timestamp', 'desc').limit(size)
+    const snap = await q.get()
+    let rows = snap.docs.map((d) => d.data() as AdminAuditRow)
+    if (opts.search) {
+      const needle = opts.search.toLowerCase()
+      rows = rows.filter((row) => JSON.stringify(row).toLowerCase().includes(needle))
+    }
+    return rows
+  } catch (err) {
+    console.warn('[FirestoreAdmin] listAuditLogs fell back to unordered read:', err)
+    const snap = await db.collection('admin_logs').limit(size).get()
+    const rows = snap.docs.map((d) => d.data() as AdminAuditRow)
+    rows.sort((a, b) => String(b.timestamp).localeCompare(String(a.timestamp)))
+    return opts.search ? rows.filter((r) => JSON.stringify(r).toLowerCase().includes(opts.search!.toLowerCase())) : rows
+  }
+}
+
+export type AdminAuditRow = {
+  id: string
+  action: string
+  details?: Record<string, unknown>
+  actorEmail?: string
+  timestamp: string
+  serverWritten?: boolean
+}
+
+// ─── Paged reads for the console ──────────────────────────────────────────────
+
+export type ApplicationRow = {
+  id: string
+  jobId: string
+  jobTitle: string
+  workerUid: string
+  workerEmail: string
+  status: string
+  payAmountUsd: number
+  appliedAt: string
+  updatedAt?: string
+  reviewExpiresAt?: string
+  rejectionReason?: string
+  revisionNote?: string
+  handledBy?: string
+  history: { status: string; at: string; by?: string }[]
+  overdue: boolean
+}
+
+export type ApplicationPage = {
+  rows: ApplicationRow[]
+  nextCursor: string | null
+  hasMore: boolean
+  pageSize: number
+  degraded?: string
+}
+
+export async function listApplicationsPage(opts: {
+  pageSize?: number
+  cursor?: string | null
+  status?: string
+  search?: string
+}): Promise<ApplicationPage> {
+  const db = dbOrNull()
+  const pageSize = Math.min(50, Math.max(5, opts.pageSize ?? 25))
+  if (!db) return { rows: [], nextCursor: null, hasMore: false, pageSize, degraded: 'Admin SDK unavailable' }
+
+  const nowIso = new Date().toISOString()
+  const mapDoc = (d: admin.firestore.QueryDocumentSnapshot): ApplicationRow => {
+    const data = (d.data() ?? {}) as Record<string, unknown>
+    const reviewExpiresAt = (data.reviewExpiresAt as string) ?? undefined
+    return {
+      id: d.id,
+      jobId: String(data.jobId ?? ''),
+      jobTitle: String(data.jobTitle ?? ''),
+      workerUid: String(data.workerUid ?? ''),
+      workerEmail: String(data.workerEmail ?? ''),
+      status: String(data.status ?? 'under_review'),
+      payAmountUsd: Number(data.payAmountUsd ?? 0) || 0,
+      appliedAt: String(data.appliedAt ?? ''),
+      updatedAt: (data.updatedAt as string) ?? undefined,
+      reviewExpiresAt,
+      rejectionReason: (data.rejectionReason as string) ?? undefined,
+      revisionNote: (data.revisionNote as string) ?? undefined,
+      handledBy: (data.handledBy as string) ?? undefined,
+      history: Array.isArray(data.history) ? (data.history as ApplicationRow['history']) : [],
+      overdue: Boolean(reviewExpiresAt && String(data.status) === 'under_review' && reviewExpiresAt < nowIso),
+    }
+  }
+
+  try {
+    let q: admin.firestore.Query = db.collection('applications')
+    const status = (opts.status ?? 'all').trim()
+    if (status && status !== 'all') q = q.where('status', '==', status)
+    q = q.orderBy(admin.firestore.FieldPath.documentId(), 'desc').limit(pageSize + 1)
+    if (opts.cursor) q = q.startAfter(opts.cursor)
+    const snap = await q.get()
+    let rows = snap.docs.slice(0, pageSize).map(mapDoc)
+    if (opts.search) {
+      const needle = opts.search.toLowerCase()
+      rows = rows.filter((r) => `${r.jobTitle} ${r.workerEmail} ${r.id}`.toLowerCase().includes(needle))
+    }
+    return {
+      rows,
+      nextCursor: snap.size > pageSize ? snap.docs[Math.min(pageSize, snap.size - 1)].id : null,
+      hasMore: snap.size > pageSize,
+      pageSize,
+    }
+  } catch (err) {
+    console.warn('[FirestoreAdmin] listApplicationsPage degraded:', err)
+    try {
+      const snap = await db.collection('applications').limit(pageSize + 1).get()
+      const rows = snap.docs.slice(0, pageSize).map(mapDoc)
+      return { rows, nextCursor: null, hasMore: snap.size > pageSize, pageSize, degraded: 'Unordered fallback read.' }
+    } catch (fallbackErr) {
+      console.error('[FirestoreAdmin] listApplicationsPage failed:', fallbackErr)
+      return { rows: [], nextCursor: null, hasMore: false, pageSize, degraded: 'Applications feed unavailable.' }
+    }
+  }
+}
+
+export type JobRow = {
+  id: string
+  title: string
+  category: string
+  description: string
+  responsibilities: string[]
+  payAmountUsd: number
+  estimatedMinutes: number
+  capacity: number
+  slotsRemaining: number
+  trainingRequired: boolean
+  requiresVerified: boolean
+  status: string
+  closesAt: string
+  postedAgo: string
+  updatedAt?: string
+}
+
+/**
+ * Server-side jobs read for the console. Public job browsing keeps using the client listener
+ * (it is genuinely public data); the console gets a bounded, projected page instead of streaming
+ * the whole catalogue plus its internal counters.
+ */
+export async function listJobsServer(opts: { status?: string; pageSize?: number } = {}): Promise<JobRow[]> {
+  const db = dbOrNull()
+  if (!db) return []
+  try {
+    let q: admin.firestore.Query = db.collection('jobs')
+    if (opts.status && opts.status !== 'all') q = q.where('status', '==', opts.status)
+    const snap = await q.limit(Math.min(200, Math.max(10, opts.pageSize ?? 100))).get()
+    return snap.docs.map((d) => {
+      const data = (d.data() ?? {}) as Record<string, unknown>
+      return {
+        id: d.id,
+        title: String(data.title ?? ''),
+        category: String(data.category ?? 'Data Entry'),
+        description: String(data.description ?? ''),
+        responsibilities: Array.isArray(data.responsibilities) ? (data.responsibilities as string[]).map(String) : [],
+        payAmountUsd: Number(data.payAmountUsd ?? 0) || 0,
+        estimatedMinutes: Number(data.estimatedMinutes ?? 0) || 0,
+        capacity: Number(data.capacity ?? 0) || 0,
+        slotsRemaining: Number(data.slotsRemaining ?? 0) || 0,
+        trainingRequired: data.trainingRequired === true,
+        requiresVerified: data.requiresVerified !== false,
+        status: String(data.status ?? 'open'),
+        closesAt: String(data.closesAt ?? ''),
+        postedAgo: String(data.postedAgo ?? ''),
+        updatedAt: (data.updatedAt as string) ?? undefined,
+      }
+    })
+  } catch (err) {
+    console.warn('[FirestoreAdmin] listJobsServer failed:', err)
+    return []
+  }
+}
+
+/** Recent worker activity for the console ticker (real data, not a decorative list). */
+export async function recentActivity(limit = 12): Promise<{ id: string; label: string; at: string; tone: string }[]> {
+  const db = dbOrNull()
+  if (!db) return []
+  try {
+    const snap = await db.collection('admin_logs').orderBy('timestamp', 'desc').limit(limit).get()
+    return snap.docs.map((d) => {
+      const data = (d.data() ?? {}) as Record<string, unknown>
+      const action = String(data.action ?? 'EVENT')
+      const details = (data.details ?? {}) as Record<string, unknown>
+      const hint = String(details.jobTitle ?? details.jobId ?? details.uid ?? details.email ?? '')
+      return {
+        id: d.id,
+        label: `${action.replace(/_/g, ' ').toLowerCase()}${hint ? ` · ${hint}` : ''}`,
+        at: String(data.timestamp ?? ''),
+        tone: /FAIL|REJECT|BAN|SUSPEND/i.test(action) ? 'danger' : /APPROV|COMPLET|ENABLE/i.test(action) ? 'success' : 'info',
+      }
+    })
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Worker-side work submission. Ownership and the legal source state are re-checked server-side:
+ * the client cannot move its own application into `submitted_for_review` from a state where that
+ * is not allowed, and cannot submit against someone else's application.
+ */
+export async function submitWorkServer(uid: string, applicationId: string, note: string): Promise<{ status: 'submitted_for_review' }> {
+  const db = adminDb()
+  const ref = db.collection('applications').doc(applicationId)
+
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref)
+    if (!snap.exists) throw new TransitionError('Application not found.', 404)
+    const data = (snap.data() ?? {}) as Record<string, unknown>
+    if (data.workerUid !== uid) throw new TransitionError('You can only submit work for your own applications.', 403)
+    const status = String(data.status)
+    if (status !== 'in_progress' && status !== 'revision_requested') {
+      throw new TransitionError(`Work cannot be submitted from a "${status.replace(/_/g, ' ')}" application.`, 409)
+    }
+    const now = new Date().toISOString()
+    tx.set(
+      ref,
+      {
+        status: 'submitted_for_review',
+        workSubmittedAt: now,
+        workerNote: String(note ?? '').slice(0, 1000),
+        updatedAt: now,
+        history: admin.firestore.FieldValue.arrayUnion({ status: 'submitted_for_review', at: now, by: 'worker' }),
+      },
+      { merge: true },
+    )
+    return { status: 'submitted_for_review' } as const
+  })
+}
+
+/** Clears the "read" flag storm: mark one or all notifications read for their owner. */
+export async function markNotificationsRead(uid: string, all = true, ids: string[] = []): Promise<number> {
+  const db = dbOrNull()
+  if (!db) return 0
+  try {
+    let q = db.collection('notifications').where('uid', '==', uid).where('read', '==', false)
+    if (!all) {
+      if (!ids.length) return 0
+      q = db.collection('notifications').where('uid', '==', uid).where(admin.firestore.FieldPath.documentId(), 'in', ids.slice(0, 20))
+    }
+    const snap = await q.limit(50).get()
+    if (snap.empty) return 0
+    const batch = db.batch()
+    snap.docs.forEach((d) => batch.set(d.ref, { read: true, readAt: new Date().toISOString() }, { merge: true }))
+    await batch.commit()
+    return snap.size
+  } catch (err) {
+    console.warn('[FirestoreAdmin] markNotificationsRead skipped:', err instanceof Error ? err.message : err)
+    return 0
+  }
+}
+
+export async function listNotifications(uid: string, limit = 20): Promise<NotificationRow[]> {
+  const db = dbOrNull()
+  if (!db) return []
+  try {
+    const snap = await db.collection('notifications').where('uid', '==', uid).orderBy('createdAt', 'desc').limit(Math.min(50, Math.max(1, limit))).get()
+    return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<NotificationRow, 'id'>) }))
+  } catch (err) {
+    console.warn('[FirestoreAdmin] listNotifications fell back to unordered read:', err)
+    try {
+      const snap = await db.collection('notifications').where('uid', '==', uid).limit(Math.min(50, limit)).get()
+      const rows = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<NotificationRow, 'id'>) }))
+      return rows.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
+    } catch {
+      return []
+    }
+  }
+}
+
+export type NotificationRow = {
+  id: string
+  uid: string
+  title: string
+  body: string
+  tone?: 'success' | 'info' | 'warning' | 'danger'
+  link?: string
+  read?: boolean
+  createdAt: string
 }

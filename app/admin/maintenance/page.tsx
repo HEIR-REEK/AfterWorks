@@ -1,313 +1,535 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import Link from 'next/link'
 import {
   AlertTriangle,
+  BellRing,
   CheckCircle2,
-  Clock,
+  Clock3,
+  Eye,
   Info,
   Mail,
+  MonitorPlay,
+  Power,
   RefreshCw,
   Save,
-  Shield,
-  Sparkles,
+  ShieldCheck,
   Wrench,
   Zap,
 } from 'lucide-react'
-import {
-  subscribeToMaintenanceConfig,
-  updateMaintenanceConfig,
-  createAdminAuditLog,
-  DEFAULT_MAINTENANCE_CONFIG,
-  type MaintenanceConfig,
-} from '@/lib/firestore'
+import { adminApi, useAdminSession } from '@/lib/admin'
+import { AdminCard, Field, LiveDot, useToasts, inputClass } from '@/components/admin-ui'
+import { MaintenanceScreen } from '@/components/maintenance-screen'
 import { Button } from '@/components/ui/button'
-import { useAuth } from '@/components/firebase-auth-provider'
+import { StatusBadge } from '@/components/status-badge'
 import { cn } from '@/lib/utils'
+import { site } from '@/lib/site'
+import type { MaintenanceConfig, MaintenanceService, MaintenanceView } from '@/lib/maintenance-shared'
+import { INERT_MAINTENANCE_VIEW } from '@/lib/maintenance-shared'
+
+/**
+ * Maintenance mode control.
+ *
+ * Three things changed versus the previous version of this page:
+ *  • It saves through `PUT /api/admin/maintenance` instead of writing the Firestore document from the
+ *    browser, so the change is validated, permission-checked and audited in one place.
+ *  • A blackout now means something: the middleware answers gated traffic with 503 + Retry-After.
+ *    "Banner" mode exists for the common case where the site is usable but degraded, and does not
+ *    lock workers out of jobs they are mid-way through.
+ *  • Windows can be scheduled and auto-resolve on the ETA, so an upgrade at 02:00 does not require
+ *    someone to remember to switch it back off at 04:00.
+ */
+
+const SERVICE_LABELS: Record<string, string> = {
+  jobs: 'Jobs & applications',
+  wallet: 'Wallet & payouts',
+  kyc: 'ID verification',
+  training: 'Training & payments',
+}
+
+const SERVICE_STATUSES = ['operational', 'degraded', 'maintenance', 'outage'] as const
 
 export default function AdminMaintenancePage() {
-  const { user } = useAuth()
-  const [config, setConfig] = useState<MaintenanceConfig>(DEFAULT_MAINTENANCE_CONFIG)
+  const session = useAdminSession()
+  const { push, toasts } = useToasts()
 
-  // Local form editing states
+  const [config, setConfig] = useState<MaintenanceConfig | null>(null)
+  const [status, setStatus] = useState<{ active: boolean; bannerOnly: boolean; pending: boolean; retryAfterSec: number } | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [preview, setPreview] = useState(false)
+
+  // Editable copy of the config.
   const [enabled, setEnabled] = useState(false)
+  const [mode, setMode] = useState<'blackout' | 'banner'>('blackout')
   const [title, setTitle] = useState('')
   const [message, setMessage] = useState('')
-  const [estimatedEnd, setEstimatedEnd] = useState<string>('')
+  const [banner, setBanner] = useState('')
+  const [reason, setReason] = useState('scheduled_upgrade')
+  const [estimatedEnd, setEstimatedEnd] = useState('')
+  const [scheduledStart, setScheduledStart] = useState('')
+  const [autoResolve, setAutoResolve] = useState(true)
+  const [allowSignIn, setAllowSignIn] = useState(true)
+  const [contactEmail, setContactEmail] = useState('')
   const [allowedEmailsText, setAllowedEmailsText] = useState('')
-  const [saving, setSaving] = useState(false)
-  const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+  const [services, setServices] = useState<MaintenanceService[]>([])
+
+  const load = useCallback(async () => {
+    try {
+      const data = await adminApi.maintenance()
+      const cfg = data.config
+      setConfig(cfg)
+      setStatus(data.status as typeof status)
+      setEnabled(cfg.enabled)
+      setMode(cfg.mode)
+      setTitle(cfg.title)
+      setMessage(cfg.message)
+      setBanner(cfg.banner)
+      setReason(cfg.reason)
+      setEstimatedEnd(cfg.estimatedEnd ? toLocalInput(cfg.estimatedEnd) : '')
+      setScheduledStart(cfg.scheduledStart ? toLocalInput(cfg.scheduledStart) : '')
+      setAutoResolve(cfg.autoResolve)
+      setAllowSignIn(cfg.allowSignIn)
+      setContactEmail(cfg.contactEmail)
+      setAllowedEmailsText((cfg.allowedEmails ?? []).join('\n'))
+      setServices(cfg.affectedServices ?? [])
+    } catch (err) {
+      push('error', err instanceof Error ? err.message : 'Could not load maintenance settings.')
+    } finally {
+      setLoading(false)
+    }
+  }, [push])
 
   useEffect(() => {
-    const unsub = subscribeToMaintenanceConfig((cfg) => {
-      setConfig(cfg)
-      setEnabled(cfg.enabled)
-      setTitle(cfg.title || DEFAULT_MAINTENANCE_CONFIG.title)
-      setMessage(cfg.message || DEFAULT_MAINTENANCE_CONFIG.message)
-      setEstimatedEnd(
-        cfg.estimatedEnd ? new Date(cfg.estimatedEnd).toISOString().slice(0, 16) : '',
-      )
-      setAllowedEmailsText((cfg.allowedEmails || []).join('\n'))
-    })
-    return () => unsub()
-  }, [])
+    if (session.status === 'authorized') void load()
+  }, [session.status, load])
 
-  const handleSave = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault()
+  const dirty = useMemo(() => {
+    if (!config) return false
+    const emails = parseEmails(allowedEmailsText)
+    return (
+      enabled !== config.enabled ||
+      mode !== config.mode ||
+      title.trim() !== config.title ||
+      message.trim() !== config.message ||
+      banner.trim() !== config.banner ||
+      reason !== config.reason ||
+      toUtc(estimatedEnd) !== config.estimatedEnd ||
+      toUtc(scheduledStart) !== config.scheduledStart ||
+      autoResolve !== config.autoResolve ||
+      allowSignIn !== config.allowSignIn ||
+      contactEmail.trim().toLowerCase() !== (config.contactEmail ?? '') ||
+      emails.join(',') !== (config.allowedEmails ?? []).join(',') ||
+      JSON.stringify(services) !== JSON.stringify(config.affectedServices ?? [])
+    )
+  }, [config, enabled, mode, title, message, banner, reason, estimatedEnd, scheduledStart, autoResolve, allowSignIn, contactEmail, allowedEmailsText, services])
+
+  const previewView: MaintenanceView = useMemo(
+    () => ({
+      ...INERT_MAINTENANCE_VIEW,
+      enabled: true,
+      blocking: enabled && mode === 'blackout',
+      bannerOnly: enabled && mode === 'banner',
+      mode,
+      title: title || INERT_MAINTENANCE_VIEW.title,
+      message: message || '',
+      banner,
+      estimatedEnd: toUtc(estimatedEnd),
+      remainingMs: toUtc(estimatedEnd) ? Math.max(0, new Date(toUtc(estimatedEnd) as string).getTime() - Date.now()) : null,
+      contactEmail: contactEmail || site.supportEmail,
+      services,
+      version: config?.version ?? 0,
+      raw: config ?? INERT_MAINTENANCE_VIEW.raw,
+      unknown: false,
+    }),
+    [enabled, mode, title, message, banner, estimatedEnd, contactEmail, services, config],
+  )
+
+  const save = async () => {
     setSaving(true)
-    setFeedback(null)
-
     try {
-      const allowedEmails = allowedEmailsText
-        .split('\n')
-        .map((e) => e.trim().toLowerCase())
-        .filter(Boolean)
-
-      const updatedPayload: Partial<MaintenanceConfig> = {
+      const result = await adminApi.saveMaintenance({
         enabled,
+        mode,
         title: title.trim(),
         message: message.trim(),
-        estimatedEnd: estimatedEnd ? new Date(estimatedEnd).toISOString() : null,
-        allowedEmails,
-        updatedBy: user?.email || 'Admin',
-      }
-
-      await updateMaintenanceConfig(updatedPayload)
-      await createAdminAuditLog(
-        enabled ? 'ENABLE_MAINTENANCE_MODE' : 'DISABLE_MAINTENANCE_MODE',
-        { ...updatedPayload },
-        user?.email || 'Admin',
-      )
-
-      setFeedback({
-        type: 'success',
-        text: `Maintenance mode ${enabled ? 'ACTIVATED' : 'DEACTIVATED'} and updated successfully.`,
+        banner: banner.trim(),
+        reason: reason as MaintenanceConfig['reason'],
+        estimatedEnd: toUtc(estimatedEnd),
+        scheduledStart: toUtc(scheduledStart),
+        autoResolve,
+        allowSignIn,
+        contactEmail: contactEmail.trim(),
+        allowedEmails: parseEmails(allowedEmailsText),
+        affectedServices: services,
       })
-      setTimeout(() => setFeedback(null), 4000)
+      setConfig(result.config)
+      setStatus(result.effective as typeof status)
+      push(
+        'success',
+        `${enabled ? 'Maintenance saved' : 'Settings saved'}${result.changed?.length ? ` · ${result.changed.length} field${result.changed.length === 1 ? '' : 's'} updated` : ''} · live immediately for all sessions.`,
+      )
     } catch (err) {
-      console.error('Failed to update maintenance config:', err)
-      setFeedback({ type: 'error', text: 'Failed to update maintenance settings.' })
+      push('error', err instanceof Error ? err.message : 'Save failed — nothing was changed.')
     } finally {
       setSaving(false)
     }
   }
 
-  // Quick preset handlers
-  const applyPreset = async (type: '30m' | '2h' | 'off') => {
-    if (type === 'off') {
+  const applyPreset = async (minutes: number | null) => {
+    if (minutes === null) {
       setEnabled(false)
       setEstimatedEnd('')
-    } else {
-      setEnabled(true)
-      const targetDate = new Date()
-      if (type === '30m') targetDate.setMinutes(targetDate.getMinutes() + 30)
-      if (type === '2h') targetDate.setHours(targetDate.getHours() + 2)
-      setEstimatedEnd(targetDate.toISOString().slice(0, 16))
+      setScheduledStart('')
+      return
     }
+    const target = new Date(Date.now() + minutes * 60_000)
+    setEnabled(true)
+    setMode('blackout')
+    setEstimatedEnd(toLocalInput(target.toISOString()))
+    setAutoResolve(true)
   }
 
+  const setServiceStatus = (id: string, next: (typeof SERVICE_STATUSES)[number]) => {
+    setServices((prev) => {
+      const exists = prev.some((s) => s.id === id)
+      const base = exists ? prev : Object.entries(SERVICE_LABELS).map(([key, label]) => ({ id: key, label, status: 'operational' as const }))
+      return base.map((s) => (s.id === id ? { ...s, status: next } : s))
+    })
+  }
+
+  const servicesForPreview = services.length ? services : Object.entries(SERVICE_LABELS).map(([id, label]) => ({ id, label, status: 'operational' as const }))
+
   return (
-    <div className="flex flex-col gap-6 max-w-4xl">
-      {/* Active State Hero Card */}
+    <div className="flex flex-col gap-5">
+      {toasts}
+
+      {/* Hero switch */}
       <div
         className={cn(
-          'flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-2xl border p-5 shadow-sm transition-all',
-          enabled
-            ? 'border-amber-500/40 bg-amber-500/10 text-amber-950 dark:text-amber-200'
-            : 'border-success/30 bg-success/10 text-success-foreground',
+          'flex flex-col gap-4 rounded-2xl border p-4 shadow-sm transition-colors sm:flex-row sm:items-center sm:justify-between sm:p-5',
+          status?.active ? 'border-amber-500/40 bg-amber-500/[0.09]' : status?.bannerOnly ? 'border-warning/40 bg-warning/[0.08]' : 'border-success/30 bg-success/[0.07]',
         )}
       >
         <div className="flex items-start gap-3.5">
-          <div
-            className={cn(
-              'rounded-xl p-2.5 shrink-0',
-              enabled
-                ? 'bg-amber-500/20 text-amber-600 dark:text-amber-400'
-                : 'bg-success/20 text-success',
-            )}
-          >
-            {enabled ? (
-              <Wrench className="size-6 animate-pulse" />
-            ) : (
-              <CheckCircle2 className="size-6" />
-            )}
+          <div className={cn('shrink-0 rounded-xl p-2.5', status?.active ? 'bg-amber-500/20 text-amber-600' : 'bg-success/15 text-success')}>
+            {status?.active ? <Wrench className="size-6 animate-pulse" /> : <CheckCircle2 className="size-6" />}
           </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h2 className="text-base font-bold">
-                {enabled ? 'MAINTENANCE MODE IS CURRENTLY ACTIVE' : 'PLATFORM IS FULLY OPERATIONAL'}
-              </h2>
-              <span
-                className={cn(
-                  'size-2.5 rounded-full',
-                  enabled ? 'bg-amber-500 animate-ping' : 'bg-success',
-                )}
-              />
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="text-base font-semibold tracking-tight sm:text-lg">
+                {status?.active ? 'Blackout window active' : status?.bannerOnly ? 'Banner mode active' : 'Platform fully open'}
+              </h1>
+              {status?.pending && <StatusBadge tone="info">Scheduled, not started</StatusBadge>}
+              {status?.active && <StatusBadge tone="warning">Traffic rejected with 503</StatusBadge>}
             </div>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {enabled
-                ? 'Regular worker traffic is intercepted and redirected to the maintenance screen. Admins and whitelisted emails have full bypass access.'
-                : 'All users can sign in, browse jobs, complete microtasks, and receive payments normally.'}
+            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+              {status?.active
+                ? `Workers see the maintenance screen. Console access and staff bypass stay open${
+                    status.retryAfterSec ? `; clients are told to retry in ${Math.round(status.retryAfterSec / 60)} min` : ''
+                  }.`
+                : 'Members can sign in, browse jobs, submit work and receive payouts normally.'}
             </p>
+            {config && (
+              <p className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                <LiveDot tone={enabled ? 'warning' : 'success'} />
+                v{config.version} · last saved {config.updatedAt ? new Date(config.updatedAt).toLocaleString() : 'never'} by {config.updatedBy || 'System'}
+              </p>
+            )}
           </div>
         </div>
 
-        {/* Big Switch Control */}
-        <div className="flex items-center gap-3 shrink-0">
-          <label className="relative inline-flex items-center cursor-pointer">
-            <input
-              type="checkbox"
-              checked={enabled}
-              onChange={(e) => setEnabled(e.target.checked)}
-              className="sr-only peer"
-            />
-            <div className="w-14 h-7 bg-muted peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-[4px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-amber-500"></div>
+        <div className="flex shrink-0 items-center gap-3">
+          <label className="inline-flex cursor-pointer items-center gap-2.5">
+            <span className="text-xs font-semibold text-foreground">{enabled ? 'On' : 'Off'}</span>
+            <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} className="sr-only peer" />
+            <span className="relative h-7 w-14 rounded-full bg-muted transition-colors after:absolute after:left-[3px] after:top-[3px] after:size-[22px] after:rounded-full after:bg-white after:shadow after:transition-all peer-checked:bg-amber-500 peer-checked:after:translate-x-[26px]" />
           </label>
+          <Button variant="outline" size="sm" className="gap-1.5" onClick={() => void load()} disabled={loading}>
+            <RefreshCw className={cn('size-3.5', loading && 'animate-spin')} />
+            Reload
+          </Button>
         </div>
       </div>
 
-      {feedback && (
-        <div
-          className={cn(
-            'rounded-xl p-3.5 text-xs font-semibold flex items-center gap-2',
-            feedback.type === 'success'
-              ? 'bg-success/15 text-success border border-success/30'
-              : 'bg-destructive/15 text-destructive border border-destructive/30',
-          )}
+      {/* Quick presets */}
+      <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-border bg-card p-3">
+        <span className="mr-1 inline-flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
+          <Zap className="size-3.5 text-primary" />
+          Presets
+        </span>
+        {(
+          [
+            ['30 minute window', 30],
+            ['2 hour window', 120],
+            ['Overnight (8h)', 480],
+          ] as const
+        ).map(([label, minutes]) => (
+          <button
+            key={label}
+            type="button"
+            onClick={() => void applyPreset(minutes)}
+            className="rounded-lg border border-border bg-muted/30 px-2.5 py-1 text-xs font-medium text-foreground transition-colors hover:bg-muted"
+          >
+            {label}
+          </button>
+        ))}
+        <button
+          type="button"
+          onClick={() => void applyPreset(null)}
+          className="rounded-lg border border-success/30 bg-success/10 px-2.5 py-1 text-xs font-semibold text-success transition-colors hover:bg-success/20"
         >
-          {feedback.type === 'success' ? <CheckCircle2 className="size-4" /> : <AlertTriangle className="size-4" />}
-          {feedback.text}
-        </div>
-      )}
-
-      {/* Main Configuration Form */}
-      <form onSubmit={handleSave} className="rounded-2xl border border-border bg-card p-5 sm:p-6 shadow-sm flex flex-col gap-5">
-        <div className="flex items-center justify-between border-b border-border/80 pb-3">
-          <div>
-            <h3 className="text-base font-bold text-foreground">Maintenance Configuration & Criteria</h3>
-            <p className="text-xs text-muted-foreground">
-              Configure the screen copy, duration, and whitelist filters.
-            </p>
-          </div>
-
-          <div className="text-right text-[11px] font-mono text-muted-foreground hidden sm:block">
-            Last updated by: {config.updatedBy || 'System'}<br />
-            {config.updatedAt ? new Date(config.updatedAt).toLocaleString() : ''}
-          </div>
-        </div>
-
-        {/* Quick Presets */}
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs font-semibold text-muted-foreground mr-1 flex items-center gap-1">
-            <Zap className="size-3 text-primary" /> Quick Presets:
-          </span>
-          <button
-            type="button"
-            onClick={() => applyPreset('30m')}
-            className="rounded-lg border border-border bg-muted/30 px-2.5 py-1 text-xs font-medium text-foreground hover:bg-muted"
+          Clear window
+        </button>
+        {status?.active && (
+          <Button
+            size="sm"
+            variant="destructive"
+            className="ml-auto gap-1.5"
+            onClick={async () => {
+              try {
+                await adminApi.disableMaintenance()
+                push('success', 'Maintenance disabled — traffic is flowing again.')
+                await load()
+              } catch (err) {
+                push('error', err instanceof Error ? err.message : 'Could not disable maintenance.')
+              }
+            }}
           >
-            +30 Min Window
-          </button>
-          <button
-            type="button"
-            onClick={() => applyPreset('2h')}
-            className="rounded-lg border border-border bg-muted/30 px-2.5 py-1 text-xs font-medium text-foreground hover:bg-muted"
-          >
-            +2 Hour Window
-          </button>
-          <button
-            type="button"
-            onClick={() => applyPreset('off')}
-            className="rounded-lg border border-success/30 bg-success/10 px-2.5 py-1 text-xs font-semibold text-success hover:bg-success/20"
-          >
-            Turn Off Maintenance
-          </button>
-        </div>
-
-        {/* Title */}
-        <div>
-          <label className="text-xs font-semibold text-foreground block mb-1">
-            Maintenance Screen Heading
-          </label>
-          <input
-            type="text"
-            required
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            placeholder="Under Scheduled Maintenance"
-            className="w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none"
-          />
-        </div>
-
-        {/* Message */}
-        <div>
-          <label className="text-xs font-semibold text-foreground block mb-1">
-            Public Explanation Notice
-          </label>
-          <textarea
-            required
-            rows={3}
-            value={message}
-            onChange={(e) => setMessage(e.target.value)}
-            placeholder="We are currently upgrading payment settlement pipelines..."
-            className="w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none"
-          />
-          <span className="mt-1 text-[11px] text-muted-foreground block">
-            This message will be rendered prominently to any worker who visits the platform during maintenance.
-          </span>
-        </div>
-
-        {/* Estimated Return Time */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div>
-            <label className="text-xs font-semibold text-foreground block mb-1 flex items-center gap-1.5">
-              <Clock className="size-3.5 text-primary" /> Estimated Return Time (Countdown Timer)
-            </label>
-            <input
-              type="datetime-local"
-              value={estimatedEnd}
-              onChange={(e) => setEstimatedEnd(e.target.value)}
-              className="w-full rounded-xl border border-border bg-background px-3 py-2 text-xs font-mono text-foreground focus:border-primary focus:outline-none"
-            />
-            <span className="mt-1 text-[11px] text-muted-foreground block">
-              Leave blank if no exact ETA is available.
-            </span>
-          </div>
-
-          <div>
-            <label className="text-xs font-semibold text-foreground block mb-1 flex items-center gap-1.5">
-              <Mail className="size-3.5 text-primary" /> Whitelisted Bypass Emails (one per line)
-            </label>
-            <textarea
-              rows={3}
-              value={allowedEmailsText}
-              onChange={(e) => setAllowedEmailsText(e.target.value)}
-              placeholder="admin@example.com&#10;support@example.com"
-              className="w-full rounded-xl border border-border bg-background px-3 py-1.5 text-xs font-mono text-foreground focus:border-primary focus:outline-none"
-            />
-          </div>
-        </div>
-
-        {/* Security / Criteria Note */}
-        <div className="rounded-xl border border-border/80 bg-muted/20 p-4 text-xs text-muted-foreground">
-          <div className="flex items-center gap-1.5 font-bold text-foreground mb-1">
-            <Info className="size-4 text-primary" /> Maintenance Guard Criteria
-          </div>
-          <ul className="list-disc pl-4 space-y-1 text-[11px]">
-            <li><strong>Worker State:</strong> All job applications, wallet balances, and KYC submissions remain 100% intact and locked securely.</li>
-            <li><strong>Admin Bypass:</strong> Any authenticated user marked with <code>isAdmin: true</code> or whose email is in the allowed list automatically bypasses the screen.</li>
-            <li><strong>Real-time Broadcast:</strong> Changes take effect immediately across all active browser sessions without requiring a server reboot.</li>
-          </ul>
-        </div>
-
-        {/* Save Button */}
-        <div className="flex items-center justify-end gap-3 pt-2">
-          <Button type="submit" disabled={saving} size="lg" className="gap-2 shadow-sm">
-            <Save className="size-4" />
-            {saving ? 'Saving Changes...' : 'Save Maintenance Settings'}
+            <Power className="size-3.5" />
+            Emergency: switch off now
           </Button>
+        )}
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,0.85fr)]">
+        {/* Copy + timing */}
+        <div className="flex flex-col gap-4">
+          <AdminCard title="Public notice" description="What workers read during the window. Keep it specific: what, when, and what to do." icon={<BellRing className="size-4" />}>
+            <div className="flex flex-col gap-4">
+              <Field label="Heading" hint="Shown as the page title — state the reason, not the word “maintenance”.">
+                <input value={title} maxLength={90} onChange={(event) => setTitle(event.target.value)} placeholder="Upgrading payout settlement" className={inputClass} />
+              </Field>
+
+              <Field label="Explanation" hint={`${message.length}/900 characters.`}>
+                <textarea rows={4} value={message} maxLength={900} onChange={(event) => setMessage(event.target.value)} placeholder="We are rebalancing the payout queue…" className={cn(inputClass, 'leading-relaxed')} />
+              </Field>
+
+              <Field label="Banner copy (used in banner mode)" hint="One line for the in-app strip; the platform stays usable in banner mode.">
+                <input value={banner} maxLength={200} onChange={(event) => setBanner(event.target.value)} placeholder="Payouts are delayed by ~1 hour today." className={inputClass} />
+              </Field>
+
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field label="Reason code">
+                  <select value={reason} onChange={(event) => setReason(event.target.value)} className={inputClass}>
+                    <option value="scheduled_upgrade">Scheduled upgrade</option>
+                    <option value="payment_settlement">Payment settlement run</option>
+                    <option value="fraud_review">Fraud / QA review</option>
+                    <option value="security_patch">Security patching</option>
+                    <option value="outage">Unplanned outage</option>
+                    <option value="other">Other</option>
+                  </select>
+                </Field>
+                <Field label="Mode" hint="Blackout blocks everything but the console; banner warns and keeps working.">
+                  <div className="flex gap-2">
+                    {(['blackout', 'banner'] as const).map((value) => (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => setMode(value)}
+                        className={cn(
+                          'flex-1 rounded-xl border px-3 py-2 text-xs font-semibold capitalize transition-colors',
+                          mode === value ? 'border-primary bg-primary/10 text-primary' : 'border-border bg-background text-muted-foreground hover:bg-muted',
+                        )}
+                      >
+                        {value}
+                      </button>
+                    ))}
+                  </div>
+                </Field>
+              </div>
+            </div>
+          </AdminCard>
+
+          <AdminCard title="Timing & access" description="Scheduled start, ETA, and who gets through." icon={<Clock3 className="size-4" />}>
+            <div className="flex flex-col gap-4">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field label="Start at (optional)" hint="Leave empty to switch on immediately when you save.">
+                  <input type="datetime-local" value={scheduledStart} onChange={(event) => setScheduledStart(event.target.value)} className={cn(inputClass, 'font-mono')} />
+                </Field>
+                <Field label="Expected back online" hint="Drives the countdown, Retry-After and auto-resolve.">
+                  <input type="datetime-local" value={estimatedEnd} onChange={(event) => setEstimatedEnd(event.target.value)} className={cn(inputClass, 'font-mono')} />
+                </Field>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="flex items-start gap-2.5 rounded-xl border border-border/70 bg-background/50 p-3">
+                  <input type="checkbox" checked={autoResolve} onChange={(event) => setAutoResolve(event.target.checked)} className="mt-0.5 size-4 accent-[var(--primary)]" />
+                  <span>
+                    <span className="block text-xs font-semibold text-foreground">Auto-resolve at the ETA</span>
+                    <span className="mt-0.5 block text-[11px] leading-snug text-muted-foreground">The gate lifts itself when the expected end time passes — no 3am pager for the switch-back.</span>
+                  </span>
+                </label>
+                <label className="flex items-start gap-2.5 rounded-xl border border-border/70 bg-background/50 p-3">
+                  <input type="checkbox" checked={allowSignIn} onChange={(event) => setAllowSignIn(event.target.checked)} className="mt-0.5 size-4 accent-[var(--primary)]" />
+                  <span>
+                    <span className="block text-xs font-semibold text-foreground">Keep sign-in & KYC callbacks open</span>
+                    <span className="mt-0.5 block text-[11px] leading-snug text-muted-foreground">Lets verification flows finish mid-window instead of stranding a session.</span>
+                  </span>
+                </label>
+              </div>
+
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field label="Support contact shown on the screen" hint={`Defaults to ${site.supportEmail} when blank.`}>
+                  <div className="relative">
+                    <Mail className="absolute left-3 top-2.5 size-3.5 text-muted-foreground" />
+                    <input value={contactEmail} onChange={(event) => setContactEmail(event.target.value)} placeholder={site.supportEmail} className={cn(inputClass, 'pl-9')} />
+                  </div>
+                </Field>
+                <Field label="Bypass list (one email per line)" hint="These members keep full access during a blackout and are minted a signed bypass cookie.">
+                  <textarea
+                    rows={3}
+                    value={allowedEmailsText}
+                    onChange={(event) => setAllowedEmailsText(event.target.value)}
+                    placeholder={'ops@afterworks.io\noncall@afterworks.io'}
+                    className={cn(inputClass, 'font-mono text-[11px]')}
+                  />
+                </Field>
+              </div>
+            </div>
+          </AdminCard>
+
+          <AdminCard title="Service states" description="Shown on the maintenance screen and /status, so people see what is affected." icon={<ShieldCheck className="size-4" />}>
+            <ul className="flex flex-col gap-2">
+              {Object.entries(SERVICE_LABELS).map(([id, label]) => {
+                const current = services.find((s) => s.id === id)?.status ?? 'operational'
+                return (
+                  <li key={id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border/70 bg-background/50 px-3 py-2">
+                    <span className="text-xs font-medium text-foreground">{label}</span>
+                    <div className="flex gap-1">
+                      {SERVICE_STATUSES.map((value) => (
+                        <button
+                          key={value}
+                          type="button"
+                          onClick={() => setServiceStatus(id, value)}
+                          className={cn(
+                            'rounded-lg px-2 py-1 text-[11px] font-medium capitalize transition-colors',
+                            current === value
+                              ? value === 'operational'
+                                ? 'bg-success/15 text-success'
+                                : value === 'outage'
+                                  ? 'bg-destructive/15 text-destructive'
+                                  : 'bg-warning/20 text-warning-foreground'
+                              : 'text-muted-foreground hover:bg-muted',
+                          )}
+                        >
+                          {value}
+                        </button>
+                      ))}
+                    </div>
+                  </li>
+                )
+              })}
+            </ul>
+          </AdminCard>
         </div>
-      </form>
+
+        {/* Preview + save rail */}
+        <div className="flex flex-col gap-4 lg:sticky lg:top-20 lg:self-start">
+          <AdminCard
+            title="Preview"
+            description="Exactly what a worker sees, rendered from the unsaved form."
+            icon={<Eye className="size-4" />}
+            actions={
+              <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setPreview((value) => !value)}>
+                <MonitorPlay className="size-3.5" />
+                {preview ? 'Hide' : 'Show'}
+              </Button>
+            }
+          >
+            {preview ? (
+              <div className="overflow-hidden rounded-xl border border-border">
+                <MaintenanceScreen config={{ ...previewView, services: servicesForPreview }} embedded />
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">Preview is hidden. Nothing here affects live traffic until you save.</p>
+            )}
+          </AdminCard>
+
+          <AdminCard title="Save" description="Writes through the audited admin API — the browser never touches the config document directly." icon={<Save className="size-4" />}>
+            <div className="flex flex-col gap-3">
+              {!dirty ? (
+                <p className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <Info className="size-3.5" />
+                  No unsaved changes.
+                </p>
+              ) : (
+                <p className="flex items-start gap-2 text-xs text-amber-700 dark:text-amber-300">
+                  <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+                  Unsaved changes will apply to every visitor the moment you save.
+                </p>
+              )}
+              {enabled && mode === 'blackout' && (
+                <p className="text-[11px] leading-relaxed text-muted-foreground">
+                  Blackout rejects page loads with <code className="font-mono">503</code> and a <code className="font-mono">Retry-After</code>, so queues, monitors and crawlers back
+                  off instead of hammering the app.
+                </p>
+              )}
+              <Button onClick={() => void save()} disabled={saving || !dirty || !config} size="lg" className="w-full gap-2">
+                {saving ? <Loader /> : <Save className="size-4" />}
+                {saving ? 'Saving…' : 'Save maintenance settings'}
+              </Button>
+              <Button render={<Link href="/status" />} variant="outline" size="sm" className="w-full justify-center gap-1.5">
+                <ActivityIcon />
+                Open public status page
+              </Button>
+            </div>
+          </AdminCard>
+
+          <AdminCard title="How the guard works" icon={<Info className="size-4" />} description="Useful when someone asks “why can I still get in?”">
+            <ul className="flex flex-col gap-1.5 text-[11px] leading-relaxed text-muted-foreground">
+              <li>• Middleware rejects gated document requests with 503 + Retry-After and rewrites to /maintenance.</li>
+              <li>• /api routes return a retryable 503 so clients show a banner instead of a stack trace.</li>
+              <li>• Console paths (/admin, /api/admin) are never blocked, so you can always switch it back off.</li>
+              <li>• Staff with a valid session cookie, or an email on the bypass list, pass through.</li>
+              <li>• Data is untouched: applications, wallets and KYC records keep their state.</li>
+            </ul>
+          </AdminCard>
+        </div>
+      </div>
     </div>
   )
+}
+
+function Loader() {
+  return <RefreshCw className="size-4 animate-spin" />
+}
+
+function ActivityIcon() {
+  return <Info className="size-3.5" />
+}
+
+function parseEmails(text: string): string[] {
+  return Array.from(
+    new Set(
+      text
+        .split(/[\n,;]+/)
+        .map((entry) => entry.trim().toLowerCase())
+        .filter(Boolean),
+    ),
+  )
+}
+
+function toUtc(localValue: string): string | null {
+  if (!localValue) return null
+  const date = new Date(localValue)
+  return Number.isNaN(date.getTime()) ? null : date.toISOString()
+}
+
+function toLocalInput(iso: string): string {
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return ''
+  const offset = date.getTimezoneOffset() * 60_000
+  return new Date(date.getTime() - offset).toISOString().slice(0, 16)
 }

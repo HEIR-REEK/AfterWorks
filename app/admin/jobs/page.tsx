@@ -1,115 +1,106 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
-import {
-  AlertCircle,
-  Briefcase,
-  CheckCircle2,
-  Clock,
-  Edit2,
-  PauseCircle,
-  PlayCircle,
-  Plus,
-  RefreshCw,
-  Search,
-  Sparkles,
-  StopCircle,
-  Trash2,
-  X,
-} from 'lucide-react'
-import {
-  subscribeToJobs,
-  saveJobToFirestore,
-  deleteJobFromFirestore,
-  createAdminAuditLog,
-} from '@/lib/firestore'
-import {
-  seedJobs,
-  formatUsd,
-  formatKes,
-  formatDuration,
-  type Job,
-  type JobCategory,
-  type JobStatus,
-} from '@/lib/afterworks-data'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Briefcase, Eye, Loader2, Pause, Play, Plus, Save, Settings2, Trash2, X } from 'lucide-react'
+import { adminApi, useAdminSession, type AdminJobRow } from '@/lib/admin'
+import { AdminCard, Field, ReasonDialog, inputClass, useToasts } from '@/components/admin-ui'
 import { Button } from '@/components/ui/button'
-import { useAuth } from '@/components/firebase-auth-provider'
+import { StatusBadge } from '@/components/status-badge'
+import { formatUsd, JOB_CATEGORY_LIST } from '@/lib/afterworks-data'
 import { cn } from '@/lib/utils'
 
-const CATEGORIES: JobCategory[] = [
-  'Data Entry',
-  'Transcription',
-  'Image Labeling',
-  'Content Review',
-  'Translation',
-  'Research',
-]
+/**
+ * Job catalogue.
+ *
+ * The catalogue used to be published by writing `jobs/{id}` straight from the browser, with a
+ * client-side `confirm()` and no authorisation beyond a token in localStorage. It now goes through
+ * `/api/admin/jobs`, where the payload is validated and normalised server-side (pay bounds, capacity,
+ * category whitelist, slot accounting) and every write is attributed and audited.
+ */
 
-const emptyJobForm = {
-  id: '',
+const EMPTY: Draft = {
   title: '',
-  category: 'Data Entry' as JobCategory,
+  category: 'Data Entry',
   description: '',
-  responsibilitiesText: '',
-  payAmountUsd: 25,
-  estimatedMinutes: 120,
-  capacity: 50,
-  slotsRemaining: 50,
+  responsibilities: '',
+  payAmountUsd: 40,
+  estimatedMinutes: 90,
+  capacity: 10,
+  slotsRemaining: 10,
   trainingRequired: false,
   requiresVerified: true,
-  status: 'open' as JobStatus,
-  closesInDays: 7,
+  status: 'open',
+  closesAt: '',
 }
 
-export default function AdminJobsPage() {
-  const { user } = useAuth()
-  const [jobs, setJobs] = useState<Job[]>([])
-  const [search, setSearch] = useState('')
-  const [categoryFilter, setCategoryFilter] = useState<string>('all')
-  const [statusFilter, setStatusFilter] = useState<string>('all')
+type Draft = {
+  id?: string
+  title: string
+  category: string
+  description: string
+  responsibilities: string
+  payAmountUsd: number
+  estimatedMinutes: number
+  capacity: number
+  slotsRemaining: number
+  trainingRequired: boolean
+  requiresVerified: boolean
+  status: string
+  closesAt: string
+}
 
-  // Form modal state
-  const [isModalOpen, setIsModalOpen] = useState(false)
-  const [formData, setFormData] = useState(emptyJobForm)
-  const [isEditing, setIsEditing] = useState(false)
+const STATUSES = ['open', 'paused', 'closed'] as const
+
+export default function AdminJobsPage() {
+  const session = useAdminSession()
+  const { push, toasts } = useToasts()
+
+  const [jobs, setJobs] = useState<AdminJobRow[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [filter, setFilter] = useState<string>('all')
+  const [editing, setEditing] = useState<Draft | null>(null)
   const [saving, setSaving] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState<AdminJobRow | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      const data = await adminApi.jobs(filter === 'all' ? undefined : { status: filter })
+      setJobs(data.jobs)
+      setError(null)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not load the catalogue.')
+    } finally {
+      setLoading(false)
+    }
+  }, [filter])
 
   useEffect(() => {
-    const unsub = subscribeToJobs(setJobs)
-    return () => unsub()
-  }, [])
+    if (session.status === 'authorized') void load()
+  }, [session.status, load])
 
-  const filteredJobs = useMemo(() => {
-    return jobs.filter((j) => {
-      const q = search.toLowerCase()
-      const matchSearch =
-        !search ||
-        j.title?.toLowerCase().includes(q) ||
-        j.description?.toLowerCase().includes(q) ||
-        j.category?.toLowerCase().includes(q)
-      const matchCategory = categoryFilter === 'all' || j.category === categoryFilter
-      const matchStatus = statusFilter === 'all' || j.status === statusFilter
-      return matchSearch && matchCategory && matchStatus
-    })
-  }, [jobs, search, categoryFilter, statusFilter])
+  const totals = useMemo(
+    () => ({
+      slots: jobs.reduce((sum, job) => sum + job.capacity, 0),
+      filled: jobs.reduce((sum, job) => sum + (job.capacity - job.slotsRemaining), 0),
+      openValue: jobs.filter((job) => job.status === 'open').reduce((sum, job) => sum + job.payAmountUsd * job.slotsRemaining, 0),
+    }),
+    [jobs],
+  )
 
-  const handleOpenCreateModal = () => {
-    setIsEditing(false)
-    setFormData({
-      ...emptyJobForm,
-      id: `job-${Date.now()}`,
-    })
-    setIsModalOpen(true)
-  }
-
-  const handleOpenEditModal = (job: Job) => {
-    setIsEditing(true)
-    setFormData({
+  const openEditor = (job?: AdminJobRow) => {
+    if (!job) {
+      setEditing({ ...EMPTY })
+      return
+    }
+    setEditing({
       id: job.id,
       title: job.title,
       category: job.category,
       description: job.description,
-      responsibilitiesText: (job.responsibilities || []).join('\n'),
+      responsibilities: (job.responsibilities ?? []).join('\n'),
       payAmountUsd: job.payAmountUsd,
       estimatedMinutes: job.estimatedMinutes,
       capacity: job.capacity,
@@ -117,505 +108,276 @@ export default function AdminJobsPage() {
       trainingRequired: job.trainingRequired,
       requiresVerified: job.requiresVerified,
       status: job.status,
-      closesInDays: 7,
+      closesAt: job.closesAt ? toLocalDate(job.closesAt) : '',
     })
-    setIsModalOpen(true)
   }
 
-  const handleSaveJob = async (e: React.FormEvent) => {
-    e.preventDefault()
+  const save = async () => {
+    if (!editing) return
     setSaving(true)
     try {
-      const closesAtDate = new Date()
-      closesAtDate.setDate(closesAtDate.getDate() + (formData.closesInDays || 7))
-
-      const responsibilities = formData.responsibilitiesText
-        .split('\n')
-        .map((r) => r.trim())
-        .filter(Boolean)
-
-      const jobPayload: Job = {
-        id: formData.id || `job-${Date.now()}`,
-        title: formData.title,
-        category: formData.category,
-        description: formData.description,
-        responsibilities: responsibilities.length > 0 ? responsibilities : ['Complete assigned microtasks accurately'],
-        payAmountUsd: Number(formData.payAmountUsd) || 10,
-        estimatedMinutes: Number(formData.estimatedMinutes) || 60,
-        capacity: Number(formData.capacity) || 50,
-        slotsRemaining: Number(formData.slotsRemaining) || 50,
-        trainingRequired: Boolean(formData.trainingRequired),
-        requiresVerified: Boolean(formData.requiresVerified),
-        status: formData.status,
-        closesAt: closesAtDate.toISOString(),
-        postedAgo: isEditing ? 'Updated recently' : 'Just now',
-      }
-
-      await saveJobToFirestore(jobPayload)
-      await createAdminAuditLog(
-        isEditing ? 'UPDATE_JOB' : 'CREATE_JOB',
-        { jobId: jobPayload.id, title: jobPayload.title, status: jobPayload.status },
-        user?.email || 'Admin',
-      )
-
-      setIsModalOpen(false)
+      const result = await adminApi.saveJob({
+        id: editing.id,
+        title: editing.title,
+        category: editing.category,
+        description: editing.description,
+        responsibilities: editing.responsibilities.split('\n').map((line) => line.trim()).filter(Boolean),
+        payAmountUsd: Number(editing.payAmountUsd),
+        estimatedMinutes: Number(editing.estimatedMinutes),
+        capacity: Number(editing.capacity),
+        slotsRemaining: Number(editing.slotsRemaining),
+        trainingRequired: editing.trainingRequired,
+        requiresVerified: editing.requiresVerified,
+        status: editing.status,
+        closesAt: editing.closesAt ? new Date(editing.closesAt).toISOString() : undefined,
+      })
+      push('success', editing.id ? `Saved ${result.id}.` : `Published as ${result.id}.`)
+      setEditing(null)
+      await load()
     } catch (err) {
-      console.error('Failed to save job:', err)
+      push('error', err instanceof Error ? err.message : 'The catalogue rejected this job.')
     } finally {
       setSaving(false)
     }
   }
 
-  const handleToggleStatus = async (job: Job) => {
-    const nextStatus: JobStatus = job.status === 'open' ? 'paused' : 'open'
+  const setStatus = async (job: AdminJobRow, status: string) => {
+    setBusy(true)
     try {
-      await saveJobToFirestore({ ...job, status: nextStatus })
-      await createAdminAuditLog(
-        'TOGGLE_JOB_STATUS',
-        { jobId: job.id, from: job.status, to: nextStatus },
-        user?.email || 'Admin',
-      )
+      await adminApi.setJobStatus({ jobId: job.id, status })
+      push('success', `${job.title} is now ${status}.`)
+      await load()
     } catch (err) {
-      console.error('Failed to toggle job status:', err)
-    }
-  }
-
-  const handleDeleteJob = async (job: Job) => {
-    const confirm = window.confirm(`Are you sure you want to delete job "${job.title}"?`)
-    if (!confirm) return
-
-    try {
-      await deleteJobFromFirestore(job.id)
-      await createAdminAuditLog(
-        'DELETE_JOB',
-        { jobId: job.id, title: job.title },
-        user?.email || 'Admin',
-      )
-    } catch (err) {
-      console.error('Failed to delete job:', err)
-    }
-  }
-
-  const handleSeedJobs = async () => {
-    const confirm = window.confirm('Seed all default catalog jobs to Firestore?')
-    if (!confirm) return
-
-    for (const j of seedJobs()) {
-      await saveJobToFirestore(j)
-    }
-    await createAdminAuditLog('SEED_DEFAULT_JOBS', { count: seedJobs().length }, user?.email || 'Admin')
-  }
-
-  const getStatusBadge = (status: JobStatus) => {
-    switch (status) {
-      case 'open':
-        return (
-          <span className="inline-flex items-center gap-1 rounded-full bg-success/15 px-2.5 py-0.5 text-xs font-semibold text-success">
-            <PlayCircle className="size-3" /> Open
-          </span>
-        )
-      case 'paused':
-        return (
-          <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-2.5 py-0.5 text-xs font-semibold text-amber-600 dark:text-amber-400">
-            <PauseCircle className="size-3" /> Paused
-          </span>
-        )
-      case 'closed':
-        return (
-          <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-0.5 text-xs font-semibold text-muted-foreground">
-            <StopCircle className="size-3" /> Closed
-          </span>
-        )
+      push('error', err instanceof Error ? err.message : 'Could not change that status.')
+    } finally {
+      setBusy(false)
     }
   }
 
   return (
-    <div className="flex flex-col gap-6">
-      {/* Header Controls */}
-      <div className="flex flex-col gap-4 rounded-2xl border border-border bg-card p-4 sm:p-5 shadow-sm">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div>
-            <h2 className="text-lg font-bold text-foreground">Jobs & Tasks Catalog</h2>
-            <p className="text-xs text-muted-foreground">
-              Total jobs: <span className="font-mono font-semibold text-foreground">{jobs.length}</span> (showing {filteredJobs.length})
-            </p>
-          </div>
+    <div className="flex flex-col gap-4">
+      {toasts}
 
-          <div className="flex items-center gap-2">
-            {jobs.length === 0 && (
-              <Button onClick={handleSeedJobs} variant="outline" size="sm" className="gap-1.5 text-xs">
-                <Sparkles className="size-3.5 text-primary" />
-                Seed Standard Catalog
-              </Button>
-            )}
-            <Button onClick={handleOpenCreateModal} size="sm" className="gap-1.5">
-              <Plus className="size-4" />
-              Create New Job
-            </Button>
-          </div>
-        </div>
-
-        {/* Filters and search */}
-        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border/60 pt-3">
-          <div className="flex flex-wrap items-center gap-2 text-xs">
-            <span className="text-muted-foreground font-medium">Category:</span>
-            <select
-              value={categoryFilter}
-              onChange={(e) => setCategoryFilter(e.target.value)}
-              className="rounded-lg border border-border bg-background px-2.5 py-1 text-xs text-foreground focus:border-primary focus:outline-none"
-            >
-              <option value="all">All Categories</option>
-              {CATEGORIES.map((cat) => (
-                <option key={cat} value={cat}>
-                  {cat}
+      <AdminCard
+        title="Job catalogue"
+        description="What workers see on the board, and what QA can expect to receive."
+        icon={<Briefcase className="size-4" />}
+        actions={
+          <div className="flex flex-wrap items-center gap-2">
+            <select value={filter} onChange={(event) => setFilter(event.target.value)} className={cn(inputClass, 'h-8 w-auto py-1 text-xs')} aria-label="Filter by status">
+              <option value="all">All statuses</option>
+              {STATUSES.map((value) => (
+                <option key={value} value={value}>
+                  {value}
                 </option>
               ))}
             </select>
-
-            <span className="text-muted-foreground font-medium ml-2">Status:</span>
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              className="rounded-lg border border-border bg-background px-2.5 py-1 text-xs text-foreground focus:border-primary focus:outline-none"
-            >
-              <option value="all">All Statuses</option>
-              <option value="open">Open</option>
-              <option value="paused">Paused</option>
-              <option value="closed">Closed</option>
-            </select>
+            <Button size="sm" className="gap-1.5" onClick={() => openEditor()}>
+              <Plus className="size-3.5" />
+              New job
+            </Button>
           </div>
-
-          <div className="relative w-full sm:w-64">
-            <Search className="absolute left-2.5 top-2 size-3.5 text-muted-foreground" />
-            <input
-              type="text"
-              placeholder="Search job title or desc..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="w-full rounded-lg border border-border bg-background py-1.5 pl-8 pr-3 text-xs text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none"
-            />
+        }
+      >
+        <div className="mb-3 grid grid-cols-3 gap-2 text-center">
+          <div className="rounded-xl border border-border/70 bg-background/60 p-2.5">
+            <p className="font-mono text-base font-semibold tabular">{jobs.length}</p>
+            <p className="text-[11px] text-muted-foreground">in view</p>
+          </div>
+          <div className="rounded-xl border border-border/70 bg-background/60 p-2.5">
+            <p className="font-mono text-base font-semibold tabular">
+              {totals.filled}/{totals.slots}
+            </p>
+            <p className="text-[11px] text-muted-foreground">slots taken</p>
+          </div>
+          <div className="rounded-xl border border-border/70 bg-background/60 p-2.5">
+            <p className="font-mono text-base font-semibold tabular text-success">{formatUsd(totals.openValue)}</p>
+            <p className="text-[11px] text-muted-foreground">committed on open jobs</p>
           </div>
         </div>
-      </div>
 
-      {/* Jobs Grid */}
-      {filteredJobs.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-border p-12 text-center text-sm text-muted-foreground bg-card">
-          No jobs found. Click &quot;Create New Job&quot; or &quot;Seed Standard Catalog&quot; to populate.
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {filteredJobs.map((job) => (
-            <div
-              key={job.id}
-              className="flex flex-col justify-between rounded-2xl border border-border bg-card p-4 sm:p-5 shadow-sm transition-all hover:border-primary/40"
-            >
-              <div>
-                <div className="flex items-start justify-between gap-2">
-                  <span className="rounded-md bg-secondary px-2 py-0.5 text-[11px] font-semibold text-secondary-foreground">
-                    {job.category}
-                  </span>
-                  {getStatusBadge(job.status)}
-                </div>
+        {error && <p className="mb-3 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-[11px] text-destructive">{error}</p>}
 
-                <h3 className="mt-2.5 text-sm font-bold text-foreground leading-snug line-clamp-2">
-                  {job.title}
-                </h3>
-                <p className="mt-1.5 text-xs text-muted-foreground line-clamp-2">
-                  {job.description}
-                </p>
-
-                <div className="mt-4 grid grid-cols-2 gap-2 border-y border-border/60 py-2.5 text-xs">
-                  <div>
-                    <span className="text-[10px] text-muted-foreground uppercase block">Pay (USD)</span>
-                    <span className="font-mono font-bold text-foreground text-sm">
-                      {formatUsd(job.payAmountUsd)}
-                    </span>
-                    <span className="text-[10px] text-muted-foreground block">
-                      ≈ {formatKes(job.payAmountUsd)}
-                    </span>
+        {loading && jobs.length === 0 ? (
+          <div className="flex items-center justify-center gap-2 py-16 text-xs text-muted-foreground">
+            <Loader2 className="size-4 animate-spin" />
+            Loading catalogue…
+          </div>
+        ) : jobs.length === 0 ? (
+          <p className="py-10 text-center text-xs text-muted-foreground">No jobs with that status. Publish one to put work on the board.</p>
+        ) : (
+          <ul className="flex flex-col gap-2">
+            {jobs.map((job) => (
+              <li key={job.id} className="flex flex-wrap items-start gap-3 rounded-xl border border-border/80 bg-card p-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="truncate text-sm font-semibold text-foreground">{job.title}</p>
+                    <StatusBadge tone={job.status === 'open' ? 'success' : job.status === 'paused' ? 'warning' : 'neutral'}>{job.status}</StatusBadge>
+                    <StatusBadge tone="info">{job.category}</StatusBadge>
+                    {job.trainingRequired && <StatusBadge tone="warning">training gate</StatusBadge>}
+                    {job.requiresVerified && <StatusBadge tone="info">KYC required</StatusBadge>}
                   </div>
-                  <div>
-                    <span className="text-[10px] text-muted-foreground uppercase block">Available Slots</span>
-                    <span className="font-mono font-bold text-foreground text-sm">
-                      {job.slotsRemaining} <span className="text-xs font-normal text-muted-foreground">/ {job.capacity}</span>
-                    </span>
-                    <span className="text-[10px] text-muted-foreground block flex items-center gap-1 mt-0.5">
-                      <Clock className="size-2.5" /> {formatDuration(job.estimatedMinutes)}
-                    </span>
-                  </div>
+                  <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted-foreground">{job.description}</p>
+                  <p className="mt-1 font-mono text-[11px] text-muted-foreground">
+                    {formatUsd(job.payAmountUsd)} · {job.estimatedMinutes} min · {job.slotsRemaining}/{job.capacity} slots open · closes{' '}
+                    {job.closesAt ? new Date(job.closesAt).toLocaleDateString() : '—'}
+                  </p>
                 </div>
-
-                <div className="mt-2 flex flex-wrap gap-1.5 text-[10px]">
-                  {job.trainingRequired && (
-                    <span className="rounded bg-amber-500/10 px-1.5 py-0.5 font-medium text-amber-600 dark:text-amber-400">
-                      Training Module
-                    </span>
-                  )}
-                  {job.requiresVerified && (
-                    <span className="rounded bg-success/10 px-1.5 py-0.5 font-medium text-success">
-                      KYC Required
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              {/* Card Actions */}
-              <div className="mt-4 flex items-center justify-between gap-2 pt-2 border-t border-border/40">
-                <Button
-                  onClick={() => handleToggleStatus(job)}
-                  variant="outline"
-                  size="xs"
-                  className={cn(
-                    'gap-1 text-[11px]',
-                    job.status === 'open' ? 'text-amber-600' : 'text-success',
-                  )}
-                >
+                <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+                  <Button size="sm" variant="outline" className="h-8 gap-1.5 text-xs" onClick={() => openEditor(job)}>
+                    <Settings2 className="size-3.5" />
+                    Edit
+                  </Button>
                   {job.status === 'open' ? (
-                    <>
-                      <PauseCircle className="size-3" /> Pause
-                    </>
+                    <Button size="sm" variant="outline" className="h-8 gap-1.5 text-xs" disabled={busy} onClick={() => void setStatus(job, 'paused')}>
+                      <Pause className="size-3.5" />
+                      Pause
+                    </Button>
                   ) : (
-                    <>
-                      <PlayCircle className="size-3" /> Activate
-                    </>
+                    <Button size="sm" variant="outline" className="h-8 gap-1.5 text-xs" disabled={busy} onClick={() => void setStatus(job, 'open')}>
+                      <Play className="size-3.5" />
+                      Open
+                    </Button>
                   )}
-                </Button>
-
-                <div className="flex items-center gap-1">
                   <Button
-                    onClick={() => handleOpenEditModal(job)}
+                    size="sm"
                     variant="ghost"
-                    size="xs"
-                    className="size-7 p-0"
-                    title="Edit Job"
+                    className="h-8 gap-1.5 text-xs text-destructive hover:bg-destructive/10 hover:text-destructive"
+                    disabled={busy}
+                    onClick={() => setConfirmDelete(job)}
                   >
-                    <Edit2 className="size-3.5 text-muted-foreground" />
+                    <Trash2 className="size-3.5" />
+                    Close
                   </Button>
-                  <Button
-                    onClick={() => handleDeleteJob(job)}
-                    variant="ghost"
-                    size="xs"
-                    className="size-7 p-0 hover:text-destructive"
-                    title="Delete Job"
-                  >
-                    <Trash2 className="size-3.5 text-destructive" />
+                  <Button render={<a href={`/training/${encodeURIComponent(job.id)}`} target="_blank" rel="noreferrer" />} size="sm" variant="ghost" className="h-8 gap-1.5 text-xs">
+                    <Eye className="size-3.5" />
+                    Preview
                   </Button>
                 </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </AdminCard>
 
-      {/* Create / Edit Job Modal */}
-      {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm overflow-y-auto">
-          <div className="relative w-full max-w-lg rounded-2xl border border-border bg-card p-5 sm:p-6 shadow-xl my-8">
-            <div className="flex items-center justify-between border-b border-border/80 pb-3">
-              <h3 className="text-base font-bold text-foreground">
-                {isEditing ? 'Edit Job Posting' : 'Create New Job Posting'}
-              </h3>
-              <button
-                type="button"
-                onClick={() => setIsModalOpen(false)}
-                className="rounded-lg p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-              >
-                <X className="size-5" />
-              </button>
-            </div>
-
-            <form onSubmit={handleSaveJob} className="mt-4 flex flex-col gap-4">
+      {/* Editor drawer */}
+      {editing && (
+        <div className="fixed inset-0 z-50 flex justify-end bg-foreground/40 backdrop-blur-sm" onMouseDown={() => setEditing(null)}>
+          <aside className="flex h-full w-full max-w-lg flex-col gap-4 overflow-y-auto border-l border-border bg-background p-4 shadow-2xl sm:p-5" onMouseDown={(e) => e.stopPropagation()}>
+            <header className="flex items-start justify-between gap-3 border-b border-border pb-3">
               <div>
-                <label className="text-xs font-semibold text-foreground block mb-1">
-                  Job Title *
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={formData.title}
-                  onChange={(e) => setFormData({ ...formData, title: e.target.value })}
-                  placeholder="e.g. Transcribe Swahili Audio Recordings"
-                  className="w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none"
-                />
+                <h2 className="text-base font-semibold tracking-tight">{editing.id ? 'Edit job' : 'Publish a new job'}</h2>
+                <p className="mt-0.5 text-[11px] text-muted-foreground">
+                  {editing.id ? `id ${editing.id}` : 'The id is generated from the title; workers see it in the URL.'}
+                </p>
               </div>
+              <button type="button" onClick={() => setEditing(null)} aria-label="Close editor" className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground">
+                <X className="size-4" />
+              </button>
+            </header>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs font-semibold text-foreground block mb-1">
-                    Category *
-                  </label>
-                  <select
-                    value={formData.category}
-                    onChange={(e) =>
-                      setFormData({ ...formData, category: e.target.value as JobCategory })
-                    }
-                    className="w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none"
-                  >
-                    {CATEGORIES.map((c) => (
-                      <option key={c} value={c}>
-                        {c}
+            <div className="flex flex-col gap-3.5">
+              <Field label="Title">
+                <input value={editing.title} onChange={(e) => setEditing({ ...editing, title: e.target.value })} maxLength={120} className={inputClass} />
+              </Field>
+              <div className="grid gap-3.5 sm:grid-cols-2">
+                <Field label="Category">
+                  <select value={editing.category} onChange={(e) => setEditing({ ...editing, category: e.target.value })} className={inputClass}>
+                    {JOB_CATEGORY_LIST.map((value: string) => (
+                      <option key={value} value={value}>
+                        {value}
                       </option>
                     ))}
                   </select>
-                </div>
-
-                <div>
-                  <label className="text-xs font-semibold text-foreground block mb-1">
-                    Initial Status
-                  </label>
-                  <select
-                    value={formData.status}
-                    onChange={(e) =>
-                      setFormData({ ...formData, status: e.target.value as JobStatus })
-                    }
-                    className="w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none"
-                  >
-                    <option value="open">Open</option>
-                    <option value="paused">Paused</option>
-                    <option value="closed">Closed</option>
+                </Field>
+                <Field label="Status">
+                  <select value={editing.status} onChange={(e) => setEditing({ ...editing, status: e.target.value })} className={inputClass}>
+                    {STATUSES.map((value) => (
+                      <option key={value} value={value}>
+                        {value}
+                      </option>
+                    ))}
                   </select>
-                </div>
-              </div>
-
-              <div>
-                <label className="text-xs font-semibold text-foreground block mb-1">
-                  Short Description *
-                </label>
-                <textarea
-                  required
-                  rows={2}
-                  value={formData.description}
-                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                  placeholder="Brief overview of tasks and requirements..."
-                  className="w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-semibold text-foreground block mb-1">
-                  Responsibilities & Instructions (one item per line)
-                </label>
-                <textarea
-                  rows={3}
-                  value={formData.responsibilitiesText}
-                  onChange={(e) =>
-                    setFormData({ ...formData, responsibilitiesText: e.target.value })
-                  }
-                  placeholder="Listen to 20 audio clips&#10;Add speaker labels&#10;Flag unclear sections"
-                  className="w-full rounded-xl border border-border bg-background px-3 py-2 text-xs font-mono text-foreground focus:border-primary focus:outline-none"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <div>
-                  <label className="text-[11px] font-semibold text-muted-foreground block mb-1">
-                    Pay (USD)
+                </Field>
+                <Field label="Pay per job (USD)">
+                  <input type="number" min="0.5" max="10000" step="0.5" value={editing.payAmountUsd} onChange={(e) => setEditing({ ...editing, payAmountUsd: Number(e.target.value) })} className={cn(inputClass, 'font-mono')} />
+                </Field>
+                <Field label="Estimated minutes">
+                  <input type="number" min="5" max="10080" step="5" value={editing.estimatedMinutes} onChange={(e) => setEditing({ ...editing, estimatedMinutes: Number(e.target.value) })} className={cn(inputClass, 'font-mono')} />
+                </Field>
+                <Field label="Capacity" hint="Total slots. Approving an application reserves one; declining releases it.">
+                  <input type="number" min="1" max="100000" value={editing.capacity} onChange={(e) => setEditing({ ...editing, capacity: Number(e.target.value) })} className={cn(inputClass, 'font-mono')} />
+                </Field>
+                <Field label="Slots remaining">
+                  <input type="number" min="0" max={Math.max(1, editing.capacity)} value={editing.slotsRemaining} onChange={(e) => setEditing({ ...editing, slotsRemaining: Number(e.target.value) })} className={cn(inputClass, 'font-mono')} />
+                </Field>
+                <Field label="Closes at">
+                  <input type="date" value={editing.closesAt} onChange={(e) => setEditing({ ...editing, closesAt: e.target.value })} className={cn(inputClass, 'font-mono')} />
+                </Field>
+                <div className="flex flex-col justify-end gap-2 pb-0.5">
+                  <label className="flex items-center gap-2 text-xs text-foreground">
+                    <input type="checkbox" checked={editing.trainingRequired} onChange={(e) => setEditing({ ...editing, trainingRequired: e.target.checked })} className="size-3.5 accent-[var(--primary)]" />
+                    Paid training required first
                   </label>
-                  <input
-                    type="number"
-                    min="1"
-                    required
-                    value={formData.payAmountUsd}
-                    onChange={(e) =>
-                      setFormData({ ...formData, payAmountUsd: Number(e.target.value) })
-                    }
-                    className="w-full rounded-xl border border-border bg-background px-2.5 py-1.5 text-xs font-mono font-bold text-foreground focus:border-primary focus:outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-[11px] font-semibold text-muted-foreground block mb-1">
-                    Est. Minutes
+                  <label className="flex items-center gap-2 text-xs text-foreground">
+                    <input type="checkbox" checked={editing.requiresVerified} onChange={(e) => setEditing({ ...editing, requiresVerified: e.target.checked })} className="size-3.5 accent-[var(--primary)]" />
+                    Verified identity required
                   </label>
-                  <input
-                    type="number"
-                    min="5"
-                    required
-                    value={formData.estimatedMinutes}
-                    onChange={(e) =>
-                      setFormData({ ...formData, estimatedMinutes: Number(e.target.value) })
-                    }
-                    className="w-full rounded-xl border border-border bg-background px-2.5 py-1.5 text-xs font-mono text-foreground focus:border-primary focus:outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-[11px] font-semibold text-muted-foreground block mb-1">
-                    Capacity
-                  </label>
-                  <input
-                    type="number"
-                    min="1"
-                    required
-                    value={formData.capacity}
-                    onChange={(e) =>
-                      setFormData({ ...formData, capacity: Number(e.target.value) })
-                    }
-                    className="w-full rounded-xl border border-border bg-background px-2.5 py-1.5 text-xs font-mono text-foreground focus:border-primary focus:outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-[11px] font-semibold text-muted-foreground block mb-1">
-                    Slots Left
-                  </label>
-                  <input
-                    type="number"
-                    min="0"
-                    required
-                    value={formData.slotsRemaining}
-                    onChange={(e) =>
-                      setFormData({ ...formData, slotsRemaining: Number(e.target.value) })
-                    }
-                    className="w-full rounded-xl border border-border bg-background px-2.5 py-1.5 text-xs font-mono text-foreground focus:border-primary focus:outline-none"
-                  />
                 </div>
               </div>
+              <Field label="Description" hint={`${editing.description.length}/4000`}>
+                <textarea rows={5} value={editing.description} maxLength={4000} onChange={(e) => setEditing({ ...editing, description: e.target.value })} className={cn(inputClass, 'leading-relaxed')} />
+              </Field>
+              <Field label="Responsibilities" hint="One per line, max 12. Shown verbatim on the job page.">
+                <textarea rows={4} value={editing.responsibilities} onChange={(e) => setEditing({ ...editing, responsibilities: e.target.value })} className={cn(inputClass, 'leading-relaxed')} />
+              </Field>
+            </div>
 
-              <div className="flex flex-wrap gap-4 pt-1">
-                <label className="flex items-center gap-2 text-xs font-medium text-foreground cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={formData.trainingRequired}
-                    onChange={(e) =>
-                      setFormData({ ...formData, trainingRequired: e.target.checked })
-                    }
-                    className="size-4 rounded border-border accent-primary"
-                  />
-                  Requires Paid Training Module
-                </label>
-
-                <label className="flex items-center gap-2 text-xs font-medium text-foreground cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={formData.requiresVerified}
-                    onChange={(e) =>
-                      setFormData({ ...formData, requiresVerified: e.target.checked })
-                    }
-                    className="size-4 rounded border-border accent-primary"
-                  />
-                  Requires Verified KYC
-                </label>
-              </div>
-
-              <div className="mt-2 flex items-center justify-end gap-2 border-t border-border/80 pt-3">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setIsModalOpen(false)}
-                >
-                  Cancel
-                </Button>
-                <Button type="submit" disabled={saving} size="sm">
-                  {saving ? 'Saving Job...' : isEditing ? 'Save Changes' : 'Create Job'}
-                </Button>
-              </div>
-            </form>
-          </div>
+            <footer className="mt-auto flex items-center gap-2 border-t border-border pt-3">
+              <p className="flex-1 text-[11px] leading-snug text-muted-foreground">Saving publishes immediately to the board and writes an audit entry against your account.</p>
+              <Button variant="ghost" size="sm" onClick={() => setEditing(null)}>
+                Cancel
+              </Button>
+              <Button size="sm" className="gap-1.5" disabled={saving || editing.title.trim().length < 4} onClick={() => void save()}>
+                {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
+                {editing.id ? 'Save changes' : 'Publish job'}
+              </Button>
+            </footer>
+          </aside>
         </div>
       )}
+
+      <ReasonDialog
+        open={!!confirmDelete}
+        title={`Close “${confirmDelete?.title ?? ''}”`}
+        description="Closing hides the job from the board and stops new applications. Existing applications and payouts are untouched — that is what Pause is for if you only need a break."
+        confirmLabel="Close job"
+        tone="destructive"
+        busy={busy}
+        requireReason
+        onCancel={() => setConfirmDelete(null)}
+        onConfirm={async (reason) => {
+          if (!confirmDelete) return
+          setBusy(true)
+          try {
+            await adminApi.setJobStatus({ jobId: confirmDelete.id, status: 'closed' })
+            await adminApi.operatorAction({ action: 'note', target: `job:${confirmDelete.id}`, reason })
+            push('success', `${confirmDelete.title} closed.`)
+            setConfirmDelete(null)
+            await load()
+          } catch (err) {
+            push('error', err instanceof Error ? err.message : 'Could not close that job.')
+          } finally {
+            setBusy(false)
+          }
+        }}
+      />
     </div>
   )
+}
+
+function toLocalDate(iso: string): string {
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return ''
+  return date.toISOString().slice(0, 10)
 }

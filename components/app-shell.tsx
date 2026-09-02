@@ -21,7 +21,7 @@ import { useMaintenance } from '@/components/maintenance-provider'
 import { BrandLink } from '@/components/brand'
 import { site } from '@/lib/site'
 
-import { isUserAdmin } from '@/lib/admin'
+import { isUserAdmin, useAdminSession } from '@/lib/admin'
 
 function initials(nameOrEmail: string) {
   const base = nameOrEmail.includes('@') ? nameOrEmail.split('@')[0] : nameOrEmail
@@ -46,9 +46,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const displayName = user?.displayName || user?.email || 'Worker'
   const avatar = initials(displayName).toUpperCase() || 'W'
 
-  // Cosmetic only: decides whether to show the Admin link. The console itself is gated by
-  // useAdminSession() + the API guard, so a wrong answer here grants nothing.
-  const isAdmin = isUserAdmin({ idTokenResult: { claims: (claims as Record<string, unknown>) ?? null } }, worker)
+  // Shows the Admin link when an admin session is active or user has staff claims.
+  // The console itself is gated by useAdminSession() + the API guard.
+  const adminSession = useAdminSession()
+  const isAdmin =
+    adminSession.status === 'authorized' ||
+    isUserAdmin({ idTokenResult: { claims: (claims as Record<string, unknown>) ?? null } }, worker)
   // Three states worth a strip: banner mode, and a scoped blackout (only some areas are down).
   const scopedBlackout = view.blocking && !view.blocksAll
   const bannerVisible = (view.bannerOnly || scopedBlackout) && !view.unknown
@@ -174,6 +177,30 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         )}
         {children}
       </main>
+
+      {/* Desktop / tablet footer */}
+      <footer className="mt-auto hidden border-t border-border/60 bg-card/40 py-6 md:block">
+        <div className="mx-auto flex w-full max-w-6xl items-center justify-between px-4 text-xs text-muted-foreground sm:px-6">
+          <p>
+            © {new Date().getFullYear()} {site.legalName}. All rights reserved.
+          </p>
+          <div className="flex items-center gap-5">
+            <Link href="/status" className="transition-colors hover:text-foreground">
+              Platform status
+            </Link>
+            <a href={`mailto:${site.supportEmail}`} className="transition-colors hover:text-foreground">
+              Support
+            </a>
+            <Link
+              href="/admin"
+              className="inline-flex items-center gap-1 font-medium text-muted-foreground transition-colors hover:text-primary"
+            >
+              <Shield className="size-3.5" />
+              Operations Console
+            </Link>
+          </div>
+        </div>
+      </footer>
 
       {/* Mobile bottom nav */}
       <nav

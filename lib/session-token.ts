@@ -72,7 +72,18 @@ function b64UrlToBytes(input: string): Uint8Array | null {
       bytes.push((buffer >> bits) & 255)
     }
   }
-  if (bits >= 4) return null // stray half-byte ⇒ not canonical base64url
+  // Canonicality check for UNPADDED base64url. After consuming full bytes the leftover bit count
+  // is (6 * input.length) mod 8:
+  //   input length ≡ 0 (mod 4) → 0 leftover bits
+  //   input length ≡ 3 (mod 4) → 2 leftover bits  (3 chars encode 2 bytes)
+  //   input length ≡ 2 (mod 4) → 4 leftover bits  (2 chars encode 1 byte)
+  //   input length ≡ 1 (mod 4) → 6 leftover bits  — never valid (a lone trailing char).
+  // The previous `bits >= 4` test wrongly rejected the perfectly valid 4-bit case, which made
+  // roughly a third of session tokens — those whose payload length is 1 (mod 3) — decode to
+  // null and read as "malformed", silently logging those admins back out. We accept 0/2/4
+  // leftover bits and additionally require those padding bits to be zero.
+  if (bits >= 6) return null // input length ≡ 1 (mod 4): not a valid base64url group
+  if (bits > 0 && (buffer & ((1 << bits) - 1)) !== 0) return null // non-zero padding ⇒ malformed
   return new Uint8Array(bytes)
 }
 

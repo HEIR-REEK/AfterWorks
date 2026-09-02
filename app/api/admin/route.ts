@@ -102,7 +102,8 @@ export async function PATCH(req: NextRequest) {
     switch (action) {
       case 'revoke-sessions': {
         if (!firestore.isFirebaseAdminUsable()) return fail(503, 'Storage unavailable.', { code: 'storage_unavailable' })
-        const at = await firestore.revokeAllAdminSessions(guard.value.email)
+        const reason = sanitizeLine(body.reason ?? '', 400)
+        const at = await firestore.revokeAllAdminSessionsWithReason(guard.value.email, reason)
         const { clearRevocationCache, invalidateAdminCache } = await import('@/lib/guards')
         clearRevocationCache()
         invalidateAdminCache()
@@ -110,12 +111,21 @@ export async function PATCH(req: NextRequest) {
       }
 
       case 'revoke-session': {
-        const jti = String(body.jti ?? '').slice(0, 64)
+        const jti = String(body.jti ?? '').slice(0, 80)
         if (!jti) return fail(400, 'A session id is required.', { code: 'missing_jti' })
+        const reason = sanitizeLine(body.reason ?? '', 400)
         await firestore.revokeAdminSession(jti, guard.value.email)
+        if (reason) {
+          await audit({
+            action: 'ADMIN_SESSION_REVOKE_REASON',
+            actorEmail: guard.value.email,
+            details: { jti, reason },
+            req,
+          })
+        }
         const { clearRevocationCache } = await import('@/lib/guards')
         clearRevocationCache()
-        return json({ ok: true, revoked: jti })
+        return json({ ok: true, revoked: jti, self: jti === guard.value.jti })
       }
 
       case 'unlock': {

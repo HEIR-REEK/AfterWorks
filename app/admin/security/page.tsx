@@ -8,6 +8,7 @@ import {
   KeyRound,
   Loader2,
   Lock,
+  MonitorX,
   RefreshCw,
   Shield,
   ShieldAlert,
@@ -17,7 +18,7 @@ import {
   UserCheck,
   XCircle,
 } from 'lucide-react'
-import { adminApi, terminateAdminSession, useAdminCapabilities, useAdminSession } from '@/lib/admin'
+import { adminApi, terminateAdminSession, useAdminCapabilities, useAdminSession, type ActiveAdminSession } from '@/lib/admin'
 import { AdminCard, LiveDot, ReasonDialog, useToasts } from '@/components/admin-ui'
 import { Button } from '@/components/ui/button'
 import { StatusBadge } from '@/components/status-badge'
@@ -47,18 +48,22 @@ export default function AdminSecurityPage() {
   const [posture, setPosture] = useState<Check[]>([])
   const [lockouts, setLockouts] = useState<{ tracked: number; totalAttempts: number; totalBlocked: number; locked: Lockout[] } | null>(null)
   const [failures, setFailures] = useState<{ action: string; details?: Record<string, unknown>; actorEmail?: string; timestamp: string }[]>([])
+  const [sessions, setSessions] = useState<ActiveAdminSession[]>([])
+  const [sessionsDegraded, setSessionsDegraded] = useState(false)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [health, setHealth] = useState<Record<string, unknown> | null>(null)
   const [showRevoked, setShowRevoked] = useState(false)
   const [unlockTarget, setUnlockTarget] = useState<string | null>(null)
+  const [revokeTarget, setRevokeTarget] = useState<ActiveAdminSession | null>(null)
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [sessionInfo, stats, audit] = await Promise.all([
+      const [sessionInfo, stats, audit, liveSessions] = await Promise.all([
         adminApi.sessionInfo(),
         adminApi.stats(true).catch(() => null),
         adminApi.auditLogs({ limit: 40, action: 'ADMIN_LOGIN_FAILED' }).catch(() => null),
+        adminApi.sessions().catch((err) => err),
       ])
       setInfo(sessionInfo)
       const security = ((stats as Record<string, unknown> | null)?.security ?? {}) as {
@@ -68,6 +73,13 @@ export default function AdminSecurityPage() {
       setPosture(security.posture ?? [])
       setLockouts(security.lockouts ?? null)
       setFailures((audit?.logs as typeof failures) ?? [])
+      if (liveSessions && Array.isArray((liveSessions as { sessions?: unknown }).sessions)) {
+        setSessions((liveSessions as { sessions: ActiveAdminSession[] }).sessions)
+        setSessionsDegraded(false)
+      } else {
+        setSessions([])
+        setSessionsDegraded(true)
+      }
     } catch (err) {
       push('error', err instanceof Error ? err.message : 'Security state is not readable right now.')
     } finally {
@@ -165,6 +177,80 @@ export default function AdminSecurityPage() {
           </div>
         </AdminCard>
       </div>
+
+      {/* Active sessions — who is currently inside the console */}
+      <AdminCard
+        title="Active console sessions"
+        description="Every signed, unexpired admin cookie issued on this deployment. Revoking one device kills only that token."
+        icon={<MonitorX className="size-4" />}
+        actions={
+          <Button variant="outline" size="sm" className="gap-1.5" onClick={() => void load()} disabled={loading}>
+            <RefreshCw className={cn('size-3.5', loading && 'animate-spin')} />
+            Refresh
+          </Button>
+        }
+      >
+        {sessionsDegraded ? (
+          <p className="text-xs text-muted-foreground">
+            Live sessions are unavailable on this deployment (the Admin SDK is not connected). Revocation still works;
+            only the listing is off.
+          </p>
+        ) : sessions.length === 0 ? (
+          <p className="text-xs text-muted-foreground">
+            No active sessions recorded. New sign-ins appear here; records expire with the cookie.
+          </p>
+        ) : (
+          <div className="flex flex-col gap-2">
+            <p className="text-[11px] text-muted-foreground">
+              {sessions.length} {sessions.length === 1 ? 'session' : 'sessions'} · “idle” is time since the last verified
+              request · addresses are stored only as HMAC/FNV digests.
+            </p>
+            <ul className="flex flex-col gap-1.5">
+              {sessions.slice(0, 20).map((s) => (
+                <li
+                  key={s.jti}
+                  className={cn(
+                    'flex items-start gap-2.5 rounded-xl border px-3 py-2',
+                    s.current ? 'border-primary/40 bg-primary/[0.06]' : 'border-border/70 bg-background/50',
+                  )}
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="flex flex-wrap items-center gap-1.5 text-xs font-semibold text-foreground">
+                      <span className="truncate">{s.email}</span>
+                      {s.current && (
+                        <span className="rounded-full bg-primary/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-primary">
+                          this device
+                        </span>
+                      )}
+                      {s.idleSeconds > 30 * 60 && !s.current && (
+                        <span className="rounded-full bg-warning/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-warning-foreground">
+                          idle
+                        </span>
+                      )}
+                    </p>
+                    <p className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground">
+                      {describeUA(s.userAgent)} · ip {s.ipHash || '—'}
+                    </p>
+                    <p className="mt-0.5 font-mono text-[10px] text-muted-foreground">
+                      signed {new Date(s.issuedAt).toLocaleString()} · last seen {formatAgo(s.idleSeconds)} ago · expires in {formatLeft(s.remainingSeconds)}
+                    </p>
+                  </div>
+                  {!s.current && (
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => setRevokeTarget(s)}
+                      className="shrink-0 rounded-lg border border-destructive/30 px-2 py-1 text-[11px] font-semibold text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-50"
+                    >
+                      Revoke
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </AdminCard>
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
         {/* Posture */}
@@ -334,7 +420,7 @@ export default function AdminSecurityPage() {
       <ReasonDialog
         open={showRevoked}
         title="Revoke every console session"
-        description="Immediately invalidates all administrator sessions issued before now — including yours. Use it after a suspected token leak, a departed operator, or a machine that may have held a copy. The bypass cookie for maintenance is also revoked."
+        description="Immediately invalidates all administrator sessions issued before now — including yours. Use it after a suspected token leak, a departed operator, or a machine that may have held a copy. The bypass cookie for maintenance is also revoked. Your reason is written to the audit ledger."
         confirmLabel="Revoke all sessions"
         tone="destructive"
         busy={busy}
@@ -355,8 +441,59 @@ export default function AdminSecurityPage() {
           }
         }}
       />
+
+      <ReasonDialog
+        open={!!revokeTarget}
+        title="Revoke this session"
+        description={
+          revokeTarget
+            ? `Immediately signs out ${revokeTarget.email} on ${describeUA(revokeTarget.userAgent) || 'that device'} (signed in ${new Date(revokeTarget.issuedAt).toLocaleString()}). Their current cookie stops working on the next request; other sessions are unaffected. Your reason is audited.`
+            : ''
+        }
+        confirmLabel="Revoke session"
+        tone="destructive"
+        busy={busy}
+        requireReason
+        onCancel={() => setRevokeTarget(null)}
+        onConfirm={async (reason) => {
+          if (!revokeTarget) return
+          setBusy(true)
+          try {
+            await adminApi.operatorAction({ action: 'revoke-session', jti: revokeTarget.jti, reason })
+            push('success', 'That session was revoked.')
+            setRevokeTarget(null)
+            await load()
+          } catch (err) {
+            push('error', err instanceof Error ? err.message : 'Could not revoke that session.')
+          } finally {
+            setBusy(false)
+          }
+        }}
+      />
     </div>
   )
+}
+
+function describeUA(ua: string): string {
+  if (!ua) return 'unknown device'
+  const isMobile = /Mobile|Android|iPhone|iPad/i.test(ua)
+  let browser = 'browser'
+  if (/Edg\//.test(ua)) browser = 'Edge'
+  else if (/Chrome\//.test(ua) && !/Chromium/.test(ua)) browser = 'Chrome'
+  else if (/Firefox\//.test(ua)) browser = 'Firefox'
+  else if (/Safari\//.test(ua)) browser = 'Safari'
+  const os = /Windows/.test(ua) ? 'Windows' : /Mac OS X|Macintosh/.test(ua) ? 'macOS' : /Android/.test(ua) ? 'Android' : /iPhone|iPad|iOS/.test(ua) ? 'iOS' : /Linux/.test(ua) ? 'Linux' : 'device'
+  return `${browser} on ${os}${isMobile ? ' (mobile)' : ''}`
+}
+
+function formatAgo(seconds: number): string {
+  if (!seconds || seconds <= 0) return 'just now'
+  if (seconds < 60) return `${Math.round(seconds)}s`
+  const m = Math.floor(seconds / 60)
+  if (m < 60) return `${m}m`
+  const h = Math.floor(m / 60)
+  if (h < 24) return `${h}h ${m % 60}m`
+  return `${Math.floor(h / 24)}d`
 }
 
 function Row({ label, value, mono, tone }: { label: string; value: string; mono?: boolean; tone?: 'ok' | 'warn' | 'fail' }) {

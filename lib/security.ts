@@ -46,6 +46,36 @@ export type SecurityConfig = {
 let cachedConfig: { value: SecurityConfig; expiresAt: number } | null = null
 const CONFIG_TTL_MS = 30_000
 
+/**
+ * Ephemeral DEVELOPMENT-only session secret, generated once per Node process.
+ *
+ * It must NOT live inside `getSecurityConfig()`'s 30-second cached value: that cache is rebuilt
+ * on a timer and the route module is re-evaluated on hot reload, so a secret minted per rebuild
+ * changes underneath live cookies — a token signed at sign-in then fails verification on the
+ * very next request, which shows up as "sign-in succeeds but the console never lets me in".
+ * Pinning it to `globalThis` keeps it stable for the life of the process (all hot reloads share
+ * it) while still being throwaway: a restart logs everyone out, and production never uses it.
+ */
+const securityGlobal = globalThis as unknown as {
+  __awDevSessionSecret?: string
+  __awDevSecretWarned?: boolean
+}
+
+function devEphemeralSecret(): string {
+  if (!securityGlobal.__awDevSessionSecret) {
+    securityGlobal.__awDevSessionSecret = `dev-only-${randomBytes(24).toString('hex')}`
+  }
+  if (!securityGlobal.__awDevSecretWarned) {
+    securityGlobal.__awDevSecretWarned = true
+    console.warn(
+      '[security] Using an ephemeral development ADMIN_SESSION_SECRET (stable for this process; ' +
+        'sessions reset on restart). Set ADMIN_SESSION_SECRET for production and for shared/preview ' +
+        'environments so sign-ins survive across instances.',
+    )
+  }
+  return securityGlobal.__awDevSessionSecret
+}
+
 /** Env vars whose *names* are safe to check but whose values must never be public. */
 const LEAKY_PUBLIC_VARS = ['NEXT_PUBLIC_ADMIN_PASSWORD', 'NEXT_PUBLIC_ADMIN_EMAILS', 'NEXT_PUBLIC_ADMIN_SESSION_SECRET']
 
@@ -82,14 +112,9 @@ export function getSecurityConfig(): SecurityConfig {
       )
       secret = ''
     } else {
-      secret = secret || `dev-only-${randomBytes(24).toString('hex')}`
-      if (!process.env.__AW_DEV_SECRET_WARNED) {
-        process.env.__AW_DEV_SECRET_WARNED = '1'
-        console.warn(
-          '[security] Using an ephemeral development ADMIN_SESSION_SECRET. ' +
-            'Admin sessions will be invalidated on restart. Set ADMIN_SESSION_SECRET for production.',
-        )
-      }
+      // Dev/preview only. A process-stable ephemeral key keeps sessions working until restart
+      // without ever persisting a real credential.
+      secret = devEphemeralSecret()
     }
   }
 
@@ -178,13 +203,13 @@ export const ADMIN_COOKIE = 'aw_admin_session'
 export const BYPASS_COOKIE = 'aw_ops_bypass'
 export const LEGACY_ADMIN_COOKIES = ['afterworks_admin_session']
 
-export type AdminSession = { token: string; jti: string; expiresAt: number; email: string }
+export type AdminSession = { token: string; jti: string; issuedAt: number; expiresAt: number; email: string }
 
 export async function createAdminSession(email: string): Promise<AdminSession | null> {
   const cfg = getSecurityConfig()
   if (!cfg.secretReady) return null
   const issued = await issueSession(email, cfg.sessionSecret, cfg.sessionTtlMs, 'admin')
-  return { ...issued, email: email.trim().toLowerCase() }
+  return { ...issued, issuedAt: issued.expiresAt - cfg.sessionTtlMs, email: email.trim().toLowerCase() }
 }
 
 /** Short-lived cookie that only bypasses maintenance mode (ops on-call, audited). */

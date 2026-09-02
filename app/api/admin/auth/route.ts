@@ -130,6 +130,26 @@ export async function POST(req: NextRequest) {
     req,
   })
 
+  // Record the live session (server-only collection) so the Security Centre can list active
+  // operators and revoke a single device. Never contains the token or any secret.
+  if (envBool('ADMIN_TRACK_SESSIONS', true)) {
+    try {
+      const { isFirebaseAdminUsable, recordAdminSession } = await import('@/lib/firestore-admin')
+      if (isFirebaseAdminUsable()) {
+        await recordAdminSession({
+          jti: session.jti,
+          email,
+          issuedAt: session.issuedAt,
+          expiresAt: session.expiresAt,
+          ipHash: ctx.identity.ipHash,
+          userAgent: ctx.identity.userAgent,
+        })
+      }
+    } catch (err) {
+      console.warn('[admin/auth] session tracking skipped:', err)
+    }
+  }
+
   const maxAge = Math.max(60, Math.floor((session.expiresAt - Date.now()) / 1000))
   const secure = isProduction() || envBool('FORCE_SECURE_COOKIES', false)
   const response = NextResponse.json({

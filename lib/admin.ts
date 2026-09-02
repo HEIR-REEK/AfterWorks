@@ -270,6 +270,23 @@ export const adminApi = {
     const res = await fetch('/api/health?checks=1', { credentials: 'same-origin', cache: 'no-store' })
     return (await res.json()) as Record<string, unknown>
   },
+  /** Live console sessions (server-only collection), for the Security Centre sessions panel. */
+  sessions: () =>
+    apiFetch<{ ok: boolean; count: number; generatedAt: string; sessions: ActiveAdminSession[] }>('/api/admin/sessions'),
+}
+
+/** One live operator session as reported by `/api/admin/sessions`. */
+export type ActiveAdminSession = {
+  jti: string
+  email: string
+  issuedAt: string
+  expiresAt: string
+  lastSeenAt: string
+  idleSeconds: number
+  remainingSeconds: number
+  ipHash: string
+  userAgent: string
+  current?: boolean
 }
 
 /** Row shape the users directory renders (mirrors `AdminUserRow` on the server). */

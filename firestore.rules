@@ -147,6 +147,14 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // ── Active admin-session metadata (server-only) ──────────────────────────
+    // One doc per issued console cookie (jti, email, ip digest, UA, expiry). Written and read
+    // exclusively by the Admin SDK from /api/* routes so the Security Centre can list and revoke
+    // live sessions. It holds no token or secret, but clients must not read or forge it.
+    match /admin_sessions/{sessionId} {
+      allow read, write: if false; // via Admin SDK only (session record + revoke endpoints)
+    }
+
     // ── Deny by default ──────────────────────────────────────────────────────
     match /{document=**} {
       allow read, write: if false;

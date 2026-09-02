@@ -3,7 +3,7 @@
 import { useState, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
-import { CheckCircle2, Loader2, ShieldCheck, Eye, EyeOff } from 'lucide-react'
+import { CheckCircle2, Loader2, Shield, ShieldCheck, Eye, EyeOff } from 'lucide-react'
 import { Button } from './ui/button'
 import { useAuth } from './firebase-auth-provider'
 import { BrandLockup } from '@/components/brand'
@@ -227,9 +227,18 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
         )}
       </p>
 
-      <div className="mt-8 flex items-center justify-center gap-1.5 text-xs text-muted-foreground">
-        <ShieldCheck className="size-3.5 text-success" />
-        Your data is protected. AfterWorks never charges to apply.
+      <div className="mt-8 flex flex-col items-center gap-2.5 text-center text-xs text-muted-foreground">
+        <Link
+          href="/admin/login"
+          className="inline-flex items-center gap-1.5 font-medium text-muted-foreground transition-colors hover:text-foreground hover:underline"
+        >
+          <Shield className="size-3.5 text-primary" />
+          Staff & Operations Portal
+        </Link>
+        <div className="flex items-center gap-1.5">
+          <ShieldCheck className="size-3.5 text-success" />
+          Your data is protected. AfterWorks never charges to apply.
+        </div>
       </div>
     </div>
   )

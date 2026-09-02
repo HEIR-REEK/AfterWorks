@@ -19,6 +19,7 @@ import {
   Clock3,
   Mail,
   RefreshCw,
+  Shield,
   ShieldCheck,
   AlertTriangle,
   Wrench,
@@ -263,13 +264,19 @@ export default function StatusPage() {
       </main>
 
       <footer className="border-t border-border/70 py-6">
-        <div className="mx-auto flex w-full max-w-3xl flex-col items-center justify-between gap-2 px-4 text-xs text-muted-foreground sm:flex-row sm:px-6">
+        <div className="mx-auto flex w-full max-w-3xl flex-col items-center justify-between gap-3 px-4 text-xs text-muted-foreground sm:flex-row sm:px-6">
           <p>
             © {new Date().getFullYear()} {site.legalName}
           </p>
-          <p className="font-mono">
-            {health ? `${health.checks.length} checks · ${overall}` : 'offline'}
-          </p>
+          <div className="flex items-center gap-4">
+            <Link href="/admin/login" className="inline-flex items-center gap-1 font-medium transition-colors hover:text-foreground">
+              <Shield className="size-3.5" />
+              Staff Login
+            </Link>
+            <span className="font-mono">
+              {health ? `${health.checks.length} checks · ${overall}` : 'offline'}
+            </span>
+          </div>
         </div>
       </footer>
     </div>

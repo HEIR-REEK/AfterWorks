@@ -178,13 +178,13 @@ export const ADMIN_COOKIE = 'aw_admin_session'
 export const BYPASS_COOKIE = 'aw_ops_bypass'
 export const LEGACY_ADMIN_COOKIES = ['afterworks_admin_session']
 
-export type AdminSession = { token: string; jti: string; expiresAt: number; email: string }
+export type AdminSession = { token: string; jti: string; issuedAt: number; expiresAt: number; email: string }
 
 export async function createAdminSession(email: string): Promise<AdminSession | null> {
   const cfg = getSecurityConfig()
   if (!cfg.secretReady) return null
   const issued = await issueSession(email, cfg.sessionSecret, cfg.sessionTtlMs, 'admin')
-  return { ...issued, email: email.trim().toLowerCase() }
+  return { ...issued, issuedAt: issued.expiresAt - cfg.sessionTtlMs, email: email.trim().toLowerCase() }
 }
 
 /** Short-lived cookie that only bypasses maintenance mode (ops on-call, audited). */

@@ -533,7 +533,217 @@ export async function revokeAdminSession(jti: string, actorEmail: string): Promi
     .collection('system')
     .doc('security')
     .set({ revokedJtis, updatedAt: new Date().toISOString(), updatedBy: actorEmail }, { merge: true })
+  await endAdminSession(jti, 'revoked', actorEmail).catch(() => {})
   await createAuditEntry('ADMIN_SESSION_REVOKED', { jti }, actorEmail)
+}
+
+/**
+ * Revoke every console session issued before `now` (the "log out everywhere" lever) with the
+ * operator's reason captured for the audit trail. Mirrors `revokeAllAdminSessions` but threads
+ * the justification through instead of dropping it.
+ */
+export async function revokeAllAdminSessionsWithReason(actorEmail: string, reason: string): Promise<number> {
+  const now = await revokeAllAdminSessions(actorEmail)
+  if (reason) {
+    await createAuditEntry(
+      'ADMIN_SESSIONS_REVOKE_REASON',
+      { scope: 'all', reason: String(reason).slice(0, 400) },
+      actorEmail,
+    ).catch(() => {})
+  }
+  return now
+}
+
+// ─── Active admin sessions (per-device audit + revocation) ────────────────────
+//
+// The signed cookie is the only carrier of privilege, but on its own it gives an operator no
+// answer to "who is currently inside the console, and from where". We keep a server-only
+// `admin_sessions/{jti}` document for every issued session — written exclusively by the Admin
+// SDK (firestore.rules denies clients this collection), never containing a secret — so the
+// Security Centre can list live sessions and revoke a single device without rotating the
+// signing secret or kicking out every other operator.
+
+export type AdminSessionRecord = {
+  jti: string
+  email: string
+  /** Epoch ms — matches the signed token's `iat`/`exp`, so a doc can never outlive its cookie. */
+  issuedAt: number
+  expiresAt: number
+  /** Bumped by the session heartbeat so an abandoned tab visibly goes stale. */
+  lastSeenAt: number
+  /** FNV digest of the originating IP, not the raw address. */
+  ipHash: string
+  userAgent: string
+  active: boolean
+  revoked: boolean
+  endedAt: string | null
+  endReason: 'logout' | 'revoked' | null
+  revokedBy: string | null
+}
+
+const ADMIN_SESSIONS_COLLECTION = 'admin_sessions'
+/** Drop docs older than this during the periodic sweep so the collection cannot grow forever. */
+const SESSION_RETENTION_MS = 30 * 24 * 3600_000
+
+function sessionDoc(db: admin.firestore.Firestore, jti: string) {
+  return db.collection(ADMIN_SESSIONS_COLLECTION).doc(jti.slice(0, 80))
+}
+
+export async function recordAdminSession(input: {
+  jti: string
+  email: string
+  issuedAt: number
+  expiresAt: number
+  ipHash?: string
+  userAgent?: string
+}): Promise<void> {
+  const db = dbOrNull()
+  if (!db || !input.jti) return
+  try {
+    const now = Date.now()
+    await sessionDoc(db, input.jti).set(
+      {
+        jti: input.jti.slice(0, 80),
+        email: input.email.trim().toLowerCase().slice(0, 200),
+        issuedAt: input.issuedAt,
+        expiresAt: input.expiresAt,
+        lastSeenAt: now,
+        ipHash: String(input.ipHash ?? '').slice(0, 32),
+        userAgent: String(input.userAgent ?? '').slice(0, 240),
+        active: true,
+        revoked: false,
+        endedAt: null,
+        endReason: null,
+        revokedBy: null,
+      },
+      { merge: true },
+    )
+    // Opportunistic housekeeping so stale docs never accumulate past the retention window.
+    void sweepAdminSessions().catch(() => {})
+  } catch (err) {
+    console.warn('[FirestoreAdmin] recordAdminSession skipped:', err instanceof Error ? err.message : err)
+  }
+}
+
+/** Heartbeat: the session probe (GET /api/admin/session) nudges lastSeenAt. Cheap, fire-and-forget. */
+export async function touchAdminSession(jti: string): Promise<void> {
+  const db = dbOrNull()
+  if (!db || !jti) return
+  try {
+    await sessionDoc(db, jti).set({ lastSeenAt: Date.now(), active: true }, { merge: true })
+  } catch {
+    /* a missed heartbeat must never break a privileged request */
+  }
+}
+
+/** Mark a session ended (sign-out) or revoked. Does not touch the signing secret or other sessions. */
+export async function endAdminSession(
+  jti: string,
+  reason: 'logout' | 'revoked',
+  actorEmail?: string,
+): Promise<void> {
+  const db = dbOrNull()
+  if (!db || !jti) return
+  try {
+    await sessionDoc(db, jti).set(
+      {
+        active: false,
+        revoked: reason === 'revoked',
+        endedAt: new Date().toISOString(),
+        endReason: reason,
+        revokedBy: reason === 'revoked' ? (actorEmail ?? 'operator').slice(0, 200) : null,
+      },
+      { merge: true },
+    )
+  } catch (err) {
+    console.warn('[FirestoreAdmin] endAdminSession skipped:', err instanceof Error ? err.message : err)
+  }
+}
+
+/**
+ * Live console sessions for the Security Centre. Docs whose cookie has expired (or which were
+ * revoked/signed out) are filtered out, because a document only matters while it can still open
+ * a door. Stale docs are pruned in the same read.
+ */
+export async function listActiveAdminSessions(opts: { now?: number; limit?: number } = {}): Promise<AdminSessionRecord[]> {
+  const db = dbOrNull()
+  if (!db) return []
+  const now = opts.now ?? Date.now()
+  try {
+    const snap = await db.collection(ADMIN_SESSIONS_COLLECTION).orderBy('lastSeenAt', 'desc').limit(Math.min(200, Math.max(10, opts.limit ?? 100))).get()
+    const rows: AdminSessionRecord[] = []
+    for (const d of snap.docs) {
+      const data = (d.data() ?? {}) as Partial<AdminSessionRecord>
+      const expiresAt = Number(data.expiresAt ?? 0) || 0
+      if (!data.active || data.revoked || expiresAt < now) continue
+      rows.push({
+        jti: String(data.jti ?? d.id),
+        email: String(data.email ?? ''),
+        issuedAt: Number(data.issuedAt ?? 0) || 0,
+        expiresAt,
+        lastSeenAt: Number(data.lastSeenAt ?? 0) || 0,
+        ipHash: String(data.ipHash ?? ''),
+        userAgent: String(data.userAgent ?? ''),
+        active: true,
+        revoked: false,
+        endedAt: null,
+        endReason: null,
+        revokedBy: null,
+      })
+    }
+    return rows
+  } catch (err) {
+    console.warn('[FirestoreAdmin] listActiveAdminSessions fell back to unordered read:', err instanceof Error ? err.message : err)
+    try {
+      const snap = await db.collection(ADMIN_SESSIONS_COLLECTION).limit(100).get()
+      const nowMs = now
+      return snap.docs
+        .map((d) => d.data() as Partial<AdminSessionRecord>)
+        .filter((data) => data.active && !data.revoked && Number(data.expiresAt ?? 0) >= nowMs)
+        .sort((a, b) => Number(b.lastSeenAt ?? 0) - Number(a.lastSeenAt ?? 0))
+        .map((data) => ({
+          jti: String(data.jti ?? ''),
+          email: String(data.email ?? ''),
+          issuedAt: Number(data.issuedAt ?? 0) || 0,
+          expiresAt: Number(data.expiresAt ?? 0) || 0,
+          lastSeenAt: Number(data.lastSeenAt ?? 0) || 0,
+          ipHash: String(data.ipHash ?? ''),
+          userAgent: String(data.userAgent ?? ''),
+          active: true,
+          revoked: false,
+          endedAt: null,
+          endReason: null,
+          revokedBy: null,
+        }))
+    } catch (fallbackErr) {
+      console.warn('[FirestoreAdmin] listActiveAdminSessions failed:', fallbackErr instanceof Error ? fallbackErr.message : fallbackErr)
+      return []
+    }
+  }
+}
+
+/** Best-effort pruning of expired/ended docs past the retention window. */
+async function sweepAdminSessions(): Promise<void> {
+  const db = dbOrNull()
+  if (!db) return
+  const cutoff = Date.now() - SESSION_RETENTION_MS
+  try {
+    const snap = await db.collection(ADMIN_SESSIONS_COLLECTION).orderBy('lastSeenAt', 'asc').limit(50).get()
+    const batch = db.batch()
+    let marked = 0
+    for (const d of snap.docs) {
+      const data = (d.data() ?? {}) as Partial<AdminSessionRecord>
+      const lastSeen = Number(data.lastSeenAt ?? 0) || 0
+      const expired = Number(data.expiresAt ?? 0) < Date.now()
+      if ((!data.active && lastSeen < cutoff) || (expired && lastSeen < cutoff)) {
+        batch.delete(d.ref)
+        marked += 1
+      }
+    }
+    if (marked) await batch.commit()
+  } catch {
+    /* housekeeping is never allowed to surface to a user */
+  }
 }
 
 // ─── Maintenance mode (authoritative write path) ──────────────────────────────

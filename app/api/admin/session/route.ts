@@ -20,11 +20,24 @@ export async function GET(req: NextRequest) {
     return json({ ok: true, authenticated: false, reason: 'no_session', signInPath: '/admin/login' })
   }
 
+  // Heartbeat: keep the session's "last seen" fresh so the Security Centre can tell an active
+  // tab from an abandoned one. Only revocable cookie sessions are tracked (Firebase tooling
+  // tokens are not in the admin_sessions collection).
+  if (principal.via === 'session-cookie' && !principal.jti.startsWith('uid:')) {
+    try {
+      const { isFirebaseAdminUsable, touchAdminSession } = await import('@/lib/firestore-admin')
+      if (isFirebaseAdminUsable()) void touchAdminSession(principal.jti)
+    } catch {
+      /* a missed heartbeat must not affect the probe */
+    }
+  }
+
   return json({
     ok: true,
     authenticated: true,
     email: principal.email,
     via: principal.via,
+    jti: principal.via === 'session-cookie' && !principal.jti.startsWith('uid:') ? principal.jti : undefined,
     expiresAt: new Date(principal.expiresAt).toISOString(),
     remainingSeconds: Math.max(0, Math.floor((principal.expiresAt - Date.now()) / 1000)),
     sessionMinutes: Math.round(getSecurityConfig().sessionTtlMs / 60_000),
@@ -44,11 +57,15 @@ async function handleLogout(req: NextRequest) {
   const secure = isProduction()
 
   if (principal?.jti && !principal.jti.startsWith('uid:')) {
-    // Revoking the jti is what makes "sign out" actually sign out — deleting a cookie only hides
-    // the key, and a copy taken by malware, a proxy log or a devtools session still works without it.
+    // Sign-out closes the live-session record immediately (the cookie is also deleted below).
+    // We deliberately revoke the jti too: deleting a cookie only hides the key, while a copy
+    // taken by malware, a proxy log or a devtools session would otherwise keep working until
+    // natural expiry. Revocation is what makes "sign out" actually sign the token out.
     try {
       const { isFirebaseAdminUsable, revokeAdminSession } = await import('@/lib/firestore-admin')
-      if (isFirebaseAdminUsable()) await revokeAdminSession(principal.jti, principal.email)
+      if (isFirebaseAdminUsable()) {
+        await revokeAdminSession(principal.jti, principal.email)
+      }
     } catch (err) {
       console.warn('[admin/session] revoke write failed:', err)
     }

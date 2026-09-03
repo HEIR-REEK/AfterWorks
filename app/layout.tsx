@@ -103,7 +103,7 @@ export const viewport: Viewport = {
 
 export default async function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   const config = readFirebaseConfig()
-  const headerList = headers()
+  const headerList = await headers()
   const maintenanceMode = headerList.get('x-afterworks-maintenance-mode') ?? 'off'
   const requestId = headerList.get('x-request-id') ?? undefined
   const noIndex = envBool('SITE_NO_INDEX', !isProduction())

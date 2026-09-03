@@ -36,7 +36,7 @@ type PaystackVerify = {
   }
 }
 
-export async function GET(req: NextRequest, { params }: { params: { reference: string } }) {
+export async function GET(req: NextRequest, { params }: { params: Promise<{ reference: string }> }) {
   const guard = await requireUser(req)
   if (!guard.ok) return guard.response
   const { uid, email } = guard.value
@@ -46,7 +46,8 @@ export async function GET(req: NextRequest, { params }: { params: { reference: s
     return fail(429, 'Too many verification checks. Please wait.', { code: 'rate_limited', headers: { 'Retry-After': String(bucket.retryAfterSec) } })
   }
 
-  const reference = String(params?.reference ?? '').slice(0, 64)
+  const { reference: paramReference } = await params
+  const reference = String(paramReference ?? '').slice(0, 64)
   if (!REFERENCE_PATTERN.test(reference)) {
     return fail(400, 'That payment reference was not issued by this site.', { code: 'bad_reference' })
   }

@@ -16,6 +16,7 @@ export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest) {
   const principal = await resolveAdmin(req)
+  console.log('[DEBUG] GET /api/admin/session - principal:', principal)
   if (!principal) {
     return json({ ok: true, authenticated: false, reason: 'no_session', signInPath: '/admin/login' })
   }

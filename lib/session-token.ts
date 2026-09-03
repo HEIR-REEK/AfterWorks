@@ -185,6 +185,7 @@ export async function verifyToken(
   const expectedSig = await hmac(secret, `${TOKEN_VERSION}.${payloadB64}`)
   const givenSig = b64UrlToBytes(sigB64)
   if (!givenSig || !constantTimeEqual(expectedSig, givenSig)) {
+    console.log('[DEBUG] Signature mismatch!', { expectedSig, givenSig, secretLength: secret.length });
     return { ok: false, reason: 'signature' }
   }
 

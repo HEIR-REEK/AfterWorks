@@ -26,12 +26,14 @@ import {
   Application,
 } from '../../../lib/afterworks-data'
 
+import { use } from 'react'
+
 export default function JobDetailPage({
   params,
 }: {
-  params: { id: string }
+  params: Promise<{ id: string }>
 }) {
-  const { id } = params
+  const { id } = use(params)
   const router = useRouter()
   const { getJob, getApplicationForJob, isJobPaid, worker } = useAfterWorks()
   const [error, setError] = useState<string | null>(null)

@@ -1,6 +1,6 @@
 'use client'
 
-import { Suspense, useCallback, useEffect, useRef, useState } from 'react'
+import { Suspense, useCallback, useEffect, useRef, useState, use } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import {
@@ -209,12 +209,8 @@ function PaystackCheckoutSection({
   )
 }
 
-function TrainingPageInner({
-  params,
-}: {
-  params: { id: string }
-}) {
-  const { id } = params
+function TrainingPageInner({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = use(params)
   const router = useRouter()
   const searchParams = useSearchParams()
   const { getJob, worker, applyToJob, getApplicationForJob, isJobPaid, verifyTrainingPayment } = useAfterWorks()
@@ -485,7 +481,7 @@ function TrainingPageInner({
   )
 }
 
-export default function TrainingPage(props: { params: { id: string } }) {
+export default function TrainingPage(props: { params: Promise<{ id: string }> }) {
   return (
     <Suspense
       fallback={

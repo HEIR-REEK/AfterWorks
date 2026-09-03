@@ -1,13 +1,28 @@
-import * as admin from 'firebase-admin'
+import { initializeApp, getApps, getApp, cert, applicationDefault, type App, type ServiceAccount } from 'firebase-admin/app'
+import {
+  getFirestore,
+  FieldValue,
+  FieldPath,
+  type Firestore,
+  type Query,
+  type QueryDocumentSnapshot,
+  type DocumentSnapshot,
+  type WriteBatch,
+  type CollectionReference,
+  type DocumentReference,
+  type Transaction,
+} from 'firebase-admin/firestore'
+import { getAuth, type DecodedIdToken, type Auth, type UserInfo } from 'firebase-admin/auth'
 import * as fs from 'fs'
 import * as path from 'path'
 import type { DiditSessionStatus } from '@/lib/didit'
 
 // ─── Admin SDK initialisation (singleton) ────────────────────────────────────
 
-function getAdminApp(): admin.app.App {
-  if (admin.apps.length > 0) {
-    return admin.apps[0] as admin.app.App
+
+function getAdminApp(): App {
+  if (getApps().length > 0) {
+    return getApp()
   }
 
   const projectId = process.env.FIREBASE_PROJECT_ID
@@ -36,9 +51,9 @@ function getAdminApp(): admin.app.App {
         parsedJson.private_key = parsedJson.private_key.replace(/\\n/g, '\n')
       }
 
-      const serviceAccount = parsedJson as admin.ServiceAccount
-      return admin.initializeApp({
-        credential: admin.credential.cert(serviceAccount),
+      const serviceAccount = parsedJson as ServiceAccount
+      return initializeApp({
+        credential: cert(serviceAccount),
         projectId: (serviceAccount as unknown as { project_id: string }).project_id || projectId,
       })
     } catch (err) {
@@ -56,9 +71,9 @@ function getAdminApp(): admin.app.App {
         serviceAccountPath.replace(/^\.\//, ''),
       )
       const raw = fs.readFileSync(resolvedPath, 'utf8')
-      const serviceAccount = JSON.parse(raw) as admin.ServiceAccount
-      return admin.initializeApp({
-        credential: admin.credential.cert(serviceAccount),
+      const serviceAccount = JSON.parse(raw) as ServiceAccount
+      return initializeApp({
+        credential: cert(serviceAccount),
         projectId:
           (serviceAccount as unknown as { project_id: string }).project_id || projectId,
       })
@@ -74,8 +89,8 @@ function getAdminApp(): admin.app.App {
   )
 
   // 3. Application Default Credentials (GCP / Cloud Run)
-  return admin.initializeApp({
-    credential: admin.credential.applicationDefault(),
+  return initializeApp({
+    credential: applicationDefault(),
     projectId,
   })
 }
@@ -111,16 +126,16 @@ export function resetAdminUsabilityProbe(): void {
 }
 
 /** Admin Firestore handle, or null when the SDK is unavailable (callers must degrade). */
-export function dbOrNull(): admin.firestore.Firestore | null {
+export function dbOrNull(): Firestore | null {
   try {
-    return admin.firestore(getAdminApp())
+    return getFirestore(getAdminApp())
   } catch (err) {
     console.warn('[FirestoreAdmin] Firestore handle unavailable:', err instanceof Error ? err.message : err)
     return null
   }
 }
 
-export function adminDb(): admin.firestore.Firestore {
+export function adminDb(): Firestore {
   const db = dbOrNull()
   if (!db) throw new Error('Firebase Admin SDK is not configured (FIREBASE_SERVICE_ACCOUNT_JSON / _PATH).')
   return db
@@ -180,10 +195,10 @@ export async function createAuditEntry(
  */
 export async function verifyIdToken(
   idToken: string,
-): Promise<admin.auth.DecodedIdToken | null> {
+): Promise<DecodedIdToken | null> {
   try {
     const app = getAdminApp()
-    return await admin.auth(app).verifyIdToken(idToken)
+    return await getAuth(app).verifyIdToken(idToken)
   } catch (err) {
     console.warn('[FirestoreAdmin] verifyIdToken failed:', err)
     return null
@@ -202,7 +217,7 @@ export async function updateUserProfile(
 ): Promise<void> {
   try {
     const app = getAdminApp()
-    const db = admin.firestore(app)
+    const db = getFirestore(app)
 
     const clean = Object.fromEntries(
       Object.entries(fields).filter(([, v]) => v !== undefined),
@@ -224,7 +239,7 @@ export async function updateUserProfile(
 export async function getUserProfile(uid: string): Promise<Record<string, unknown> | null> {
   try {
     const app = getAdminApp()
-    const db = admin.firestore(app)
+    const db = getFirestore(app)
 
     const snap = await db.collection('users').doc(uid).get()
     if (!snap.exists) {
@@ -263,7 +278,7 @@ export type KycRecord = {
   /** Timestamp of the very first attempt (ISO 8601). */
   firstAttemptAt?: string
   /** Timestamp of the most recent status update (ISO 8601). Set server-side. */
-  updatedAt?: admin.firestore.FieldValue
+  updatedAt?: FieldValue
 }
 
 /**
@@ -285,7 +300,7 @@ export async function saveKycRecord(
 ): Promise<void> {
   try {
     const app = getAdminApp()
-    const db = admin.firestore(app)
+    const db = getFirestore(app)
     const recordRef = db.collection('kyc_records').doc(uid)
 
     // Atomically increment attemptCount when a new session begins
@@ -298,14 +313,14 @@ export async function saveKycRecord(
       const currentCount = typeof existing?.attemptCount === 'number' ? existing.attemptCount : 0
       const newCount = isNewSession ? currentCount + 1 : currentCount
 
-      const update: Partial<KycRecord> & { updatedAt: admin.firestore.FieldValue; attemptCount: number } = {
+      const update: Partial<KycRecord> & { updatedAt: FieldValue; attemptCount: number } = {
         userId: uid,
         sessionId,
         sessionToken,
         status,
         rawStatus: extras?.rawStatus ?? status,
         attemptCount: newCount,
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
       }
 
       if (extras?.rejectionReason) update.rejectionReason = extras.rejectionReason
@@ -336,7 +351,7 @@ export async function saveKycRecord(
 export async function getKycRecord(uid: string): Promise<KycRecord | null> {
   try {
     const app = getAdminApp()
-    const db = admin.firestore(app)
+    const db = getFirestore(app)
     const snap = await db.collection('kyc_records').doc(uid).get()
     if (!snap.exists) return null
     return snap.data() as KycRecord
@@ -355,11 +370,11 @@ export async function recordPaidTrainingAdmin(
 ): Promise<void> {
   try {
     const app = getAdminApp()
-    const db = admin.firestore(app)
+    const db = getFirestore(app)
     const userRef = db.collection('users').doc(uid)
     await userRef.set(
       {
-        paidTrainings: admin.firestore.FieldValue.arrayUnion(jobId),
+        paidTrainings: FieldValue.arrayUnion(jobId),
       },
       { merge: true },
     )
@@ -407,7 +422,7 @@ export async function recordPaymentTransactionAdmin(
 ): Promise<void> {
   try {
     const app = getAdminApp()
-    const db = admin.firestore(app)
+    const db = getFirestore(app)
     const txId = txData.id || `tx_${txData.reference}`
     const txRef = db.collection('transactions').doc(txId)
 
@@ -438,7 +453,7 @@ export async function recordPaymentTransactionAdmin(
 export async function checkUserAdminRoleAdmin(email: string): Promise<boolean> {
   try {
     const app = getAdminApp()
-    const db = admin.firestore(app)
+    const db = getFirestore(app)
     const cleanEmail = email.trim().toLowerCase()
     
     const snap = await db
@@ -585,7 +600,7 @@ const ADMIN_SESSIONS_COLLECTION = 'admin_sessions'
 /** Drop docs older than this during the periodic sweep so the collection cannot grow forever. */
 const SESSION_RETENTION_MS = 30 * 24 * 3600_000
 
-function sessionDoc(db: admin.firestore.Firestore, jti: string) {
+function sessionDoc(db: Firestore, jti: string) {
   return db.collection(ADMIN_SESSIONS_COLLECTION).doc(jti.slice(0, 80))
 }
 
@@ -936,18 +951,20 @@ export async function listUsersPage(opts: {
   const state = (opts.state ?? 'all').trim()
 
   try {
-    let ref: admin.firestore.Query = db.collection('users')
+    let ref: Query = db.collection('users')
     if (search) {
       ref = ref.orderBy('email').startAt(search).endAt(`${search}\uf8ff`)
+    } else if (state === 'staff') {
+      ref = ref.where('role', '==', 'admin').orderBy(FieldPath.documentId(), 'asc')
     } else if (state && state !== 'all') {
-      ref = ref.where('accountState', '==', state).orderBy(admin.firestore.FieldPath.documentId(), 'asc')
+      ref = ref.where('accountState', '==', state).orderBy(FieldPath.documentId(), 'asc')
     } else {
-      ref = ref.orderBy(admin.firestore.FieldPath.documentId(), 'asc')
+      ref = ref.orderBy(FieldPath.documentId(), 'asc')
     }
     if (opts.cursor) ref = ref.startAfter(opts.cursor)
     ref = ref.limit(pageSize + 1)
 
-    const snap = await (ref as admin.firestore.Query).get()
+    const snap = await (ref as Query).get()
     const docs = snap.docs.slice(0, pageSize)
     const rows = docs.map((d) => toRow(d.id, (d.data() ?? {}) as Record<string, unknown>))
     await attachAuthAccountState(rows)
@@ -1047,9 +1064,9 @@ function redactAuditValues(values: Record<string, unknown>): Record<string, unkn
  * Keeps the `admin` custom claim in sync with the Firestore role so the middleware, the guards
  * and firestore.rules can all trust the token instead of paying a document read per request.
  */
-async function syncAdminClaimForUid(db: admin.firestore.Firestore, uid: string, isAdmin: boolean): Promise<void> {
+async function syncAdminClaimForUid(db: Firestore, uid: string, isAdmin: boolean): Promise<void> {
   try {
-    await admin.auth(getAdminApp()).setCustomUserClaims(uid, { admin: isAdmin })
+    await getAuth(getAdminApp()).setCustomUserClaims(uid, { admin: isAdmin })
   } catch (err) {
     console.warn('[FirestoreAdmin] setCustomUserClaims skipped:', err instanceof Error ? err.message : err)
   }
@@ -1082,10 +1099,10 @@ export async function setUserAdminFlagByEmail(email: string, isAdmin: boolean, a
 // Everything here degrades to `null`/`{ ok: false }` when the Admin SDK is not configured, and callers
 // say so out loud instead of showing a zero.
 
-function authOrNull(): admin.auth.Auth | null {
+function authOrNull(): Auth | null {
   try {
     if (!isFirebaseAdminUsable()) return null
-    return admin.auth(getAdminApp())
+    return getAuth(getAdminApp())
   } catch (err) {
     console.warn('[FirestoreAdmin] Firebase Auth unavailable:', err instanceof Error ? err.message : err)
     return null
@@ -1161,7 +1178,7 @@ export async function getAuthAccountSummary(opts: { fresh?: boolean } = {}): Pro
         const last = rec.metadata?.lastSignInTime ? Date.parse(rec.metadata.lastSignInTime) : Number.NaN
         if (Number.isFinite(last) && last >= since24h) summary.signedIn24h += 1
         else if (Number.isFinite(last) && last >= since7d) summary.signedIn7d += 1
-        const providers = (rec.providerData ?? []).map((p: admin.auth.UserInfo) => p.providerId)
+        const providers = (rec.providerData ?? []).map((p: UserInfo) => p.providerId)
         if (providers.includes('password')) summary.passwordAccounts += 1
         if (providers.includes('google.com')) summary.googleAccounts += 1
         if (!rec.uid || !profileUids.has(rec.uid)) summary.withoutProfile += 1
@@ -1195,7 +1212,7 @@ export async function getAuthAccountStateForUid(uid: string): Promise<AuthAccoun
       emailVerified: rec.emailVerified === true,
       createdAt: rec.metadata?.creationTime ?? null,
       lastSignInAt: rec.metadata?.lastSignInTime ?? null,
-      providers: (rec.providerData ?? []).map((p: admin.auth.UserInfo) => p.providerId),
+      providers: (rec.providerData ?? []).map((p: UserInfo) => p.providerId),
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : ''
@@ -1220,7 +1237,7 @@ export async function attachAuthAccountState(rows: AdminUserRow[]): Promise<void
             emailVerified: rec.emailVerified === true,
             createdAt: rec.metadata?.creationTime ?? null,
             lastSignInAt: rec.metadata?.lastSignInTime ?? null,
-            providers: (rec.providerData ?? []).map((p: admin.auth.UserInfo) => p.providerId),
+            providers: (rec.providerData ?? []).map((p: UserInfo) => p.providerId),
           }
         : { exists: false, disabled: false, emailVerified: false, createdAt: null, lastSignInAt: null, providers: [], orphaned: true }
     }
@@ -1426,7 +1443,7 @@ export async function listLedgerPage(opts: {
 
   const readOne = async (src: 'wallet' | 'payment'): Promise<LedgerRow[]> => {
     const col = db.collection(src === 'wallet' ? 'wallet_ledger' : 'transactions')
-    let ref: admin.firestore.Query = col.orderBy('createdAt', 'desc')
+    let ref: Query = col.orderBy('createdAt', 'desc')
     if (opts.cursor && src !== 'payment') ref = ref.startAfter(opts.cursor)
     if (opts.status) ref = ref.where('status', '==', opts.status)
     if (opts.kind) ref = ref.where(src === 'wallet' ? 'kind' : 'type', '==', opts.kind)
@@ -1556,7 +1573,7 @@ export type PlatformStats = {
   generatedAt: string
 }
 
-async function safeCount(build: () => admin.firestore.Query, fallbackLimit = 500): Promise<number> {
+async function safeCount(build: () => Query, fallbackLimit = 500): Promise<number> {
   try {
     // Aggregation count costs one query, not N document reads.
     const snap = await build().count().get()
@@ -1928,7 +1945,7 @@ export async function withdrawApplicationServer(uid: string, applicationId: stri
   if (status !== 'under_review' && status !== 'approved') {
     throw new TransitionError(`Work already ${status.replace(/_/g, ' ')} cannot be withdrawn. Contact support.`, 409)
   }
-  await ref.set({ status: 'withdrawn', history: admin.firestore.FieldValue.arrayUnion({ status: 'withdrawn', at: new Date().toISOString() }), updatedAt: new Date().toISOString() }, { merge: true })
+  await ref.set({ status: 'withdrawn', history: FieldValue.arrayUnion({ status: 'withdrawn', at: new Date().toISOString() }), updatedAt: new Date().toISOString() }, { merge: true })
   await createAuditEntry('APPLICATION_WITHDRAWN', { applicationId, uid }, String(data.workerEmail ?? uid))
 }
 
@@ -1971,7 +1988,7 @@ export async function transitionApplicationAdmin(input: {
     status: to,
     updatedAt: now,
     handledBy: input.actorEmail,
-    history: admin.firestore.FieldValue.arrayUnion({ status: to, at: now, by: input.actorEmail }),
+    history: FieldValue.arrayUnion({ status: to, at: now, by: input.actorEmail }),
   }
   if (input.note) update.revisionNote = String(input.note).slice(0, 500)
   if (input.reason) update.rejectionReason = String(input.reason).slice(0, 500)
@@ -2020,14 +2037,14 @@ export async function transitionApplicationAdmin(input: {
   }
 
   if ((to === 'rejected' || to === 'failed_qa') && jobId && (from === 'approved' || from === 'in_progress' || from === 'submitted_for_review')) {
-    await db.collection('jobs').doc(jobId).set({ slotsRemaining: admin.firestore.FieldValue.increment(1) }, { merge: true })
+    await db.collection('jobs').doc(jobId).set({ slotsRemaining: FieldValue.increment(1) }, { merge: true })
   }
 
   if (to === 'approved' && jobId) {
     await db
       .collection('jobs')
       .doc(jobId)
-      .set({ slotsRemaining: admin.firestore.FieldValue.increment(-1), applicationsApproved: admin.firestore.FieldValue.increment(1) }, { merge: true })
+      .set({ slotsRemaining: FieldValue.increment(-1), applicationsApproved: FieldValue.increment(1) }, { merge: true })
   }
 
   if (uid) {
@@ -2088,7 +2105,7 @@ export async function listAuditLogs(opts: { limit?: number; action?: string; sea
   if (!db) return []
   const size = Math.min(200, Math.max(10, opts.limit ?? 60))
   try {
-    let q: admin.firestore.Query = db.collection('admin_logs')
+    let q: Query = db.collection('admin_logs')
     if (opts.action && opts.action !== 'all') q = q.where('action', '==', opts.action)
     q = q.orderBy('timestamp', 'desc').limit(size)
     const snap = await q.get()
@@ -2155,7 +2172,7 @@ export async function listApplicationsPage(opts: {
   if (!db) return { rows: [], nextCursor: null, hasMore: false, pageSize, degraded: 'Admin SDK unavailable' }
 
   const nowIso = new Date().toISOString()
-  const mapDoc = (d: admin.firestore.QueryDocumentSnapshot): ApplicationRow => {
+  const mapDoc = (d: QueryDocumentSnapshot): ApplicationRow => {
     const data = (d.data() ?? {}) as Record<string, unknown>
     const reviewExpiresAt = (data.reviewExpiresAt as string) ?? undefined
     return {
@@ -2178,10 +2195,10 @@ export async function listApplicationsPage(opts: {
   }
 
   try {
-    let q: admin.firestore.Query = db.collection('applications')
+    let q: Query = db.collection('applications')
     const status = (opts.status ?? 'all').trim()
     if (status && status !== 'all') q = q.where('status', '==', status)
-    q = q.orderBy(admin.firestore.FieldPath.documentId(), 'desc').limit(pageSize + 1)
+    q = q.orderBy(FieldPath.documentId(), 'desc').limit(pageSize + 1)
     if (opts.cursor) q = q.startAfter(opts.cursor)
     const snap = await q.get()
     let rows = snap.docs.slice(0, pageSize).map(mapDoc)
@@ -2235,7 +2252,7 @@ export async function listJobsServer(opts: { status?: string; pageSize?: number 
   const db = dbOrNull()
   if (!db) return []
   try {
-    let q: admin.firestore.Query = db.collection('jobs')
+    let q: Query = db.collection('jobs')
     if (opts.status && opts.status !== 'all') q = q.where('status', '==', opts.status)
     const snap = await q.limit(Math.min(200, Math.max(10, opts.pageSize ?? 100))).get()
     return snap.docs.map((d) => {
@@ -2313,7 +2330,7 @@ export async function submitWorkServer(uid: string, applicationId: string, note:
         workSubmittedAt: now,
         workerNote: String(note ?? '').slice(0, 1000),
         updatedAt: now,
-        history: admin.firestore.FieldValue.arrayUnion({ status: 'submitted_for_review', at: now, by: 'worker' }),
+        history: FieldValue.arrayUnion({ status: 'submitted_for_review', at: now, by: 'worker' }),
       },
       { merge: true },
     )
@@ -2329,7 +2346,7 @@ export async function markNotificationsRead(uid: string, all = true, ids: string
     let q = db.collection('notifications').where('uid', '==', uid).where('read', '==', false)
     if (!all) {
       if (!ids.length) return 0
-      q = db.collection('notifications').where('uid', '==', uid).where(admin.firestore.FieldPath.documentId(), 'in', ids.slice(0, 20))
+      q = db.collection('notifications').where('uid', '==', uid).where(FieldPath.documentId(), 'in', ids.slice(0, 20))
     }
     const snap = await q.limit(50).get()
     if (snap.empty) return 0

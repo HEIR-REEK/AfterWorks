@@ -245,12 +245,13 @@ export function normaliseMaintenanceConfig(raw: unknown): MaintenanceConfig {
           )
             ? (item.status as ComponentStatus)
             : 'operational'
-          return {
+          const service: MaintenanceService = {
             id,
             label: sanitizeLine(item.label, 60) || id,
             status,
-            note: item.note ? sanitizeLine(item.note, 120) : undefined,
           }
+          if (item.note) service.note = sanitizeLine(item.note, 120)
+          return service
         })
         .filter((v): v is MaintenanceService => v !== null)
         .slice(0, 12)

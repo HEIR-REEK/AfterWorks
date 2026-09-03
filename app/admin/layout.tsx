@@ -15,6 +15,7 @@ import {
   ScrollText,
   Shield,
   ShieldCheck,
+  UserCog,
   Users,
   Wrench,
 } from 'lucide-react'
@@ -29,6 +30,7 @@ import AdminLoginPage from './login/page'
 const adminNavItems = [
   { href: '/admin', label: 'Overview', icon: LayoutDashboard, exact: true },
   { href: '/admin/users', label: 'Users & KYC', icon: Users },
+  { href: '/admin/staff', label: 'Staff', icon: UserCog },
   { href: '/admin/jobs', label: 'Jobs Catalogue', icon: Briefcase },
   { href: '/admin/applications', label: 'Applications & QA', icon: ListChecks },
   { href: '/admin/money', label: 'Money Ledger', icon: Landmark },

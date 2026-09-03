@@ -20,6 +20,7 @@ import {
   GoogleAuthProvider,
   signInWithPopup,
   getAdditionalUserInfo,
+  sendEmailVerification,
   type Auth,
   type User,
 } from 'firebase/auth'
@@ -34,7 +35,9 @@ export type FirebaseConfig = {
   messagingSenderId?: string
 }
 
-type AuthResult = { ok: true; isNewUser?: boolean } | { ok: false; error: string }
+type AuthResult =
+  | { ok: true; isNewUser?: boolean }
+  | { ok: false; error: string; code?: string }
 
 type AuthContextValue = {
   user: User | null
@@ -51,6 +54,8 @@ type AuthContextValue = {
   signUp: (email: string, password: string, name: string) => Promise<AuthResult>
   signInWithGoogle: () => Promise<AuthResult>
   signOut: () => Promise<void>
+  /** Re-sends a verification email to the currently signed-in (but unverified) user. */
+  resendVerification: () => Promise<{ ok: boolean; error?: string }>
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
@@ -137,7 +142,16 @@ export function FirebaseAuthProvider({
     async function signIn(email: string, password: string): Promise<AuthResult> {
       if (!authRef.current) return { ok: false, error: 'Auth is not configured.' }
       try {
-        await signInWithEmailAndPassword(authRef.current, email, password)
+        const cred = await signInWithEmailAndPassword(authRef.current, email, password)
+        // Block sign-in for users who haven't verified their email yet
+        if (!cred.user.emailVerified) {
+          await fbSignOut(authRef.current)
+          return {
+            ok: false,
+            error: 'Please verify your email before signing in. Check your inbox for the verification link.',
+            code: 'email-not-verified',
+          }
+        }
         return { ok: true }
       } catch (err) {
         return { ok: false, error: friendlyError((err as { code?: string })?.code ?? '') }
@@ -153,6 +167,8 @@ export function FirebaseAuthProvider({
       try {
         const cred = await createUserWithEmailAndPassword(authRef.current, email, password)
         if (name) await updateProfile(cred.user, { displayName: name })
+        // Send email verification
+        await sendEmailVerification(cred.user)
         // Persist the user's profile + empty wallet to Firestore
         await createUserDocument(cred.user.uid, name || email.split('@')[0], email)
         setUser({ ...cred.user })
@@ -181,7 +197,22 @@ export function FirebaseAuthProvider({
       }
     }
 
-    return { user, loading, configured, claims, getIdToken, signIn, signUp, signInWithGoogle, signOut }
+    async function resendVerification(): Promise<{ ok: boolean; error?: string }> {
+      const currentUser = authRef.current?.currentUser
+      if (!currentUser) return { ok: false, error: 'No signed-in user found. Please try signing in again.' }
+      try {
+        await sendEmailVerification(currentUser)
+        return { ok: true }
+      } catch (err) {
+        const code = (err as { code?: string })?.code ?? ''
+        if (code === 'auth/too-many-requests') {
+          return { ok: false, error: 'Too many requests. Please wait a minute before requesting another email.' }
+        }
+        return { ok: false, error: 'Failed to send verification email. Please try again.' }
+      }
+    }
+
+    return { user, loading, configured, claims, getIdToken, signIn, signUp, signInWithGoogle, signOut, resendVerification }
   }, [user, loading, configured, claims])
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

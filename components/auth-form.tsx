@@ -3,38 +3,131 @@
 import { useState, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
-import { CheckCircle2, Loader2, Shield, ShieldCheck, Eye, EyeOff } from 'lucide-react'
+import {
+  CheckCircle2,
+  Loader2,
+  Shield,
+  ShieldCheck,
+  Eye,
+  EyeOff,
+  MailCheck,
+  RefreshCw,
+} from 'lucide-react'
 import { Button } from './ui/button'
 import { useAuth } from './firebase-auth-provider'
 import { BrandLockup } from '@/components/brand'
+import { validateEmailAddress } from '@/lib/email-validation'
 
-// Inner component that reads search params (must be inside Suspense)
+// ─── Email-not-verified banner with resend ─────────────────────────────────────
+
+function UnverifiedEmailBanner({ email }: { email: string }) {
+  const { resendVerification } = useAuth()
+  const [resendState, setResendState] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle')
+  const [resendError, setResendError] = useState<string | null>(null)
+
+  async function handleResend() {
+    setResendState('sending')
+    setResendError(null)
+    const result = await resendVerification()
+    if (result.ok) {
+      setResendState('sent')
+    } else {
+      setResendState('error')
+      setResendError(result.error ?? null)
+    }
+  }
+
+  return (
+    <div className="mb-5 flex flex-col gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-4 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/50 dark:text-amber-200">
+      <div className="flex items-start gap-2.5">
+        <MailCheck className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400" />
+        <div className="min-w-0">
+          <p className="font-semibold">Email not verified</p>
+          <p className="mt-0.5 text-xs opacity-90">
+            We sent a verification link to <strong>{email}</strong>. Click it to activate your
+            account, then sign in here.
+          </p>
+        </div>
+      </div>
+
+      {resendState === 'sent' ? (
+        <div className="flex items-center gap-1.5 text-xs font-medium text-green-700 dark:text-green-400">
+          <CheckCircle2 className="size-3.5 shrink-0" />
+          Verification email sent! Check your inbox (and spam folder).
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={handleResend}
+          disabled={resendState === 'sending'}
+          className="flex items-center gap-1.5 self-start rounded-md border border-amber-400 bg-amber-100 px-3 py-1.5 text-xs font-medium text-amber-800 transition-colors hover:bg-amber-200 disabled:opacity-60 dark:border-amber-600 dark:bg-amber-900/40 dark:text-amber-200 dark:hover:bg-amber-900/60"
+        >
+          {resendState === 'sending' ? (
+            <Loader2 className="size-3.5 animate-spin" />
+          ) : (
+            <RefreshCw className="size-3.5" />
+          )}
+          {resendState === 'sending' ? 'Sending…' : 'Resend verification email'}
+        </button>
+      )}
+
+      {resendState === 'error' && resendError && (
+        <p className="text-xs text-red-600 dark:text-red-400">{resendError}</p>
+      )}
+    </div>
+  )
+}
+
+// ─── Inner form (must be inside Suspense because of useSearchParams) ───────────
+
 function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
   const router = useRouter()
   const searchParams = useSearchParams()
   const { signIn, signUp, signInWithGoogle, configured } = useAuth()
+
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [errorCode, setErrorCode] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
+  const [emailFieldError, setEmailFieldError] = useState<string | null>(null)
 
   const isSignUp = mode === 'sign-up'
   // Show a success banner on sign-in page when coming from sign-up
   const justRegistered = !isSignUp && searchParams.get('registered') === '1'
 
+  function handleEmailChange(value: string) {
+    setEmail(value)
+    // Re-validate on change once an error has been shown
+    if (emailFieldError) setEmailFieldError(validateEmailAddress(value))
+  }
+
+  function handleEmailBlur() {
+    if (email) setEmailFieldError(validateEmailAddress(email))
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError(null)
+    setErrorCode(null)
+
+    // Client-side email gate (blocks disposable/fake domains instantly)
+    const emailErr = validateEmailAddress(email)
+    if (emailErr) {
+      setEmailFieldError(emailErr)
+      return
+    }
+
     setSubmitting(true)
     const result = isSignUp
       ? await signUp(email.trim(), password, name.trim())
       : await signIn(email.trim(), password)
     setSubmitting(false)
+
     if (result.ok) {
       if ('isNewUser' in result && result.isNewUser) {
-        // New user! Send them straight to profile for setup and KYC
         router.push('/profile?new=1')
         router.refresh()
       } else {
@@ -43,11 +136,13 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
       }
     } else {
       setError(result.error)
+      if (!result.ok && 'code' in result) setErrorCode(result.code ?? null)
     }
   }
 
   async function handleGoogleSignIn() {
     setError(null)
+    setErrorCode(null)
     setSubmitting(true)
     const result = await signInWithGoogle()
     setSubmitting(false)
@@ -83,7 +178,8 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
         <div className="mb-5 flex items-start gap-3 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800 dark:border-green-800 dark:bg-green-950 dark:text-green-300">
           <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-green-600" />
           <span>
-            <strong>Account created!</strong> Sign in with the email and password you just used.
+            <strong>Account created!</strong> We sent you a verification email — check your inbox,
+            then sign in here.
           </span>
         </div>
       )}
@@ -94,6 +190,9 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
           (apiKey, authDomain, projectId, appId) to enable sign in.
         </div>
       )}
+
+      {/* Email-not-verified banner with one-click resend */}
+      {errorCode === 'email-not-verified' && <UnverifiedEmailBanner email={email} />}
 
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
         {isSignUp && (
@@ -116,7 +215,7 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
 
         <div className="flex flex-col gap-1.5">
           <label htmlFor="email" className="text-sm font-medium">
-            Email
+            Email address
           </label>
           <input
             id="email"
@@ -124,10 +223,24 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
             required
             autoComplete="email"
             value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            className="h-11 rounded-lg border border-input bg-card px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            onChange={(e) => handleEmailChange(e.target.value)}
+            onBlur={handleEmailBlur}
+            className={`h-11 rounded-lg border bg-card px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+              emailFieldError
+                ? 'border-destructive focus-visible:ring-destructive/30'
+                : 'border-input'
+            }`}
             placeholder="you@example.com"
           />
+          {emailFieldError && (
+            <p className="text-xs font-medium text-destructive">{emailFieldError}</p>
+          )}
+          {isSignUp && !emailFieldError && (
+            <p className="text-xs text-muted-foreground">
+              Use a real email — we'll send a verification link. Disposable addresses are not
+              allowed.
+            </p>
+          )}
         </div>
 
         <div className="flex flex-col gap-1.5">
@@ -152,17 +265,14 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
               className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground focus:outline-none"
               tabIndex={-1}
             >
-              {showPassword ? (
-                <EyeOff className="size-4" />
-              ) : (
-                <Eye className="size-4" />
-              )}
+              {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
               <span className="sr-only">{showPassword ? 'Hide password' : 'Show password'}</span>
             </button>
           </div>
         </div>
 
-        {error && (
+        {/* Only show the generic error when it isn't the verification-specific one (that has its own banner) */}
+        {error && errorCode !== 'email-not-verified' && (
           <p role="alert" className="text-sm font-medium text-destructive">
             {error}
           </p>
@@ -233,7 +343,7 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
           className="inline-flex items-center gap-1.5 font-medium text-muted-foreground transition-colors hover:text-foreground hover:underline"
         >
           <Shield className="size-3.5 text-primary" />
-          Staff & Operations Portal
+          Staff &amp; Operations Portal
         </Link>
         <div className="flex items-center gap-1.5">
           <ShieldCheck className="size-3.5 text-success" />

@@ -324,6 +324,25 @@ export async function requireUser(req: NextRequest): Promise<GuardResult<UserPri
   }
 }
 
+/**
+ * Same as `requireUser`, plus the Firebase `email_verified` claim. Profile updates via the
+ * client SDK are separately fenced by the app gate; this is the server fence for KYC, apply
+ * and checkout — the things that must not run against an unproven inbox.
+ */
+export async function requireVerifiedUser(req: NextRequest): Promise<GuardResult<UserPrincipal>> {
+  const guard = await requireUser(req)
+  if (!guard.ok) return guard
+  if (!guard.value.emailVerified) {
+    return {
+      ok: false,
+      response: fail(403, 'Verify your email before continuing. Check your inbox for the AfterWorks link.', {
+        code: 'email_not_verified',
+      }),
+    }
+  }
+  return guard
+}
+
 // ─── Host integrity (defence in depth below the middleware) ───────────────────
 
 export function assertHost(req: NextRequest): NextResponse | null {

@@ -36,7 +36,8 @@ verifier from `npm run hash:admin-password`. Without those it fails closed and s
 | `lib/firestore-admin.ts` | server-side data access: moderation, QA transitions, stats, ledger |
 | `lib/firestore.ts`, `lib/client-api.ts` | client reads and the fetch wrapper (timeouts, idempotency, error codes) |
 | `app/api/**` | every privileged operation, one guarded route handler each |
-| `components/app-gate.tsx` | sign-in gate + maintenance interception for the worker app |
+| `app/api/auth/**` | Resend verification send + consume; Firebase Auth is marked verified only after the link is clicked |
+| `components/app-gate.tsx` | sign-in gate, unverified-email hold, maintenance interception for the worker app |
 | `app/admin/**` | operations console (overview, users, jobs, QA, maintenance, audit, security) |
 
 ## Conventions that matter
@@ -48,6 +49,9 @@ verifier from `npm run hash:admin-password`. Without those it fails closed and s
   member-owned profile fields only, and `firestore.rules` enforces that split.
 * **Fail closed.** A missing secret, unreachable datastore or unsigned webhook produces an
   honest error, not a permissive default.
+* **Email is proven before profile/KYC.** Signup sends a Resend link (`RESEND_API_KEY` +
+  `EMAIL_FROM`). Until it is clicked, `/verify-email` is the only worker screen, and apply/KYC/checkout
+  routes return `403 email_not_verified`. Google accounts that Firebase already marks verified skip this.
 * **Images are pre-sized, not optimised at runtime.** `sharp` is not a dependency, so `/_next/image`
   returns 400 in production and any `next/image` source that relies on it silently fails to load. Brand
   art is therefore generated at the right size up-front (`npm run brand:build`) and rendered with

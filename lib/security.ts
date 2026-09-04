@@ -521,6 +521,19 @@ export function securityChecks(extra?: { firestoreAdminOk?: boolean; maintenance
         : 'Middleware rejects page traffic with 503 + Retry-After during a blackout window, so it holds even for cached HTML and bots.',
   })
 
+  const resendKey = env('RESEND_API_KEY')
+  checks.push({
+    id: 'resend',
+    label: 'Signup email verification (Resend)',
+    severity: resendKey.startsWith('re_') ? (env('EMAIL_FROM') || !production ? 'pass' : 'warn') : production ? 'fail' : 'warn',
+    detail: resendKey.startsWith('re_')
+      ? env('EMAIL_FROM')
+        ? 'Resend is configured; verification mail is sent from EMAIL_FROM and Firebase Auth is marked verified only after the link is clicked.'
+        : 'Resend key is set. Set EMAIL_FROM to a domain verified in Resend before production traffic.'
+      : 'RESEND_API_KEY is missing — new accounts cannot prove they own the inbox, so profile/KYC stay locked.',
+    fix: 'Create an API key at resend.com, verify the sending domain, set RESEND_API_KEY and EMAIL_FROM.',
+  })
+
   checks.push({
     id: 'transport',
     label: 'Transport & click-jacking',

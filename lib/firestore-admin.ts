@@ -208,6 +208,31 @@ export async function verifyIdToken(
 // ─── User Profile ─────────────────────────────────────────────────────────────
 
 /**
+ * Marks the Firebase Auth credential as email-verified and mirrors that onto the profile.
+ * Called only after a Resend verification token has been consumed — the client cannot set this.
+ */
+export async function markEmailVerified(uid: string, email: string): Promise<void> {
+  const app = getAdminApp()
+  const auth = getAuth(app)
+  const rec = await auth.getUser(uid)
+  const recEmail = (rec.email || '').trim().toLowerCase()
+  const expected = email.trim().toLowerCase()
+  if (recEmail && recEmail !== expected) {
+    throw new Error('EMAIL_MISMATCH')
+  }
+  if (!rec.emailVerified) {
+    await auth.updateUser(uid, { emailVerified: true })
+  }
+  const now = new Date().toISOString()
+  await updateUserProfile(uid, {
+    emailVerified: true,
+    emailVerifiedAt: now,
+    email: recEmail || expected,
+    updatedAt: now,
+  })
+}
+
+/**
  * Updates profile fields on the user's Firestore document (merge).
  * Strips undefined values to avoid Firestore errors.
  */
@@ -1292,8 +1317,9 @@ export async function setTemporaryPassword(uid: string, actorEmail: string): Pro
 }
 
 /**
- * Auth has no email transport of its own, so this mints the link the provider would have emailed and
- * hands it to the operator. Deliberately not a "sent ✓" claim: nothing was sent.
+ * Operator fallback: mint a Firebase-hosted verification link and hand it to staff. Worker signup
+ * does not use this — it sends a Resend email (`POST /api/auth/send-verification`) and this
+ * function stays as the "send it from your own channel" lever on the Users page.
  */
 export async function issueEmailVerificationLink(email: string, actorEmail: string): Promise<AccountActionResult> {
   const auth = authOrNull()

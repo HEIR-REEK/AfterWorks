@@ -107,7 +107,7 @@ export const MAINTENANCE_UNGATABLE_PATHS = ['/admin', '/status', '/maintenance',
  * these reachable: onboarding should not stop because a payout queue is being drained, but an
  * identity-system incident does want new sessions to wait.
  */
-export const MAINTENANCE_SIGN_IN_PATHS = ['/sign-in', '/sign-up', '/api/auth', '/api/kyc/callback']
+export const MAINTENANCE_SIGN_IN_PATHS = ['/sign-in', '/sign-up', '/verify-email', '/api/auth', '/api/kyc/callback']
 
 export function isSignInPath(pathname: string): boolean {
   const clean = pathname.startsWith('/') ? pathname : `/${pathname}`

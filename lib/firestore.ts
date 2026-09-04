@@ -68,6 +68,8 @@ export type UserProfile = {
   qualityScore: number
   jobsCompleted: number
   kycVerified: boolean
+  emailVerified?: boolean
+  emailVerifiedAt?: string
   accountState: AccountState
   role?: 'admin' | 'user'
   isAdmin?: boolean
@@ -182,6 +184,7 @@ export async function createUserDocument(uid: string, name: string, email: strin
         qualityScore: 100,
         jobsCompleted: 0,
         kycVerified: false,
+        emailVerified: false,
         accountState: 'active',
         role: 'user',
         isAdmin: false,

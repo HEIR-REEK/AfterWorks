@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server'
-import { consumeBucket, audit, fail, json, maintenanceBlockForApi, requireUser, routeError } from '@/lib/guards'
+import { consumeBucket, audit, fail, json, maintenanceBlockForApi, requireVerifiedUser, routeError } from '@/lib/guards'
 import { env, envInt, readJsonBody, sanitizeLine } from '@/lib/security-core'
 import { getPaystackAmountSubunits, getTrainingFeeKes, getTrainingFeeUsd } from '@/lib/afterworks-data'
 import { randomId } from '@/lib/session-token'
@@ -22,7 +22,7 @@ export async function POST(req: NextRequest) {
   const maintenance = await maintenanceBlockForApi(req)
   if (maintenance) return maintenance
 
-  const guard = await requireUser(req)
+  const guard = await requireVerifiedUser(req)
   if (!guard.ok) return guard.response
   const { uid, email } = guard.value
 

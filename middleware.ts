@@ -66,6 +66,7 @@ const WEBHOOK_PATHS = ['/api/paystack/webhook', '/api/kyc/webhook']
 const ADMIN_PATH = /^\/(admin|api\/admin)(\/|$)/
 const RATE_LIMITED: Array<[RegExp, number]> = [
   [/^\/api\/admin\/auth$/, 8],
+  [/^\/api\/auth\//, 8],
   [/^\/api\/kyc\//, 20],
   [/^\/api\/paystack\//, 25],
   [/^\/api\/applications/, 30],

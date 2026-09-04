@@ -95,8 +95,9 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
   const [emailFieldError, setEmailFieldError] = useState<string | null>(null)
 
   const isSignUp = mode === 'sign-up'
-  // Show a success banner on sign-in page when coming from sign-up
+  // Show a success banner on sign-in page when coming from sign-up or after verifying
   const justRegistered = !isSignUp && searchParams.get('registered') === '1'
+  const justVerified = !isSignUp && searchParams.get('verified') === '1'
 
   function handleEmailChange(value: string) {
     setEmail(value)
@@ -127,7 +128,10 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
     setSubmitting(false)
 
     if (result.ok) {
-      if ('isNewUser' in result && result.isNewUser) {
+      if ('needsEmailVerification' in result && result.needsEmailVerification) {
+        router.push('/verify-email?sent=1')
+        router.refresh()
+      } else if ('isNewUser' in result && result.isNewUser) {
         router.push('/profile?new=1')
         router.refresh()
       } else {
@@ -147,7 +151,10 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
     const result = await signInWithGoogle()
     setSubmitting(false)
     if (result.ok) {
-      if ('isNewUser' in result && result.isNewUser) {
+      if ('needsEmailVerification' in result && result.needsEmailVerification) {
+        router.push('/verify-email?sent=1')
+        router.refresh()
+      } else if ('isNewUser' in result && result.isNewUser) {
         router.push('/profile?new=1')
         router.refresh()
       } else {
@@ -178,8 +185,16 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
         <div className="mb-5 flex items-start gap-3 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800 dark:border-green-800 dark:bg-green-950 dark:text-green-300">
           <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-green-600" />
           <span>
-            <strong>Account created!</strong> We sent you a verification email — check your inbox,
-            then sign in here.
+            <strong>Account created!</strong> Check your inbox for the AfterWorks verification
+            link, then come back here to sign in.
+          </span>
+        </div>
+      )}
+      {justVerified && (
+        <div className="mb-5 flex items-start gap-3 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800 dark:border-green-800 dark:bg-green-950 dark:text-green-300">
+          <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-green-600" />
+          <span>
+            <strong>Email verified.</strong> Sign in to complete your profile and identity check.
           </span>
         </div>
       )}
@@ -237,8 +252,8 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
           )}
           {isSignUp && !emailFieldError && (
             <p className="text-xs text-muted-foreground">
-              Use a real email — we'll send a verification link. Disposable addresses are not
-              allowed.
+              Use a real inbox — we send a verification link before you can update your profile or
+              start KYC. Disposable addresses are not allowed.
             </p>
           )}
         </div>

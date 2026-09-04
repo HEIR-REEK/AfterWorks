@@ -6,8 +6,9 @@
  *  2. Disposable check  — reject known throwaway / temporary-inbox domains.
  *  3. TLD plausibility  — reject obviously fake TLDs (.test, .invalid, .localhost, .example).
  *
- * For high-assurance flows the app already sends a Firebase verification email; that is the
- * real gate.  This layer gives instant UI feedback and stops the most common fake-account patterns.
+ * For high-assurance flows the app sends a Resend verification email (`lib/email-verification.ts`);
+ * clicking that link is the real gate before profile/KYC. This layer gives instant UI feedback and
+ * stops the most common fake-account patterns (disposable domains, reserved TLDs).
  */
 
 // ─── Disposable domain list ────────────────────────────────────────────────────

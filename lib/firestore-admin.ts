@@ -66,8 +66,11 @@ function getAdminApp(): App {
   const serviceAccountPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH
   if (serviceAccountPath) {
     try {
+      // Local-only fallback: the env var points at a service-account file on disk. Tell
+      // Turbopack not to trace this dynamic filesystem access, otherwise it bundles the whole
+      // project (including /public) into the server output.
       const resolvedPath = path.resolve(
-        process.cwd(),
+        /* turbopackIgnore: true */ process.cwd(),
         serviceAccountPath.replace(/^\.\//, ''),
       )
       const raw = fs.readFileSync(resolvedPath, 'utf8')

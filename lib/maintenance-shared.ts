@@ -103,9 +103,9 @@ export const MAINTENANCE_SECTIONS: MaintenanceSection[] = [
 export const MAINTENANCE_UNGATABLE_PATHS = ['/admin', '/status', '/maintenance', '/api/health', '/api/maintenance', '/api/admin']
 
 /**
- * Routes that let somebody get *into* the platform. `allowSignIn` decides whether a blackout keeps
- * these reachable: onboarding should not stop because a payout queue is being drained, but an
- * identity-system incident does want new sessions to wait.
+ * Routes that let somebody get *into* the platform. `allowSignIn` may keep these reachable during a
+ * *scoped* window (e.g. payouts paused, onboarding still open). A whole-site blackout always takes
+ * them down — `isSignInExempt` is the only predicate that may skip the gate.
  */
 export const MAINTENANCE_SIGN_IN_PATHS = ['/sign-in', '/sign-up', '/verify-email', '/api/auth', '/api/kyc/callback']
 
@@ -167,7 +167,7 @@ export type MaintenanceConfig = {
   affectedServices: MaintenanceService[]
   /** Operators/staff who still get through a blackout. */
   allowedEmails: string[]
-  /** Allow sign-in + KYC callbacks to complete even during a blackout. */
+  /** Allow sign-in + KYC callbacks during a *scoped* window. Ignored on a whole-site blackout. */
   allowSignIn: boolean
   /** Bumped on every write so clients can tell "unchanged" from "identical". */
   version: number
@@ -204,7 +204,7 @@ export const DEFAULT_MAINTENANCE_CONFIG: MaintenanceConfig = {
     { id: 'kyc', label: 'ID verification', status: 'operational' },
   ],
   allowedEmails: [],
-  allowSignIn: true,
+  allowSignIn: false,
   version: 1,
   updatedAt: null,
   updatedBy: 'System',
@@ -287,7 +287,9 @@ export function normaliseMaintenanceConfig(raw: unknown): MaintenanceConfig {
     contactEmail: isEmailLike(input.contactEmail) ? String(input.contactEmail).trim().toLowerCase() : '',
     affectedServices: affectedServices.length ? affectedServices : base.affectedServices,
     allowedEmails,
-    allowSignIn: input.allowSignIn !== false,
+    // Opt-in. A missing flag used to default true, which left /sign-in serving during a
+    // "whole site" blackout. Whole-site windows ignore this at resolve time anyway.
+    allowSignIn: input.allowSignIn === true,
     version: Number.isFinite(Number(input.version)) ? Math.max(1, Math.trunc(Number(input.version))) : base.version,
     updatedAt: asIso(input.updatedAt),
     updatedBy: typeof input.updatedBy === 'string' ? sanitizeLine(input.updatedBy, 80) : 'System',
@@ -430,6 +432,17 @@ export function isGatedPath(pathname: string, status: MaintenanceStatus): boolea
   if (isUngatablePath(clean)) return false
   if (status.blocksAll) return true
   return matchesBlockedPath(clean, status.blockedPaths)
+}
+
+/**
+ * Sign-in is exempt only during a *scoped* window that the operator explicitly left open.
+ * A whole-site blackout replaces /sign-in, /sign-up and /verify-email with the outage page —
+ * "cease all operations" means the auth screens too.
+ */
+export function isSignInExempt(pathname: string, status: MaintenanceStatus): boolean {
+  if (!status.active || status.blocksAll) return false
+  if (!status.config.allowSignIn) return false
+  return isSignInPath(pathname)
 }
 
 /** Segment-aware prefix match, shared by the edge gate and the client so they cannot disagree. */

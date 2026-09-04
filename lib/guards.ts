@@ -30,7 +30,7 @@ import {
   parseEmailList,
   type ClientIdentity,
 } from '@/lib/security-core'
-import { getCachedMaintenanceStatus, isGatedPath, isSignInPath, resolveMaintenance } from '@/lib/maintenance-shared'
+import { getCachedMaintenanceStatus, isGatedPath, isSignInExempt, resolveMaintenance } from '@/lib/maintenance-shared'
 import {
   getCachedRevocation,
   invalidateGuardCaches,
@@ -156,7 +156,8 @@ export async function maintenanceBlockForApi(req: NextRequest, opts?: { privileg
   const status = await getCachedMaintenanceStatus()
   const { active, config, retryAfterSec, blocksAll, blockedPaths } = status.status
   if (!active) return null
-  if (config.allowSignIn && (isAuthRoute(req.nextUrl.pathname) || isSignInPath(req.nextUrl.pathname))) return null
+  // Console auth stays reachable (ADMIN_PATH). Worker /api/auth is only exempt on a scoped window.
+  if (isSignInExempt(req.nextUrl.pathname, status.status) || (config.allowSignIn && !blocksAll && isAuthRoute(req.nextUrl.pathname))) return null
   // Scoped window: only the listed areas are down. A wallet endpoint must fail while the job board
   // keeps answering, otherwise "some parts are under maintenance" is a lie the UI tells.
   if (!blocksAll && !isGatedPath(req.nextUrl.pathname, status.status)) return null

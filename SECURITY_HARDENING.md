@@ -50,7 +50,9 @@ by disabling JavaScript, and the config document was writable from the browser.
 | Client | `components/maintenance-provider.tsx`, `app-gate.tsx` | one poller per tab freezes writes, shows a countdown, and never blocks the console |
 
 Exempt during a blackout: `/admin`, `/api/admin/auth`, `/api/admin/session`, `/maintenance`,
-`/status`, `/api/health`, `/api/maintenance`, static assets. Bypass is a signed 12 h
+`/status`, `/api/health`, `/api/maintenance`, static assets. `/sign-in` and `/sign-up` are **not**
+exempt on a whole-site window — `allowSignIn` only keeps auth reachable during a scoped pause.
+Bypass is a signed 12 h
 `aw_ops_bypass` cookie, minted **only** by `/api/maintenance/bypass` after the server has confirmed
 the caller is an admin or on the config's email allow-list.
 

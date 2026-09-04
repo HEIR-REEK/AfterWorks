@@ -44,8 +44,8 @@ function Gate({ children }: { children: React.ReactNode }) {
 
   const isPublic = useMemo(() => PUBLIC_ROUTES.some((route) => pathname === route || pathname.startsWith(`${route}/`)), [pathname])
   const isAdminRoute = pathname.startsWith('/admin') || pathname.startsWith('/api/admin')
-  // A full blackout replaces the whole app. A scoped one (`sections`) replaces only the affected
-  // route, so a payout run does not take the job board down with it — which is what the notice claims.
+  // A full blackout replaces the whole app, including /sign-in. A scoped one (`sections`) replaces
+  // only the affected route, so a payout run does not take the job board down with it.
   const blackoutAll = view.blocking && view.blocksAll && !bypassed && admin.status !== 'authorized'
   const scopedHit =
     view.blocking && !view.blocksAll && !bypassed && admin.status !== 'authorized' && matchesBlockedPath(pathname, view.blockedPaths)

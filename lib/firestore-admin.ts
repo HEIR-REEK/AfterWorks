@@ -848,13 +848,19 @@ export async function saveMaintenanceConfigServer(
     if (JSON.stringify(patch[key]) !== JSON.stringify(current[key])) changed.push(String(key))
   }
 
-  const next = normaliseMaintenanceConfig({
+  let next = normaliseMaintenanceConfig({
     ...current,
     ...merged,
     version: (current.version ?? 0) + 1,
     updatedAt: new Date().toISOString(),
     updatedBy: actorEmail,
   })
+
+  // Whole-site blackout always takes sign-in down, even if an older saved config had allowSignIn.
+  if (next.mode === 'blackout' && next.scope === 'full' && next.allowSignIn) {
+    next = { ...next, allowSignIn: false }
+    if (!changed.includes('allowSignIn')) changed.push('allowSignIn')
+  }
 
   await db.collection('system').doc('maintenance').set(next as unknown as Record<string, unknown>)
   primeMaintenanceCache(next)

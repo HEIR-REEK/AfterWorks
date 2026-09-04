@@ -157,7 +157,11 @@ function applySecurityHeaders(res: NextResponse): void {
   res.headers.set('X-Content-Type-Options', 'nosniff')
   res.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin')
   res.headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(self), browsing-topics=(), interest-cohort=()')
-  res.headers.set('Cross-Origin-Opener-Policy', 'same-origin')
+  // OAuth/payment popups must retain a reference to their opener so they can post the result back.
+  // `same-origin` severs that channel for Google's cross-origin window and makes Firebase report a
+  // closed/cancelled popup. This still isolates pages opened *by* another origin while allowing
+  // popups that AfterWorks itself opens.
+  res.headers.set('Cross-Origin-Opener-Policy', 'same-origin-allow-popups')
   res.headers.set('Cross-Origin-Resource-Policy', PRODUCTION ? 'same-origin' : 'cross-origin')
   res.headers.set('X-DNS-Prefetch-Control', 'off')
   res.headers.set('X-Permitted-Cross-Domain-Policies', 'none')

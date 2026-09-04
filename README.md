@@ -21,6 +21,25 @@ With no Firebase configuration the site still renders in **demo mode**: job card
 `lib/afterworks-data.ts`, a strip in the app shell says so, and nothing is written anywhere. Sign-in,
 payments and the console stay disabled rather than pretending to work.
 
+### Make Firebase sign-in actually work
+
+The web variables only identify the Firebase app; they do not enable sign-in by themselves. For the
+same project named by `FIREBASE_PROJECT_ID`:
+
+1. Set `FIREBASE_WEB_API_KEY`, `FIREBASE_AUTH_DOMAIN`, `FIREBASE_PROJECT_ID` and `FIREBASE_APP_ID` on
+   the deployed service, then redeploy. `/api/health` lists any missing client fields.
+2. In **Firebase Console → Authentication → Sign-in method**, enable both **Email/Password** and
+   **Google**, and select a Google support email.
+3. In **Authentication → Settings → Authorized domains**, add every hostname that serves this app
+   (for example `afterworks.onrender.com`, the production custom domain, and `localhost` for local
+   work). Enter hostnames only—no `https://`, port, path, or wildcard.
+4. If the web API key has Google Cloud restrictions, allow the production hostname and the Identity
+   Toolkit API. Otherwise Firebase returns an invalid-key/request-blocked error.
+
+Google login uses a popup. The app must keep
+`Cross-Origin-Opener-Policy: same-origin-allow-popups`; changing it back to `same-origin` severs
+Firebase's return channel and makes a successful Google selection look cancelled.
+
 The console needs `ADMIN_EMAILS` (the roster), `ADMIN_SESSION_SECRET` (≥ 32 chars) and a passcode
 verifier from `npm run hash:admin-password`. Without those it fails closed and says why.
 

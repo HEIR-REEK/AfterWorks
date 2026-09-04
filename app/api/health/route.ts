@@ -23,7 +23,11 @@ async function probeFirestoreRead(): Promise<Check> {
   if (dataProbe && now - dataProbe.at < Math.max(5_000, envInt('HEALTH_PROBE_CACHE_MS', 20_000))) return dataProbe.value
 
   const projectId = env('FIREBASE_PROJECT_ID') || env('NEXT_PUBLIC_FIREBASE_PROJECT_ID')
-  const apiKey = env('FIREBASE_WEB_API_KEY') || env('NEXT_PUBLIC_FIREBASE_API_KEY')
+  const apiKey =
+    env('FIREBASE_WEB_API_KEY') ||
+    env('FIREBASE_API_KEY') ||
+    env('NEXT_PUBLIC_FIREBASE_API_KEY') ||
+    env('NEXT_PUBLIC_FIREBASE_WEB_API_KEY')
   let value: Check
 
   if (!projectId) {
@@ -81,17 +85,30 @@ export async function GET() {
   const { status: maintenance, usable: maintenanceReadable } = await getCachedMaintenanceStatus()
   const datastore = await probeFirestoreRead()
   const production = isProduction()
+  const firebaseClientConfig = {
+    apiKey:
+      env('FIREBASE_WEB_API_KEY') ||
+      env('FIREBASE_API_KEY') ||
+      env('NEXT_PUBLIC_FIREBASE_API_KEY') ||
+      env('NEXT_PUBLIC_FIREBASE_WEB_API_KEY'),
+    authDomain: env('FIREBASE_AUTH_DOMAIN') || env('NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN'),
+    projectId: env('FIREBASE_PROJECT_ID') || env('NEXT_PUBLIC_FIREBASE_PROJECT_ID'),
+    appId: env('FIREBASE_APP_ID') || env('NEXT_PUBLIC_FIREBASE_APP_ID'),
+  }
+  const missingFirebaseConfig = Object.entries(firebaseClientConfig)
+    .filter(([, value]) => !value)
+    .map(([key]) => key)
+  const firebaseClientReady = missingFirebaseConfig.length === 0
 
   const checks: Check[] = [
     datastore,
     {
       id: 'auth',
       label: 'Authentication',
-      status: env('FIREBASE_WEB_API_KEY') || env('NEXT_PUBLIC_FIREBASE_API_KEY') ? 'operational' : 'degraded',
-      detail:
-        env('FIREBASE_WEB_API_KEY') || env('NEXT_PUBLIC_FIREBASE_API_KEY')
-          ? 'Firebase Auth is configured; ID tokens are verified server-side for every privileged call.'
-          : 'FIREBASE_WEB_API_KEY is not set — sign-in cannot work.',
+      status: firebaseClientReady ? 'operational' : 'degraded',
+      detail: firebaseClientReady
+        ? 'Firebase Auth client configuration is complete; ID tokens are verified server-side for privileged calls.'
+        : `Firebase Auth configuration is incomplete (missing ${missingFirebaseConfig.join(', ')}), so sign-in cannot work.`,
     },
     {
       id: 'privileged-writes',

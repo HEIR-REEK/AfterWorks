@@ -65,8 +65,19 @@ function isConfigComplete(config: FirebaseConfig) {
   return Boolean(config.apiKey && config.authDomain && config.projectId && config.appId)
 }
 
-// Maps Firebase error codes to friendly, worker-facing messages.
+function firebaseErrorCode(err: unknown): string {
+  if (!err || typeof err !== 'object' || !('code' in err)) return ''
+  return typeof err.code === 'string' ? err.code : ''
+}
+
+// Maps Firebase error codes to useful, worker-facing messages. Configuration errors are deliberately
+// explicit: the old generic "Something went wrong" made a disabled provider and an unauthorized
+// deployment domain impossible to distinguish from a worker closing the popup.
 function friendlyError(code: string): string {
+  if (code.startsWith('auth/requests-from-referer-')) {
+    return 'Firebase is rejecting requests from this website. An administrator must add the live hostname to the web API key’s allowed website restrictions.'
+  }
+
   switch (code) {
     case 'auth/invalid-email':
       return 'That email address looks invalid.'
@@ -75,15 +86,42 @@ function friendlyError(code: string): string {
     case 'auth/weak-password':
       return 'Password is too weak. Use at least 6 characters.'
     case 'auth/invalid-credential':
+    case 'auth/invalid-login-credentials':
     case 'auth/wrong-password':
     case 'auth/user-not-found':
       return 'Incorrect email or password.'
+    case 'auth/user-disabled':
+      return 'This account has been disabled. Contact AfterWorks support.'
     case 'auth/too-many-requests':
       return 'Too many attempts. Please wait a moment and try again.'
     case 'auth/network-request-failed':
       return 'Network error. Check your connection and try again.'
+    case 'auth/web-storage-unsupported':
+      return 'This browser is blocking the storage needed to keep you signed in. Allow site storage/cookies or try a normal browser window.'
+    case 'auth/popup-blocked':
+      return 'Your browser blocked the Google sign-in window. Allow popups for this site, or open AfterWorks in Chrome, Safari, Firefox, or Edge and try again.'
+    case 'auth/popup-closed-by-user':
+      return 'Google sign-in was cancelled before it finished. Keep the Google window open until you return to AfterWorks.'
+    case 'auth/cancelled-popup-request':
+      return 'Another Google sign-in window is already open. Finish or close it, then try again.'
+    case 'auth/unauthorized-domain': {
+      const host = typeof window !== 'undefined' ? window.location.hostname : 'this site'
+      return `Google sign-in is not enabled for ${host}. An administrator must add this hostname to Firebase Authentication → Settings → Authorized domains.`
+    }
+    case 'auth/operation-not-allowed':
+    case 'auth/configuration-not-found':
+      return 'This sign-in method is not enabled in Firebase. An administrator must enable Google and Email/Password under Authentication → Sign-in method.'
+    case 'auth/account-exists-with-different-credential':
+      return 'An account already uses this email with another sign-in method. Sign in with email and password first.'
+    case 'auth/invalid-api-key':
+    case 'auth/api-key-not-valid.-please-pass-a-valid-api-key.':
+      return 'Authentication is misconfigured on this deployment. The Firebase web API key is invalid.'
+    case 'auth/app-deleted':
+    case 'auth/invalid-app-credential':
+    case 'auth/internal-error':
+      return 'Firebase could not complete sign-in. Please retry; if it continues, contact AfterWorks support with the error code below.'
     default:
-      return 'Something went wrong. Please try again.'
+      return 'Sign-in could not be completed. Please retry or contact AfterWorks support with the error code below.'
   }
 }
 
@@ -183,7 +221,9 @@ export function FirebaseAuthProvider({
     }
 
     async function signIn(email: string, password: string): Promise<AuthResult> {
-      if (!authRef.current) return { ok: false, error: 'Auth is not configured.' }
+      if (!authRef.current) {
+        return { ok: false, error: 'Authentication is not configured on this deployment.', code: 'auth/configuration-not-found' }
+      }
       try {
         const cred = await signInWithEmailAndPassword(authRef.current, email, password)
         // Keep the session so they can resend from /verify-email; the app gate blocks profile/KYC.
@@ -192,7 +232,8 @@ export function FirebaseAuthProvider({
         }
         return { ok: true }
       } catch (err) {
-        return { ok: false, error: friendlyError((err as { code?: string })?.code ?? '') }
+        const code = firebaseErrorCode(err)
+        return { ok: false, error: friendlyError(code), code }
       }
     }
 
@@ -201,7 +242,9 @@ export function FirebaseAuthProvider({
       password: string,
       name: string,
     ): Promise<AuthResult> {
-      if (!authRef.current) return { ok: false, error: 'Auth is not configured.' }
+      if (!authRef.current) {
+        return { ok: false, error: 'Authentication is not configured on this deployment.', code: 'auth/configuration-not-found' }
+      }
       try {
         const cred = await createUserWithEmailAndPassword(authRef.current, email, password)
         if (name) await updateProfile(cred.user, { displayName: name })
@@ -215,7 +258,8 @@ export function FirebaseAuthProvider({
         }
         return { ok: true, isNewUser: true, needsEmailVerification: !cred.user.emailVerified }
       } catch (err) {
-        return { ok: false, error: friendlyError((err as { code?: string })?.code ?? '') }
+        const code = firebaseErrorCode(err)
+        return { ok: false, error: friendlyError(code), code }
       }
     }
 
@@ -224,9 +268,12 @@ export function FirebaseAuthProvider({
     }
 
     async function signInWithGoogle(): Promise<AuthResult> {
-      if (!authRef.current) return { ok: false, error: 'Auth is not configured.' }
+      if (!authRef.current) {
+        return { ok: false, error: 'Authentication is not configured on this deployment.', code: 'auth/configuration-not-found' }
+      }
       try {
         const provider = new GoogleAuthProvider()
+        provider.setCustomParameters({ prompt: 'select_account' })
         const cred = await signInWithPopup(authRef.current, provider)
         const name = cred.user.displayName || cred.user.email?.split('@')[0] || 'Worker'
         await createUserDocument(cred.user.uid, name, cred.user.email || '')
@@ -243,7 +290,10 @@ export function FirebaseAuthProvider({
         }
         return { ok: true, isNewUser: additionalInfo?.isNewUser ?? false }
       } catch (err) {
-        return { ok: false, error: friendlyError((err as { code?: string })?.code ?? '') }
+        const code = firebaseErrorCode(err)
+        // Keep the Firebase code out of logs that may contain credentials, but return the stable
+        // code to the form so support can distinguish a provider/config issue from cancellation.
+        return { ok: false, error: friendlyError(code), code }
       }
     }
 

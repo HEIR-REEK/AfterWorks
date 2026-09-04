@@ -163,6 +163,7 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
       }
     } else {
       setError(result.error)
+      setErrorCode(result.code ?? null)
     }
   }
 
@@ -288,9 +289,14 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
 
         {/* Only show the generic error when it isn't the verification-specific one (that has its own banner) */}
         {error && errorCode !== 'email-not-verified' && (
-          <p role="alert" className="text-sm font-medium text-destructive">
-            {error}
-          </p>
+          <div role="alert" className="text-sm font-medium text-destructive">
+            <p>{error}</p>
+            {errorCode && (
+              <p className="mt-1 font-mono text-[11px] font-normal text-muted-foreground">
+                Error code: {errorCode}
+              </p>
+            )}
+          </div>
         )}
 
         <Button type="submit" size="lg" disabled={submitting || !configured} className="mt-1">

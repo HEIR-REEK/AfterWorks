@@ -30,7 +30,7 @@ import {
   parseEmailList,
   type ClientIdentity,
 } from '@/lib/security-core'
-import { getCachedMaintenanceStatus, isGatedPath, isSignInPath, resolveMaintenance } from '@/lib/maintenance-shared'
+import { getCachedMaintenanceStatus, isGatedPath, isSignInExempt, resolveMaintenance } from '@/lib/maintenance-shared'
 import {
   getCachedRevocation,
   invalidateGuardCaches,
@@ -156,7 +156,8 @@ export async function maintenanceBlockForApi(req: NextRequest, opts?: { privileg
   const status = await getCachedMaintenanceStatus()
   const { active, config, retryAfterSec, blocksAll, blockedPaths } = status.status
   if (!active) return null
-  if (config.allowSignIn && (isAuthRoute(req.nextUrl.pathname) || isSignInPath(req.nextUrl.pathname))) return null
+  // Console auth stays reachable (ADMIN_PATH). Worker /api/auth is only exempt on a scoped window.
+  if (isSignInExempt(req.nextUrl.pathname, status.status) || (config.allowSignIn && !blocksAll && isAuthRoute(req.nextUrl.pathname))) return null
   // Scoped window: only the listed areas are down. A wallet endpoint must fail while the job board
   // keeps answering, otherwise "some parts are under maintenance" is a lie the UI tells.
   if (!blocksAll && !isGatedPath(req.nextUrl.pathname, status.status)) return null
@@ -322,6 +323,25 @@ export async function requireUser(req: NextRequest): Promise<GuardResult<UserPri
     console.error('[guard] requireUser failed:', err)
     return { ok: false, response: fail(503, 'Authentication service unavailable. Please retry.', { code: 'auth_unavailable' }) }
   }
+}
+
+/**
+ * Same as `requireUser`, plus the Firebase `email_verified` claim. Profile updates via the
+ * client SDK are separately fenced by the app gate; this is the server fence for KYC, apply
+ * and checkout — the things that must not run against an unproven inbox.
+ */
+export async function requireVerifiedUser(req: NextRequest): Promise<GuardResult<UserPrincipal>> {
+  const guard = await requireUser(req)
+  if (!guard.ok) return guard
+  if (!guard.value.emailVerified) {
+    return {
+      ok: false,
+      response: fail(403, 'Verify your email before continuing. Check your inbox for the AfterWorks link.', {
+        code: 'email_not_verified',
+      }),
+    }
+  }
+  return guard
 }
 
 // ─── Host integrity (defence in depth below the middleware) ───────────────────

@@ -45,7 +45,8 @@ service cloud.firestore {
       return ['role', 'isAdmin', 'kycVerified', 'kycStatus', 'kycVerifiedAt', 'kycRejectedAt',
               'kycOnHoldAt', 'kycProvider', 'kycLevel', 'kycRejectionReason', 'kycFailedChecks',
               'accountState', 'qualityScore', 'jobsCompleted', 'wallet', 'paidTrainings',
-              'moderationReason', 'deletedAt', 'lastModifiedBy', 'phoneVerified', 'identityHash'];
+              'moderationReason', 'deletedAt', 'lastModifiedBy', 'phoneVerified', 'identityHash',
+              'emailVerified', 'emailVerifiedAt'];
     }
 
     function touchesPrivilegedKeys() {
@@ -68,14 +69,17 @@ service cloud.firestore {
         && request.resource.data.role == 'user'
         && request.resource.data.isAdmin == false
         && request.resource.data.kycVerified == false
+        && request.resource.data.get('emailVerified', false) == false
         && request.resource.data.accountState == 'active'
         && request.resource.data.wallet.pendingUsd == 0
         && request.resource.data.wallet.availableUsd == 0
         && request.resource.data.keys().size() <= 40;
 
       // Profile editing stays client-side (it is the worker's own copy), but privilege and money
-      // fields are off-limits and the document cannot be grown without bound.
-      allow update: if (isSelf(userId) && !touchesPrivilegedKeys() && onlySafeKeys(90))
+      // fields are off-limits, the document cannot be grown without bound, and the inbox must
+      // already be proven (`email_verified` on the ID token, set only after the Resend link).
+      allow update: if (isSelf(userId) && request.auth.token.email_verified == true
+                        && !touchesPrivilegedKeys() && onlySafeKeys(90))
                     || isStaff();
       allow delete: if isStaff();
     }
@@ -153,6 +157,12 @@ service cloud.firestore {
     // live sessions. It holds no token or secret, but clients must not read or forge it.
     match /admin_sessions/{sessionId} {
       allow read, write: if false; // via Admin SDK only (session record + revoke endpoints)
+    }
+
+    // ── Email-verification tokens (server-only) ──────────────────────────────
+    // HMAC payload lives in the link; this collection is the single-use ledger (jti, usedAt).
+    match /email_verifications/{jti} {
+      allow read, write: if false;
     }
 
     // ── Deny by default ──────────────────────────────────────────────────────

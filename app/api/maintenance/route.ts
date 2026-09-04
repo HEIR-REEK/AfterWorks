@@ -10,8 +10,9 @@ import { site } from '@/lib/site'
  * Two consumers:
  *  • the browser (AppGate / outage banner), which otherwise depends on a live Firestore listener
  *    and silently shows "everything is fine" when that listener is blocked;
- *  • uptime monitors and the /status page, which must be able to tell 200 from 503 without
- *    executing JavaScript.
+ *  • the /status page (via `/api/health`) and uptime monitors. This feed itself stays 200 so the
+ *    in-app poller can read `blocking`/`blocksAll` — a 503 here used to look like "feed down" and
+ *    the gate would fall back to "everything is open". Monitors should watch `/api/health`.
  *
  * It returns a *public* projection only: copy, timing and service states. The bypass list and the
  * operator's email are never included — a worker does not learn which accounts skip the gate.
@@ -63,20 +64,16 @@ export async function GET(req: NextRequest) {
     serverTime: new Date().toISOString(),
   }
 
-  // A full blackout answers 503 so monitors fire; a scoped one stays 200 because the platform is
-  // reachable and the app needs to read which parts are paused.
-  if (status.active && status.blocksAll) {
-    const res = json({ ...payload, error: 'The platform is inside a maintenance window.' }, { status: 503 })
-    res.headers.set('Retry-After', String(status.retryAfterSec || 300))
-    res.headers.set('X-Maintenance-Mode', 'blackout')
-    res.headers.set('ETag', etag)
-    res.headers.set('Cache-Control', 'public, max-age=10, s-maxage=15')
-    return res
-  }
-
+  // Always 200: this is a status feed the app gate polls. A 503 here made `apiFetch` throw, the
+  // client fell back to INERT, and sign-in kept rendering during a whole-site blackout. Page
+  // traffic still gets 503 from the middleware; monitors should watch `/api/health`.
   const res = json(payload)
   res.headers.set('ETag', etag)
-  res.headers.set('X-Maintenance-Mode', status.bannerOnly ? 'banner' : status.active ? 'sections' : 'off')
+  res.headers.set(
+    'X-Maintenance-Mode',
+    status.blocksAll ? 'blackout' : status.bannerOnly ? 'banner' : status.active ? 'sections' : 'off',
+  )
+  if (status.active) res.headers.set('Retry-After', String(status.retryAfterSec || 300))
   for (const [key, value] of Object.entries(PUBLIC_SHORT_CACHE)) res.headers.set(key, value)
   return res
 }

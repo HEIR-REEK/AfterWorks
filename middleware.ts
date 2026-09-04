@@ -23,7 +23,7 @@ import {
   NO_STORE_HEADERS,
   isSameSiteRequest,
 } from '@/lib/security-core'
-import { getCachedMaintenanceStatus, isGatedPath, isSignInPath } from '@/lib/maintenance-shared'
+import { getCachedMaintenanceStatus, isGatedPath, isSignInExempt } from '@/lib/maintenance-shared'
 import { renderMaintenanceShell } from '@/lib/maintenance-shell'
 import { readSession } from '@/lib/session-token'
 
@@ -66,6 +66,7 @@ const WEBHOOK_PATHS = ['/api/paystack/webhook', '/api/kyc/webhook']
 const ADMIN_PATH = /^\/(admin|api\/admin)(\/|$)/
 const RATE_LIMITED: Array<[RegExp, number]> = [
   [/^\/api\/admin\/auth$/, 8],
+  [/^\/api\/auth\//, 8],
   [/^\/api\/kyc\//, 20],
   [/^\/api\/paystack\//, 25],
   [/^\/api\/applications/, 30],
@@ -226,13 +227,13 @@ export async function middleware(request: NextRequest) {
 
     if (status.active) {
       const privileged = await hasPrivilegedCookie(request)
-      // Always open, in every mode: the console (so the operator can end the window), the outage and
-      // status pages, health/auth endpoints (so monitors and sign-in keep working), static assets.
-      // `full` then gates everything else; `sections` gates only the operator-selected prefixes.
+      // Always open: the console (so the operator can end the window), the outage and status
+      // pages, health/maintenance feeds, static assets. A whole-site blackout also takes down
+      // /sign-in — `allowSignIn` only keeps auth reachable during a *scoped* window.
       const gated =
         !ADMIN_PATH.test(pathname) &&
         !isOpenPath(pathname) &&
-        !(status.config.allowSignIn && isSignInPath(pathname)) &&
+        !isSignInExempt(pathname, status) &&
         (status.blocksAll || isGatedPath(pathname, status))
 
       if (gated && !privileged) {

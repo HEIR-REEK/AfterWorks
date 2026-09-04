@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server'
-import { consumeBucket, fail, json, maintenanceBlockForApi, requireUser, routeError } from '@/lib/guards'
+import { consumeBucket, fail, json, maintenanceBlockForApi, requireUser, requireVerifiedUser, routeError } from '@/lib/guards'
 import { sanitizeLine } from '@/lib/security-core'
 
 /**
@@ -68,7 +68,7 @@ export async function POST(req: NextRequest) {
   const blocked = await maintenanceBlockForApi(req)
   if (blocked) return blocked
 
-  const guard = await requireUser(req)
+  const guard = await requireVerifiedUser(req)
   if (!guard.ok) return guard.response
 
   const bucket = consumeBucket('apply', 20, 60_000, guard.value.uid)
@@ -111,7 +111,7 @@ export async function PATCH(req: NextRequest) {
   const blocked = await maintenanceBlockForApi(req)
   if (blocked) return blocked
 
-  const guard = await requireUser(req)
+  const guard = await requireVerifiedUser(req)
   if (!guard.ok) return guard.response
 
   const bucket = consumeBucket('apply-patch', 30, 60_000, guard.value.uid)

@@ -20,7 +20,6 @@ import {
   GoogleAuthProvider,
   signInWithPopup,
   getAdditionalUserInfo,
-  sendEmailVerification,
   type Auth,
   type User,
 } from 'firebase/auth'
@@ -36,7 +35,7 @@ export type FirebaseConfig = {
 }
 
 type AuthResult =
-  | { ok: true; isNewUser?: boolean }
+  | { ok: true; isNewUser?: boolean; needsEmailVerification?: boolean }
   | { ok: false; error: string; code?: string }
 
 type AuthContextValue = {
@@ -50,12 +49,14 @@ type AuthContextValue = {
    */
   claims: { admin?: boolean } | null
   getIdToken: (forceRefresh?: boolean) => Promise<string | null>
+  /** Force-refresh the Firebase user so `emailVerified` is current after the Resend link is clicked. */
+  reloadUser: () => Promise<boolean>
   signIn: (email: string, password: string) => Promise<AuthResult>
   signUp: (email: string, password: string, name: string) => Promise<AuthResult>
   signInWithGoogle: () => Promise<AuthResult>
   signOut: () => Promise<void>
-  /** Re-sends a verification email to the currently signed-in (but unverified) user. */
-  resendVerification: () => Promise<{ ok: boolean; error?: string }>
+  /** Re-sends a Resend verification email to the currently signed-in (but unverified) user. */
+  resendVerification: () => Promise<{ ok: boolean; error?: string; alreadyVerified?: boolean }>
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
@@ -120,14 +121,21 @@ export function FirebaseAuthProvider({
     const onFocus = () => {
       const current = authRef.current?.currentUser
       if (!current) return
-      void current.getIdTokenResult(true).then((result) => setClaims({ admin: result.claims?.admin === true })).catch(() => {})
+      // Reload so a verification that happened on another device is visible without a full sign-in.
+      void current
+        .reload()
+        .then(() => {
+          setUser(authRef.current?.currentUser ?? null)
+          return current.getIdTokenResult(true)
+        })
+        .then((result) => setClaims({ admin: result.claims?.admin === true }))
+        .catch(() => {})
     }
     if (typeof window !== 'undefined') window.addEventListener('focus', onFocus)
-    const cleanup = () => {
+    return () => {
+      unsub()
       if (typeof window !== 'undefined') window.removeEventListener('focus', onFocus)
     }
-    void cleanup
-    return () => unsub()
   }, [configured, config])
 
   const value = useMemo<AuthContextValue>(() => {
@@ -139,18 +147,48 @@ export function FirebaseAuthProvider({
       }
     }
 
+    async function reloadUser(): Promise<boolean> {
+      const current = authRef.current?.currentUser
+      if (!current) return false
+      try {
+        await current.reload()
+        const next = authRef.current?.currentUser ?? null
+        setUser(next)
+        if (next) {
+          const result = await next.getIdTokenResult(true)
+          setClaims({ admin: result.claims?.admin === true })
+        }
+        return Boolean(authRef.current?.currentUser?.emailVerified)
+      } catch {
+        return false
+      }
+    }
+
+    async function requestVerificationEmail(idToken: string): Promise<{ ok: boolean; error?: string; alreadyVerified?: boolean }> {
+      try {
+        const res = await fetch('/api/auth/send-verification', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { accept: 'application/json', authorization: `Bearer ${idToken}` },
+          cache: 'no-store',
+        })
+        const data = (await res.json().catch(() => ({}))) as { error?: string; alreadyVerified?: boolean }
+        if (!res.ok) {
+          return { ok: false, error: data.error || 'Failed to send verification email. Please try again.' }
+        }
+        return { ok: true, alreadyVerified: data.alreadyVerified === true }
+      } catch {
+        return { ok: false, error: 'Network error. Check your connection and try again.' }
+      }
+    }
+
     async function signIn(email: string, password: string): Promise<AuthResult> {
       if (!authRef.current) return { ok: false, error: 'Auth is not configured.' }
       try {
         const cred = await signInWithEmailAndPassword(authRef.current, email, password)
-        // Block sign-in for users who haven't verified their email yet
+        // Keep the session so they can resend from /verify-email; the app gate blocks profile/KYC.
         if (!cred.user.emailVerified) {
-          await fbSignOut(authRef.current)
-          return {
-            ok: false,
-            error: 'Please verify your email before signing in. Check your inbox for the verification link.',
-            code: 'email-not-verified',
-          }
+          return { ok: true, needsEmailVerification: true }
         }
         return { ok: true }
       } catch (err) {
@@ -167,12 +205,15 @@ export function FirebaseAuthProvider({
       try {
         const cred = await createUserWithEmailAndPassword(authRef.current, email, password)
         if (name) await updateProfile(cred.user, { displayName: name })
-        // Send email verification
-        await sendEmailVerification(cred.user)
-        // Persist the user's profile + empty wallet to Firestore
         await createUserDocument(cred.user.uid, name || email.split('@')[0], email)
-        setUser({ ...cred.user })
-        return { ok: true, isNewUser: true }
+        setUser(cred.user)
+        try {
+          const token = await cred.user.getIdToken()
+          await requestVerificationEmail(token)
+        } catch {
+          // Account exists; /verify-email lets them resend. Do not fail the signup.
+        }
+        return { ok: true, isNewUser: true, needsEmailVerification: !cred.user.emailVerified }
       } catch (err) {
         return { ok: false, error: friendlyError((err as { code?: string })?.code ?? '') }
       }
@@ -189,30 +230,35 @@ export function FirebaseAuthProvider({
         const cred = await signInWithPopup(authRef.current, provider)
         const name = cred.user.displayName || cred.user.email?.split('@')[0] || 'Worker'
         await createUserDocument(cred.user.uid, name, cred.user.email || '')
-        setUser({ ...cred.user })
+        setUser(cred.user)
         const additionalInfo = getAdditionalUserInfo(cred)
+        if (!cred.user.emailVerified) {
+          try {
+            const token = await cred.user.getIdToken()
+            await requestVerificationEmail(token)
+          } catch {
+            /* resend is available on /verify-email */
+          }
+          return { ok: true, isNewUser: additionalInfo?.isNewUser ?? false, needsEmailVerification: true }
+        }
         return { ok: true, isNewUser: additionalInfo?.isNewUser ?? false }
       } catch (err) {
         return { ok: false, error: friendlyError((err as { code?: string })?.code ?? '') }
       }
     }
 
-    async function resendVerification(): Promise<{ ok: boolean; error?: string }> {
+    async function resendVerification(): Promise<{ ok: boolean; error?: string; alreadyVerified?: boolean }> {
       const currentUser = authRef.current?.currentUser
       if (!currentUser) return { ok: false, error: 'No signed-in user found. Please try signing in again.' }
       try {
-        await sendEmailVerification(currentUser)
-        return { ok: true }
-      } catch (err) {
-        const code = (err as { code?: string })?.code ?? ''
-        if (code === 'auth/too-many-requests') {
-          return { ok: false, error: 'Too many requests. Please wait a minute before requesting another email.' }
-        }
+        const token = await currentUser.getIdToken()
+        return await requestVerificationEmail(token)
+      } catch {
         return { ok: false, error: 'Failed to send verification email. Please try again.' }
       }
     }
 
-    return { user, loading, configured, claims, getIdToken, signIn, signUp, signInWithGoogle, signOut, resendVerification }
+    return { user, loading, configured, claims, getIdToken, reloadUser, signIn, signUp, signInWithGoogle, signOut, resendVerification }
   }, [user, loading, configured, claims])
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

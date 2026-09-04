@@ -208,6 +208,31 @@ export async function verifyIdToken(
 // ─── User Profile ─────────────────────────────────────────────────────────────
 
 /**
+ * Marks the Firebase Auth credential as email-verified and mirrors that onto the profile.
+ * Called only after a Resend verification token has been consumed — the client cannot set this.
+ */
+export async function markEmailVerified(uid: string, email: string): Promise<void> {
+  const app = getAdminApp()
+  const auth = getAuth(app)
+  const rec = await auth.getUser(uid)
+  const recEmail = (rec.email || '').trim().toLowerCase()
+  const expected = email.trim().toLowerCase()
+  if (recEmail && recEmail !== expected) {
+    throw new Error('EMAIL_MISMATCH')
+  }
+  if (!rec.emailVerified) {
+    await auth.updateUser(uid, { emailVerified: true })
+  }
+  const now = new Date().toISOString()
+  await updateUserProfile(uid, {
+    emailVerified: true,
+    emailVerifiedAt: now,
+    email: recEmail || expected,
+    updatedAt: now,
+  })
+}
+
+/**
  * Updates profile fields on the user's Firestore document (merge).
  * Strips undefined values to avoid Firestore errors.
  */
@@ -823,13 +848,19 @@ export async function saveMaintenanceConfigServer(
     if (JSON.stringify(patch[key]) !== JSON.stringify(current[key])) changed.push(String(key))
   }
 
-  const next = normaliseMaintenanceConfig({
+  let next = normaliseMaintenanceConfig({
     ...current,
     ...merged,
     version: (current.version ?? 0) + 1,
     updatedAt: new Date().toISOString(),
     updatedBy: actorEmail,
   })
+
+  // Whole-site blackout always takes sign-in down, even if an older saved config had allowSignIn.
+  if (next.mode === 'blackout' && next.scope === 'full' && next.allowSignIn) {
+    next = { ...next, allowSignIn: false }
+    if (!changed.includes('allowSignIn')) changed.push('allowSignIn')
+  }
 
   await db.collection('system').doc('maintenance').set(next as unknown as Record<string, unknown>)
   primeMaintenanceCache(next)
@@ -839,7 +870,7 @@ export async function saveMaintenanceConfigServer(
     {
       mode: next.mode,
       scope: next.scope,
-      blockedPaths: next.scope === 'sections' ? next.blockedPaths : undefined,
+      ...(next.scope === 'sections' ? { blockedPaths: next.blockedPaths } : {}),
       changed,
       title: next.title,
       estimatedEnd: next.estimatedEnd,
@@ -1292,8 +1323,9 @@ export async function setTemporaryPassword(uid: string, actorEmail: string): Pro
 }
 
 /**
- * Auth has no email transport of its own, so this mints the link the provider would have emailed and
- * hands it to the operator. Deliberately not a "sent ✓" claim: nothing was sent.
+ * Operator fallback: mint a Firebase-hosted verification link and hand it to staff. Worker signup
+ * does not use this — it sends a Resend email (`POST /api/auth/send-verification`) and this
+ * function stays as the "send it from your own channel" lever on the Users page.
  */
 export async function issueEmailVerificationLink(email: string, actorEmail: string): Promise<AccountActionResult> {
   const auth = authOrNull()
@@ -2366,6 +2398,29 @@ export async function listNotifications(uid: string, limit = 20): Promise<Notifi
   try {
     const snap = await db.collection('notifications').where('uid', '==', uid).orderBy('createdAt', 'desc').limit(Math.min(50, Math.max(1, limit))).get()
     return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<NotificationRow, 'id'>) }))
+  } catch (err) {
+    console.warn('[FirestoreAdmin] listNotifications fell back to unordered read:', err)
+    try {
+      const snap = await db.collection('notifications').where('uid', '==', uid).limit(Math.min(50, limit)).get()
+      const rows = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<NotificationRow, 'id'>) }))
+      return rows.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
+    } catch {
+      return []
+    }
+  }
+}
+
+export type NotificationRow = {
+  id: string
+  uid: string
+  title: string
+  body: string
+  tone?: 'success' | 'info' | 'warning' | 'danger'
+  link?: string
+  read?: boolean
+  createdAt: string
+}
+(d.data() as Omit<NotificationRow, 'id'>) }))
   } catch (err) {
     console.warn('[FirestoreAdmin] listNotifications fell back to unordered read:', err)
     try {

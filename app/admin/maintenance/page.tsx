@@ -90,7 +90,7 @@ export default function AdminMaintenancePage() {
   const [estimatedEnd, setEstimatedEnd] = useState('')
   const [scheduledStart, setScheduledStart] = useState('')
   const [autoResolve, setAutoResolve] = useState(true)
-  const [allowSignIn, setAllowSignIn] = useState(true)
+  const [allowSignIn, setAllowSignIn] = useState(false)
   const [contactEmail, setContactEmail] = useState('')
   const [allowedEmailsText, setAllowedEmailsText] = useState('')
   const [services, setServices] = useState<MaintenanceService[]>([])
@@ -116,7 +116,7 @@ export default function AdminMaintenancePage() {
       setEstimatedEnd(cfg.estimatedEnd ? toLocalInput(cfg.estimatedEnd) : '')
       setScheduledStart(cfg.scheduledStart ? toLocalInput(cfg.scheduledStart) : '')
       setAutoResolve(cfg.autoResolve)
-      setAllowSignIn(cfg.allowSignIn)
+      setAllowSignIn(cfg.allowSignIn === true)
       setContactEmail(cfg.contactEmail)
       setAllowedEmailsText((cfg.allowedEmails ?? []).join('\n'))
       setServices(cfg.affectedServices ?? [])
@@ -197,7 +197,7 @@ export default function AdminMaintenancePage() {
   const save = async (overrides?: Partial<Parameters<typeof adminApi.saveMaintenance>[0]>) => {
     setSaving(true)
     try {
-      const result = await adminApi.saveMaintenance({
+      const payload = {
         enabled,
         mode,
         scope,
@@ -214,13 +214,20 @@ export default function AdminMaintenancePage() {
         allowedEmails: parseEmails(allowedEmailsText),
         affectedServices: services,
         ...overrides,
-      })
+      }
+      const fullBlackout = (payload.mode ?? mode) === 'blackout' && (payload.scope ?? scope) === 'full'
+      if (fullBlackout) payload.allowSignIn = false
+      const result = await adminApi.saveMaintenance(payload)
       setConfig(result.config)
       setStatus(result.effective as typeof status)
+      setEnabled(result.config.enabled)
+      setMode(result.config.mode)
+      setScope(result.config.scope ?? 'full')
+      setAllowSignIn(result.config.allowSignIn === true)
       if (result.warning) push('warning', result.warning, 9000)
       push(
         'success',
-        `${enabled ? 'Maintenance saved' : 'Settings saved'}${result.changed?.length ? ` · ${result.changed.length} field${result.changed.length === 1 ? '' : 's'} updated` : ''} · live immediately for all sessions.`,
+        `${result.config.enabled ? 'Maintenance saved' : 'Settings saved'}${result.changed?.length ? ` · ${result.changed.length} field${result.changed.length === 1 ? '' : 's'} updated` : ''} · live immediately for all sessions.`,
       )
     } catch (err) {
       push('error', err instanceof Error ? err.message : 'Save failed — nothing was changed.')
@@ -242,13 +249,24 @@ export default function AdminMaintenancePage() {
       setEnabled(false)
       setEstimatedEnd('')
       setScheduledStart('')
+      await save({ enabled: false, estimatedEnd: null, scheduledStart: null })
       return
     }
-    const target = new Date(Date.now() + minutes * 60_000)
+    const iso = new Date(Date.now() + minutes * 60_000).toISOString()
     setEnabled(true)
     setMode('blackout')
-    setEstimatedEnd(toLocalInput(target.toISOString()))
+    setScope('full')
+    setAllowSignIn(false)
+    setEstimatedEnd(toLocalInput(iso))
     setAutoResolve(true)
+    await save({
+      enabled: true,
+      mode: 'blackout',
+      scope: 'full',
+      allowSignIn: false,
+      estimatedEnd: iso,
+      autoResolve: true,
+    })
   }
 
   const setServiceStatus = (id: string, next: (typeof SERVICE_STATUSES)[number]) => {
@@ -296,7 +314,7 @@ export default function AdminMaintenancePage() {
             </div>
             <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
               {status?.active
-                ? `Workers see the maintenance screen. Console access and staff bypass stay open${
+                ? `Workers see the maintenance screen on every public page, including sign-in. Console access and staff bypass stay open${
                     status.retryAfterSec ? `; clients are told to retry in ${Math.round(status.retryAfterSec / 60)} min` : ''
                   }.`
                 : 'Members can sign in, browse jobs, submit work and receive payouts normally.'}
@@ -354,7 +372,21 @@ export default function AdminMaintenancePage() {
         <div className="flex shrink-0 items-center gap-3">
           <label className="inline-flex cursor-pointer items-center gap-2.5">
             <span className="text-xs font-semibold text-foreground">{enabled ? 'On' : 'Off'}</span>
-            <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} className="sr-only peer" />
+            <input
+              type="checkbox"
+              checked={enabled}
+              disabled={saving}
+              onChange={(event) => {
+                const next = event.target.checked
+                setEnabled(next)
+                if (next && mode === 'blackout' && scope === 'full') setAllowSignIn(false)
+                void save({
+                  enabled: next,
+                  ...(next && mode === 'blackout' && scope === 'full' ? { allowSignIn: false } : {}),
+                })
+              }}
+              className="sr-only peer"
+            />
             <span className="relative h-7 w-14 rounded-full bg-muted transition-colors after:absolute after:left-[3px] after:top-[3px] after:size-[22px] after:rounded-full after:bg-white after:shadow after:transition-all peer-checked:bg-amber-500 peer-checked:after:translate-x-[26px]" />
           </label>
           <Button variant="outline" size="sm" className="gap-1.5" onClick={() => void load()} disabled={loading}>
@@ -474,7 +506,7 @@ export default function AdminMaintenancePage() {
               <div className="grid gap-2 sm:grid-cols-2">
                 {(
                   [
-                    ['full', 'Whole site', 'Every page and endpoint except the console. Use for schema changes, migrations or a full outage.'],
+                    ['full', 'Whole site', 'Every public page and endpoint except the console — including sign-in and sign-up. Use for schema changes, migrations or a full outage.'],
                     ['sections', 'Only these areas', 'Everything else keeps working normally. Workers can still browse, apply and read their balance.'],
                   ] as const
                 ).map(([value, label, hint]) => (
@@ -558,8 +590,8 @@ export default function AdminMaintenancePage() {
                 </>
               ) : (
                 <p className="text-[11px] leading-relaxed text-muted-foreground">
-                  Workers get a static page that does not depend on the app or the database: heading, message, expected back-online time and the list of affected services. Queues and crawlers
-                  receive <code className="font-mono">503</code> with <code className="font-mono">Retry-After</code>.
+                  Workers get a static page that does not depend on the app or the database — heading, message, expected back-online time and the list of affected services — on every public
+                  route including sign-in. Queues and crawlers receive <code className="font-mono">503</code> with <code className="font-mono">Retry-After</code>.
                 </p>
               )}
             </div>
@@ -592,11 +624,21 @@ export default function AdminMaintenancePage() {
                     <span className="mt-0.5 block text-[11px] leading-snug text-muted-foreground">The gate lifts itself when the expected end time passes — no 3am pager for the switch-back.</span>
                   </span>
                 </label>
-                <label className="flex items-start gap-2.5 rounded-xl border border-border/70 bg-background/50 p-3">
-                  <input type="checkbox" checked={allowSignIn} onChange={(event) => setAllowSignIn(event.target.checked)} className="mt-0.5 size-4 accent-[var(--primary)]" />
+                <label className={cn('flex items-start gap-2.5 rounded-xl border border-border/70 bg-background/50 p-3', mode === 'blackout' && scope === 'full' && 'opacity-60')}>
+                  <input
+                    type="checkbox"
+                    checked={mode === 'blackout' && scope === 'full' ? false : allowSignIn}
+                    disabled={mode === 'blackout' && scope === 'full'}
+                    onChange={(event) => setAllowSignIn(event.target.checked)}
+                    className="mt-0.5 size-4 accent-[var(--primary)]"
+                  />
                   <span>
                     <span className="block text-xs font-semibold text-foreground">Keep sign-in & KYC callbacks open</span>
-                    <span className="mt-0.5 block text-[11px] leading-snug text-muted-foreground">Lets verification flows finish mid-window instead of stranding a session.</span>
+                    <span className="mt-0.5 block text-[11px] leading-snug text-muted-foreground">
+                      {mode === 'blackout' && scope === 'full'
+                        ? 'Unavailable during a whole-site blackout — every public page is replaced, including sign-in. Switch to “Only these areas” if workers must still log in.'
+                        : 'Lets verification flows finish mid-window instead of stranding a session. Applies only to a scoped pause.'}
+                    </span>
                   </span>
                 </label>
               </div>
@@ -710,7 +752,8 @@ export default function AdminMaintenancePage() {
 
           <AdminCard title="How the guard works" icon={<Info className="size-4" />} description="Useful when someone asks “why can I still get in?”">
             <ul className="flex flex-col gap-1.5 text-[11px] leading-relaxed text-muted-foreground">
-              <li>• Middleware rejects gated document requests with 503 + Retry-After and rewrites to /maintenance.</li>
+              <li>• Middleware rejects gated document requests with 503 + Retry-After and serves the static outage page.</li>
+              <li>• A whole-site blackout also replaces /sign-in and /sign-up. “Keep sign-in open” only applies to a scoped window.</li>
               <li>• /api routes return a retryable 503 so clients show a banner instead of a stack trace.</li>
               <li>• Console paths (/admin, /api/admin) are never blocked, so you can always switch it back off.</li>
               <li>• Staff with a valid session cookie, or an email on the bypass list, pass through.</li>

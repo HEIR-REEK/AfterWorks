@@ -110,6 +110,14 @@ services:
       - key: DIDIT_WEBHOOK_SECRET
         sync: false
 
+      # ── Signup email verification (Resend) ────────────────────────────────
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false # AfterWorks <noreply@your-verified-domain>
+      - key: EMAIL_VERIFY_TTL_HOURS
+        value: "24"
+
       # ── Contact addresses shown in the UI ──────────────────────────────────
       - key: NEXT_PUBLIC_SUPPORT_EMAIL
         sync: false

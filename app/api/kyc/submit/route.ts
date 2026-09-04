@@ -41,6 +41,12 @@ export async function POST(req: NextRequest) {
         { status: 401 },
       )
     }
+    if (!decoded.email_verified) {
+      return NextResponse.json(
+        { error: 'Verify your email before starting identity verification.', code: 'email_not_verified' },
+        { status: 403 },
+      )
+    }
 
     // Use the authenticated UID — never trust a userId from the request body
     const userId = decoded.uid

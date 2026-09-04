@@ -118,6 +118,16 @@ export async function GET() {
             : 'Sessions work but DIDIT_WEBHOOK_SECRET is unset — results cannot be trusted in production.',
     },
     {
+      id: 'email',
+      label: 'Transactional email',
+      status: env('RESEND_API_KEY').startsWith('re_') ? (env('EMAIL_FROM') || !production ? 'operational' : 'degraded') : 'degraded',
+      detail: env('RESEND_API_KEY').startsWith('re_')
+        ? env('EMAIL_FROM')
+          ? 'Resend delivers signup verification mail; the link is what marks Firebase Auth verified.'
+          : 'Resend key is set. EMAIL_FROM is empty — using the development sender, which will not reach real inboxes in production.'
+        : 'RESEND_API_KEY is not set — new accounts cannot verify their email.',
+    },
+    {
       id: 'console',
       label: 'Admin console',
       status: (env('ADMIN_SESSION_SECRET') ?? '').length >= 32 ? 'operational' : production ? 'outage' : 'degraded',

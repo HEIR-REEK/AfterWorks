@@ -68,6 +68,8 @@ export type UserProfile = {
   qualityScore: number
   jobsCompleted: number
   kycVerified: boolean
+  emailVerified?: boolean
+  emailVerifiedAt?: string
   accountState: AccountState
   role?: 'admin' | 'user'
   isAdmin?: boolean
@@ -182,6 +184,7 @@ export async function createUserDocument(uid: string, name: string, email: strin
         qualityScore: 100,
         jobsCompleted: 0,
         kycVerified: false,
+        emailVerified: false,
         accountState: 'active',
         role: 'user',
         isAdmin: false,
@@ -359,7 +362,31 @@ export async function getJobAvailability(jobIds: string[]): Promise<Record<strin
 
 export async function fetchMaintenanceStatus(): Promise<MaintenanceView> {
   try {
-    const data = await apiFetch<Record<string, unknown>>('/api/maintenance', { timeoutMs: 8_000 })
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 8_000)
+    let data: Record<string, unknown> = {}
+    try {
+      const res = await fetch('/api/maintenance', {
+        credentials: 'same-origin',
+        cache: 'no-store',
+        headers: { accept: 'application/json' },
+        signal: controller.signal,
+      })
+      const text = await res.text()
+      if (text.trim()) {
+        try {
+          data = JSON.parse(text) as Record<string, unknown>
+        } catch {
+          return INERT_MAINTENANCE_VIEW
+        }
+      }
+      // A 503 with a maintenance payload is still a real window (older deploys answered 503 on
+      // full blackout). Only treat a non-OK response as unknown when it has no window flags.
+      const reportsWindow = data.blocking === true || data.blocksAll === true || data.enabled === true
+      if (!res.ok && !reportsWindow) return INERT_MAINTENANCE_VIEW
+    } finally {
+      clearTimeout(timeout)
+    }
     const config = { ...DEFAULT_MAINTENANCE_CONFIG, ...(data as object) } as MaintenanceConfig
     const status = resolveMaintenance(config)
     return {

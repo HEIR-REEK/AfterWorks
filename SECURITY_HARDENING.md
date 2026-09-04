@@ -50,7 +50,9 @@ by disabling JavaScript, and the config document was writable from the browser.
 | Client | `components/maintenance-provider.tsx`, `app-gate.tsx` | one poller per tab freezes writes, shows a countdown, and never blocks the console |
 
 Exempt during a blackout: `/admin`, `/api/admin/auth`, `/api/admin/session`, `/maintenance`,
-`/status`, `/api/health`, `/api/maintenance`, static assets. Bypass is a signed 12 h
+`/status`, `/api/health`, `/api/maintenance`, static assets. `/sign-in` and `/sign-up` are **not**
+exempt on a whole-site window — `allowSignIn` only keeps auth reachable during a scoped pause.
+Bypass is a signed 12 h
 `aw_ops_bypass` cookie, minted **only** by `/api/maintenance/bypass` after the server has confirmed
 the caller is an admin or on the config's email allow-list.
 
@@ -106,6 +108,24 @@ application lifecycle in `lib/firestore-admin.ts` (`TRANSITIONS`). Approving res
 declining after approval releases it, completing credits the pending balance idempotently through a
 `wallet_ledger` document, and each step notifies the worker **and** writes an audit entry with the
 actor and the reason.
+
+## Signup email verification
+
+Firebase Auth no longer sends the verification mail. AfterWorks sends it through Resend so the
+from-address, the copy and the link are ours; Firebase is only the place we record the outcome.
+
+| Layer | File | Behaviour |
+| --- | --- | --- |
+| Transport | `lib/email.ts` | `POST https://api.resend.com/emails` with `RESEND_API_KEY`. Missing key → fail closed, no pretend send |
+| Token | `lib/email-verification.ts` | HMAC-SHA256 (`ev1.<payload>.<sig>`), bound to uid **and** email, 24 h TTL, single-use `jti` in `email_verifications` |
+| Send | `POST /api/auth/send-verification` | ID token required; address taken from the token, never the body; 3 / 15 min per uid |
+| Consume | `POST /api/auth/verify-email` | Public (the click often happens on another device); Admin SDK sets `emailVerified: true` |
+| Gate | `components/app-gate.tsx`, `requireVerifiedUser` | Unverified members are held on `/verify-email`. Apply, KYC and Paystack init return `403 email_not_verified` |
+
+Disposable domains are still rejected up front by `lib/email-validation.ts`. Google sign-in that
+Firebase already marks `email_verified` skips the hold. `EMAIL_FROM` must be a domain verified in
+Resend; until then only `beth.t@example.com` delivers, and `/api/health` reports the mail check as
+degraded.
 
 ## Money
 

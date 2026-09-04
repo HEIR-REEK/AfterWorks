@@ -24,7 +24,7 @@ import { matchesBlockedPath } from '@/lib/maintenance-shared'
  *    verified by `useAdminSession()`, plus the server-side allow-list check.
  */
 
-const PUBLIC_ROUTES = ['/sign-in', '/sign-up', '/kyc/callback', '/maintenance', '/status']
+const PUBLIC_ROUTES = ['/sign-in', '/sign-up', '/verify-email', '/kyc/callback', '/maintenance', '/status']
 
 export function AppGate({ children }: { children: React.ReactNode }) {
   return (
@@ -44,8 +44,8 @@ function Gate({ children }: { children: React.ReactNode }) {
 
   const isPublic = useMemo(() => PUBLIC_ROUTES.some((route) => pathname === route || pathname.startsWith(`${route}/`)), [pathname])
   const isAdminRoute = pathname.startsWith('/admin') || pathname.startsWith('/api/admin')
-  // A full blackout replaces the whole app. A scoped one (`sections`) replaces only the affected
-  // route, so a payout run does not take the job board down with it — which is what the notice claims.
+  // A full blackout replaces the whole app, including /sign-in. A scoped one (`sections`) replaces
+  // only the affected route, so a payout run does not take the job board down with it.
   const blackoutAll = view.blocking && view.blocksAll && !bypassed && admin.status !== 'authorized'
   const scopedHit =
     view.blocking && !view.blocksAll && !bypassed && admin.status !== 'authorized' && matchesBlockedPath(pathname, view.blockedPaths)
@@ -53,10 +53,16 @@ function Gate({ children }: { children: React.ReactNode }) {
 
   // Redirect to sign-in only for routes that genuinely need a session, and never while an outage
   // is up (the maintenance screen is the correct terminal state, not a redirect loop).
+  // Unverified members stay signed in but cannot reach profile/KYC/jobs until they click the
+  // Resend link — /verify-email is public so that page still renders when signed out too.
   useEffect(() => {
     if (loading || configured === false) return
     if (isPublic || isAdminRoute || blackout) return
-    if (!user) router.replace('/sign-in')
+    if (!user) {
+      router.replace('/sign-in')
+      return
+    }
+    if (!user.emailVerified) router.replace('/verify-email')
   }, [loading, user, isPublic, isAdminRoute, blackout, router, configured])
 
   // Flip the "loading" screen off only once we know what we are rendering.
@@ -82,6 +88,15 @@ function Gate({ children }: { children: React.ReactNode }) {
 
   // /admin has its own layout + session gate; it renders without the worker chrome (see admin/layout).
   if (isAdminRoute) return <>{children}</>
+
+  if (user && !user.emailVerified) {
+    return (
+      <div className="flex min-h-dvh flex-col items-center justify-center gap-3" role="status" aria-live="polite">
+        <Loader2 className="size-6 animate-spin text-primary" />
+        <span className="text-xs font-medium text-muted-foreground">Verify your email to continue…</span>
+      </div>
+    )
+  }
 
   if (scopedHit) {
     return (

@@ -95,6 +95,10 @@ function ProfilePageContent() {
       setKycError('You must be signed in to verify your identity.')
       return
     }
+    if (!user.emailVerified) {
+      setKycError('Verify your email before starting identity verification.')
+      return
+    }
     setStartingKyc(true)
     setKycError(null)
     setKycFailureReason(null)

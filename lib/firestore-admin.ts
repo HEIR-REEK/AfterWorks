@@ -2420,26 +2420,3 @@ export type NotificationRow = {
   read?: boolean
   createdAt: string
 }
-(d.data() as Omit<NotificationRow, 'id'>) }))
-  } catch (err) {
-    console.warn('[FirestoreAdmin] listNotifications fell back to unordered read:', err)
-    try {
-      const snap = await db.collection('notifications').where('uid', '==', uid).limit(Math.min(50, limit)).get()
-      const rows = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<NotificationRow, 'id'>) }))
-      return rows.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
-    } catch {
-      return []
-    }
-  }
-}
-
-export type NotificationRow = {
-  id: string
-  uid: string
-  title: string
-  body: string
-  tone?: 'success' | 'info' | 'warning' | 'danger'
-  link?: string
-  read?: boolean
-  createdAt: string
-}

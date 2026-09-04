@@ -42,11 +42,44 @@ export function isResendConfigured(): boolean {
 /**
  * From-address. Production must use a domain verified in Resend; the test sender is accepted
  * only outside production so a missing EMAIL_FROM does not silently break local signup.
+ *
+ * Gmail/Yahoo/Outlook cannot be a Resend From — Resend authenticates a domain you own, not a
+ * consumer mailbox. Those addresses belong in EMAIL_REPLY_TO / NEXT_PUBLIC_SUPPORT_EMAIL.
  */
 export function emailFromAddress(): string {
   const configured = sanitizeLine(env('EMAIL_FROM') || env('RESEND_FROM'), 180)
-  if (configured && configured.includes('@')) return configured
+  if (configured && configured.includes('@') && !isConsumerMailbox(configured)) return configured
   return isProduction() ? `AfterWorks <noreply@${fromHost()}>` : RESEND_TEST_FROM
+}
+
+export function emailReplyToAddress(): string {
+  const dedicated = sanitizeLine(env('EMAIL_REPLY_TO'), 180)
+  if (isEmailLike(dedicated)) return dedicated.trim().toLowerCase()
+  return site.supportEmail
+}
+
+const CONSUMER_MAILBOX_DOMAINS = new Set([
+  'gmail.com',
+  'googlemail.com',
+  'yahoo.com',
+  'yahoo.co.uk',
+  'outlook.com',
+  'hotmail.com',
+  'live.com',
+  'icloud.com',
+  'me.com',
+  'aol.com',
+  'proton.me',
+  'protonmail.com',
+])
+
+function addressDomain(value: string): string {
+  const match = value.toLowerCase().match(/@([^>\s]+)/)
+  return match?.[1] ?? ''
+}
+
+function isConsumerMailbox(value: string): boolean {
+  return CONSUMER_MAILBOX_DOMAINS.has(addressDomain(value))
 }
 
 function fromHost(): string {
@@ -97,7 +130,7 @@ export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult>
     html: input.html,
     text: input.text,
   }
-  const replyTo = input.replyTo || site.supportEmail
+  const replyTo = input.replyTo || emailReplyToAddress()
   if (isEmailLike(replyTo)) payload.reply_to = replyTo
   if (input.tag) payload.tags = [{ name: 'category', value: sanitizeLine(input.tag, 40) }]
 

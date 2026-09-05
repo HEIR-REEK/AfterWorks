@@ -6,6 +6,7 @@ import { useAfterWorks } from '@/components/afterworks-provider'
 import {
   formatDuration,
   formatUsd,
+  trainingFeeUsdFor,
   type Job,
 } from '@/lib/afterworks-data'
 import { StatusBadge } from '@/components/status-badge'
@@ -29,6 +30,7 @@ export function JobCard({ job }: { job: Job }) {
   const closing = closingLabel(job.closesAt)
   const isClosed = job.status !== 'open' || job.slotsRemaining <= 0
   const almostFull = !isClosed && job.slotsRemaining <= 3
+  const trainingFee = formatUsd(trainingFeeUsdFor(job.trainingFeeUsd))
 
   return (
     <div className="group flex flex-col rounded-xl border border-border bg-card p-5 transition-colors hover:border-primary/40 relative">
@@ -72,7 +74,7 @@ export function JobCard({ job }: { job: Job }) {
           isPaid ? 'bg-success/15 text-success' : 'bg-primary/10 text-primary border border-primary/20'
         }`}>
           <GraduationCap className="size-3.5" />
-          {isPaid ? 'Training Unlocked ✓' : 'Payment Required — $10'}
+          {isPaid ? 'Training Unlocked ✓' : `Payment Required — ${trainingFee}`}
         </div>
       )}
 
@@ -95,7 +97,7 @@ export function JobCard({ job }: { job: Job }) {
           ) : job.trainingRequired && !isPaid ? (
             <Button render={<Link href={`/training/${job.id}`} />} variant="default" size="sm" className="w-full gap-2">
               <GraduationCap className="size-4" />
-              Pay 10$ to Unlock Training
+              Pay {trainingFee} to Unlock Training
             </Button>
           ) : (
             <Button render={<Link href={`/training/${job.id}`} />} variant="secondary" size="sm" className="w-full gap-2">

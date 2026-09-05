@@ -18,8 +18,8 @@ import emailjs from '@emailjs/browser'
 import { useAuth } from '@/components/firebase-auth-provider'
 import { Button } from '@/components/ui/button'
 import { AssessmentQuiz } from '@/components/assessment-quiz'
-import { TrainingModules } from '@/components/training-modules'
-import { formatKesValue, getTrainingFeeKes } from '@/lib/afterworks-data'
+import { TrainingModules, TrainingNotesPreview, readTrainingProgress } from '@/components/training-modules'
+import { formatKesValue, formatUsd, trainingFeeKesFor, trainingFeeUsdFor } from '@/lib/afterworks-data'
 import { authedFetch, describeError } from '@/lib/client-api'
 
 // Kept per-tab and short-lived: it is only a pointer to a pending Paystack charge that the server
@@ -56,6 +56,7 @@ type PayState =
  */
 function PaystackCheckoutSection({
   jobId,
+  feeUsd,
   userEmail,
   onVerifySuccess,
   payState,
@@ -64,6 +65,8 @@ function PaystackCheckoutSection({
   setErrorMsg,
 }: {
   jobId: string
+  /** The admin-set training price for this job card; falls back to the global fee when unset. */
+  feeUsd?: number
   userEmail: string
   onVerifySuccess: (ref: string) => Promise<boolean>
   payState: PayState
@@ -71,7 +74,8 @@ function PaystackCheckoutSection({
   errorMsg: string | null
   setErrorMsg: (msg: string | null) => void
 }) {
-  const amountKes = getTrainingFeeKes()
+  const amountKes = trainingFeeKesFor(feeUsd)
+  const amountUsd = trainingFeeUsdFor(feeUsd)
   const popupRef = useRef<Window | null>(null)
   // True when the server said there is no browser-reachable callback URL, so this tab must stay
   // put and confirm the charge itself while Paystack runs in a separate window.
@@ -192,7 +196,7 @@ function PaystackCheckoutSection({
           <span className="font-medium text-foreground">Job Card Training Access Fee</span>
           <div className="flex flex-col items-end">
             <span className="font-mono text-lg font-bold text-primary">{formatKesValue(amountKes)}</span>
-            <span className="text-[11px] text-muted-foreground">≈ $10 · one job card</span>
+            <span className="text-[11px] text-muted-foreground">≈ {formatUsd(amountUsd)} · one job card</span>
           </div>
         </div>
 
@@ -341,9 +345,17 @@ function TrainingPageInner({ params }: { params: Promise<{ id: string }> }) {
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [applyError, setApplyError] = useState<string | null>(null)
   const [isApplying, setIsApplying] = useState(false)
+  // True once every training section is marked complete — this is what unlocks the assessment.
+  const [trainingComplete, setTrainingComplete] = useState(false)
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const job = getJob(id)
+
+  // Restore course progress on load so a refresh does not re-lock a finished course.
+  useEffect(() => {
+    if (!job) return
+    setTrainingComplete(readTrainingProgress(job).complete)
+  }, [job])
 
   // ── Verify a reference and unlock training ──────────────────────────────
   // The server (not this component) decides whether the course is paid: /api/paystack/verify
@@ -544,17 +556,25 @@ function TrainingPageInner({ params }: { params: Promise<{ id: string }> }) {
             isPaid ? 'bg-success/15 text-success font-semibold' : 'bg-primary/10 text-primary font-bold ring-1 ring-primary/30'
           }`}>
             <span className="flex size-5 items-center justify-center rounded-full bg-background text-[10px] shadow-xs">1</span>
-            <span>1. Complete Payment</span>
+            <span>{job.trainingRequired ? '1. Complete Payment' : '1. No Fee'}</span>
           </div>
 
           <div className={`flex flex-col items-center gap-1 text-center p-2 rounded-lg ${
-            isPaid ? 'bg-accent/80 text-foreground font-semibold' : 'text-muted-foreground opacity-60'
+            trainingComplete
+              ? 'bg-success/15 text-success font-semibold'
+              : job.trainingRequired && isPaid
+                ? 'bg-primary/10 text-primary font-bold ring-1 ring-primary/30'
+                : 'text-muted-foreground opacity-60'
           }`}>
             <span className="flex size-5 items-center justify-center rounded-full bg-background text-[10px] shadow-xs">2</span>
             <span>2. Get Trained</span>
           </div>
 
-          <div className="flex flex-col items-center gap-1 text-center p-2 rounded-lg text-muted-foreground opacity-60">
+          <div className={`flex flex-col items-center gap-1 text-center p-2 rounded-lg ${
+            trainingComplete || !job.trainingRequired
+              ? 'bg-primary/10 text-primary font-bold ring-1 ring-primary/30'
+              : 'text-muted-foreground opacity-60'
+          }`}>
             <span className="flex size-5 items-center justify-center rounded-full bg-background text-[10px] shadow-xs">3</span>
             <span>3. Assessment</span>
           </div>
@@ -573,10 +593,22 @@ function TrainingPageInner({ params }: { params: Promise<{ id: string }> }) {
 
         {/* ── FREE JOB (Assessment Only) ── */}
         {!job.trainingRequired && (
-          <div className="mt-8 pt-6 border-t border-border">
-            <AssessmentQuiz category={job.category} onPass={handleApplyAfterTraining} />
+          <div className="mt-8 flex flex-col gap-6 border-t border-border pt-6">
+            {(job.trainingNotes?.length ?? 0) > 0 && (
+              <div className="flex flex-col gap-3">
+                <h2 className="flex items-center gap-2 text-lg font-bold">
+                  <GraduationCap className="size-5 text-primary" />
+                  Preparation Notes
+                </h2>
+                <p className="text-xs text-muted-foreground">
+                  Study these notes before taking the assessment — the questions are based on this material.
+                </p>
+                <TrainingNotesPreview job={job} />
+              </div>
+            )}
+            <AssessmentQuiz category={job.category} onPass={handleApplyAfterTraining} customQuestions={job.assessmentQuestions} />
             {applyError && (
-              <p className="mt-4 text-center text-xs text-destructive">{applyError}</p>
+              <p className="text-center text-xs text-destructive">{applyError}</p>
             )}
           </div>
         )}
@@ -586,6 +618,7 @@ function TrainingPageInner({ params }: { params: Promise<{ id: string }> }) {
           isMounted ? (
             <PaystackCheckoutSection
               jobId={job.id}
+              feeUsd={job.trainingFeeUsd}
               userEmail={userEmail}
               onVerifySuccess={verifyReference}
               payState={payState}
@@ -608,32 +641,55 @@ function TrainingPageInner({ params }: { params: Promise<{ id: string }> }) {
               <span>Payment Detected &amp; Confirmed — Training &amp; Assessment Unlocked!</span>
             </div>
 
-            {/* Step 2: Training Modules */}
+            {/* Step 2: Training — one section at a time, next unlocks as each is completed */}
             <div className="flex flex-col gap-4">
               <div className="flex items-center justify-between border-b border-border pb-3">
                 <h2 className="text-lg font-bold flex items-center gap-2">
                   <GraduationCap className="size-5 text-primary" />
-                  Step 2: Training Modules
+                  Step 2: Training Course
                 </h2>
-                <span className="text-xs bg-success/15 text-success px-2.5 py-1 rounded-full font-medium">Unlocked</span>
+                <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${trainingComplete ? 'bg-success/15 text-success' : 'bg-primary/10 text-primary'}`}>
+                  {trainingComplete ? 'Completed' : 'In progress'}
+                </span>
               </div>
-              <TrainingModules job={job} />
+              <TrainingModules
+                job={job}
+                onComplete={() => setTrainingComplete(true)}
+                onReset={() => setTrainingComplete(false)}
+              />
             </div>
 
-            {/* Step 3: Assessment Quiz */}
+            {/* Step 3: Assessment Quiz — unlocks when the last training section is finished */}
             <div className="pt-6 border-t border-border flex flex-col gap-4">
               <div className="flex items-center justify-between border-b border-border pb-3">
                 <h2 className="text-lg font-bold flex items-center gap-2">
                   <CheckCircle2 className="size-5 text-primary" />
                   Step 3 &amp; 4: Skill Assessment &amp; Job Card Application
                 </h2>
+                {!trainingComplete && (
+                  <span className="flex items-center gap-1 text-xs bg-muted px-2.5 py-1 rounded-full font-medium text-muted-foreground">
+                    <Lock className="size-3" />
+                    Locked
+                  </span>
+                )}
               </div>
-              <p className="text-xs text-muted-foreground">
-                After studying the training modules above, complete the assessment quiz below to apply for this job card.
-              </p>
-              <AssessmentQuiz category={job.category} onPass={handleApplyAfterTraining} />
-              {applyError && (
-                <p className="mt-4 text-center text-sm font-medium text-destructive bg-destructive/10 p-3 rounded-lg">{applyError}</p>
+              {trainingComplete ? (
+                <>
+                  <p className="text-xs text-muted-foreground">
+                    Training complete — answer the assessment below to apply for this job card.
+                  </p>
+                  <AssessmentQuiz category={job.category} onPass={handleApplyAfterTraining} customQuestions={job.assessmentQuestions} />
+                  {applyError && (
+                    <p className="mt-4 text-center text-sm font-medium text-destructive bg-destructive/10 p-3 rounded-lg">{applyError}</p>
+                  )}
+                </>
+              ) : (
+                <div className="flex items-start gap-3 rounded-xl border border-border bg-muted/30 p-4 text-sm text-muted-foreground">
+                  <Lock className="mt-0.5 size-4 shrink-0" />
+                  <span>
+                    Finish every training section above to unlock the assessment. Your progress is saved as you go — you can leave and come back.
+                  </span>
+                </div>
               )}
             </div>
           </div>

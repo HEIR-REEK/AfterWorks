@@ -10,6 +10,19 @@ export type JobCategory =
 
 export type JobStatus = 'open' | 'paused' | 'closed'
 
+/** One authored training section. Workers step through these one at a time on the training page. */
+export type TrainingSection = {
+  title: string
+  content: string
+}
+
+/** One authored assessment question. Options are 2–4 strings; `correctIndex` points at the right one. */
+export type AssessmentQuestion = {
+  question: string
+  options: string[]
+  correctIndex: number
+}
+
 /** Canonical category list — client forms and the server validator both read this. */
 export const JOB_CATEGORY_LIST: readonly JobCategory[] = [
   'Data Entry',
@@ -31,6 +44,15 @@ export type Job = {
   capacity: number
   slotsRemaining: number
   trainingRequired: boolean
+  /**
+   * Per-job training price in USD, decided by the admin when publishing the card. Only meaningful
+   * when `trainingRequired` is true; falls back to the globally configured fee when absent.
+   */
+  trainingFeeUsd?: number
+  /** Admin-authored training sections. Empty/absent → the built-in category modules are used. */
+  trainingNotes?: TrainingSection[]
+  /** Admin-authored assessment questions. Empty/absent → the built-in category bank is used. */
+  assessmentQuestions?: AssessmentQuestion[]
   requiresVerified: boolean
   status: JobStatus
   // ISO date string for the closing condition
@@ -201,6 +223,40 @@ export function getTrainingFeeCents(overrideAmount?: number | string | null): nu
   return Math.round(getTrainingFeeUsd(overrideAmount) * 100)
 }
 
+/**
+ * The USD price of training for one job card. Admins set this per job; when the job carries no
+ * fee of its own (older documents, seeded demo cards) the globally configured fee applies.
+ * Unlike `getTrainingFeeUsd`, a per-job fee is taken at face value — no cents heuristic.
+ */
+export function trainingFeeUsdFor(jobFeeUsd?: number | string | null): number {
+  const num = Number(jobFeeUsd)
+  if (Number.isFinite(num) && num > 0) return Math.round(num * 100) / 100
+  return getTrainingFeeUsd()
+}
+
+/** KES checkout price for one job card's training: the per-job fee first, global config as fallback. */
+export function trainingFeeKesFor(jobFeeUsd?: number | string | null): number {
+  const num = Number(jobFeeUsd)
+  if (Number.isFinite(num) && num > 0) {
+    return Math.round((Math.round(num * 100) / 100) * getExchangeRateUsdToKes())
+  }
+  return getTrainingFeeKes()
+}
+
+/** Paystack subunits (KES cents) for one job card's training fee. */
+export function paystackSubunitsFor(jobFeeUsd?: number | string | null): number {
+  return trainingFeeKesFor(jobFeeUsd) * 100
+}
+
+/**
+ * Pass mark for an assessment of any length. Keeps the original 10-of-15 ratio (⅔, rounded up),
+ * so a custom bank of 6 questions needs 4, and the built-in 15-question banks still need 10.
+ */
+export function assessmentPassMark(questionCount: number): number {
+  const n = Math.max(1, Math.floor(questionCount) || 1)
+  return Math.max(1, Math.ceil((n * 2) / 3))
+}
+
 export function formatKes(usd: number): string {
   return new Intl.NumberFormat('en-KE', {
     style: 'currency',
@@ -249,6 +305,18 @@ export function seedJobs(): Job[] {
       capacity: 80,
       slotsRemaining: 64,
       trainingRequired: false,
+      trainingNotes: [
+        {
+          title: 'How these support calls are structured',
+          content:
+            'Each clip is a two-party call: an agent and a customer. Expect greetings, a problem description, and a resolution. Label every paragraph with the speaker (Agent: / Customer:) so the transcript stays readable.',
+        },
+        {
+          title: 'Swahili shorthand to watch for',
+          content:
+            'Callers often mix Swahili and English mid-sentence. Transcribe exactly what is spoken in each language — do not translate the English parts into Swahili or vice versa. Use standard Swahili orthography for numbers and greetings.',
+        },
+      ],
       requiresVerified: true,
       status: 'open',
       closesAt: daysFromNow(3),
@@ -271,6 +339,56 @@ export function seedJobs(): Job[] {
       capacity: 40,
       slotsRemaining: 32,
       trainingRequired: true,
+      trainingFeeUsd: 15,
+      trainingNotes: [
+        {
+          title: 'Section 1: The medical transcription workflow',
+          content:
+            'You will receive a recording of a doctor-patient consultation plus the matching glossary. Play the recording once all the way through before typing anything — this gives you the full context of the case.\n\nThen work in short passes: type what you hear, mark anything unclear with [inaudible] plus the timestamp, and only consult the glossary after the first pass so your flow is not interrupted.',
+        },
+        {
+          title: 'Section 2: Using the medical glossary correctly',
+          content:
+            'Medical terms must match the glossary spelling exactly — "oedema" and "edema" are not interchangeable in this project, and drug names are case-sensitive.\n\nIf a term is spoken but not in the glossary, transcribe it phonetically inside [phonetic] brackets and flag the segment for review. Never guess a drug name: a wrong medication name is an automatic rejection.',
+        },
+        {
+          title: 'Section 3: Confidentiality & submission checklist',
+          content:
+            'Consultations contain personal health information. Never copy excerpts outside the platform, never discuss cases anywhere else, and delete nothing you were given.\n\nBefore submitting, run the checklist:\n- Every [inaudible] has a timestamp\n- All drug names match the glossary exactly\n- Speaker labels (Doctor / Patient) are on every paragraph\n- The transcript is proofread once, top to bottom',
+        },
+      ],
+      assessmentQuestions: [
+        {
+          question: 'You cannot make out a medication name in the recording. What do you do?',
+          options: [
+            'Guess the most likely drug from the context of the consultation.',
+            'Transcribe it phonetically inside [phonetic] brackets and flag the segment for review.',
+            'Leave the word out of the transcript entirely.',
+            'Use a similar drug name from the glossary.',
+          ],
+          correctIndex: 1,
+        },
+        {
+          question: 'The glossary spells a condition "oedema". The doctor says it clearly. How do you type it?',
+          options: [
+            'Exactly as the glossary spells it: oedema.',
+            'However you normally spell it — both forms are accepted.',
+            'In capitals to highlight the term.',
+            'With a [sic] tag after it.',
+          ],
+          correctIndex: 0,
+        },
+        {
+          question: 'Which item is NOT part of the submission checklist?',
+          options: [
+            'Every [inaudible] tag has a timestamp.',
+            'Speaker labels appear on every paragraph.',
+            'A short summary of the diagnosis is added at the top.',
+            'The transcript has been proofread once from top to bottom.',
+          ],
+          correctIndex: 2,
+        },
+      ],
       requiresVerified: true,
       status: 'open',
       closesAt: daysFromNow(7),
@@ -314,6 +432,7 @@ export function seedJobs(): Job[] {
       capacity: 25,
       slotsRemaining: 20,
       trainingRequired: true,
+      trainingFeeUsd: 20,
       requiresVerified: true,
       status: 'open',
       closesAt: daysFromNow(8),
@@ -359,6 +478,7 @@ export function seedJobs(): Job[] {
       capacity: 30,
       slotsRemaining: 24,
       trainingRequired: true,
+      trainingFeeUsd: 25,
       requiresVerified: true,
       status: 'open',
       closesAt: daysFromNow(10),

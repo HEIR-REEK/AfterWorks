@@ -100,7 +100,17 @@ export async function POST(req: NextRequest) {
     if (!verify.ok || !verified?.status || verified.data?.status !== 'success') return ack(409, 'charge not settled')
 
     const paidSubunits = Number(verified.data.amount ?? tx.amount ?? 0)
-    const expected = getPaystackAmountSubunits()
+    // Per-job training prices: the pending row written at /initialize carries the exact subunit
+    // price this charge was opened for; the Paystack metadata is the fallback, global fee last.
+    const storedMeta = (stored.metadata ?? {}) as { expectedSubunits?: unknown }
+    const expectedFromRow = Number(storedMeta.expectedSubunits ?? 0)
+    const expectedFromEvent = Number(verified.data.metadata?.expectedAmountKes ?? 0)
+    const expected =
+      Number.isFinite(expectedFromRow) && expectedFromRow > 0
+        ? Math.round(expectedFromRow)
+        : Number.isFinite(expectedFromEvent) && expectedFromEvent > 0
+          ? Math.round(expectedFromEvent) * 100
+          : getPaystackAmountSubunits()
     const uid = String(stored.userId ?? verified.data.metadata?.uid ?? '')
     const jobId = String(stored.jobId ?? verified.data.metadata?.jobId ?? '')
     const payer = normalizeEmail(String(verified.data.customer?.email ?? tx.customer?.email ?? ''))

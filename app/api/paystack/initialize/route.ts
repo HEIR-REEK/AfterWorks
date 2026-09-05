@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server'
 import { consumeBucket, audit, fail, json, maintenanceBlockForApi, requireVerifiedUser, routeError } from '@/lib/guards'
 import { env, envInt, isHostAllowed, readJsonBody, sanitizeLine } from '@/lib/security-core'
-import { getPaystackAmountSubunits, getTrainingFeeKes, getTrainingFeeUsd } from '@/lib/afterworks-data'
+import { paystackSubunitsFor, trainingFeeKesFor, trainingFeeUsdFor } from '@/lib/afterworks-data'
 import { randomId } from '@/lib/session-token'
 
 export const dynamic = 'force-dynamic'
@@ -100,8 +100,8 @@ export async function POST(req: NextRequest) {
       return fail(409, 'This job card does not require paid training — no charge is needed.', { code: 'training_not_required' })
     }
 
-    const amountKes = getTrainingFeeKes()
-    const subunits = getPaystackAmountSubunits()
+    const amountKes = trainingFeeKesFor(gate.feeUsd)
+    const subunits = paystackSubunitsFor(gate.feeUsd)
 
     const reference = `aw_tr_${randomId(10)}`
     const { origin: callbackOrigin, popupMode } = browserReachableOrigin(req)
@@ -140,7 +140,7 @@ export async function POST(req: NextRequest) {
       email,
       userId: uid,
       amountKes,
-      amountUsd: getTrainingFeeUsd(),
+      amountUsd: trainingFeeUsdFor(gate.feeUsd),
       currency: 'KES',
       status: 'pending',
       jobId,
@@ -167,7 +167,7 @@ export async function POST(req: NextRequest) {
 }
 
 /** Reads just enough of the job document to price the charge honestly. */
-async function jobTrainingGate(jobId: string): Promise<{ missing: boolean; requiresTraining?: boolean }> {
+async function jobTrainingGate(jobId: string): Promise<{ missing: boolean; requiresTraining?: boolean; feeUsd?: number }> {
   const { dbOrNull } = await import('@/lib/firestore-admin')
   const db = dbOrNull()
   if (!db) return { missing: false, requiresTraining: true } // storage unavailable → keep the fee as configured
@@ -179,7 +179,13 @@ async function jobTrainingGate(jobId: string): Promise<{ missing: boolean; requi
       return { missing: false, requiresTraining: true }
     }
     const data = snap.data() as Record<string, unknown> | undefined
-    return { missing: false, requiresTraining: data?.trainingRequired !== false }
+    // The admin-set per-job fee; absent/invalid → undefined so the global configured fee applies.
+    const fee = Number(data?.trainingFeeUsd)
+    return {
+      missing: false,
+      requiresTraining: data?.trainingRequired !== false,
+      feeUsd: Number.isFinite(fee) && fee > 0 ? fee : undefined,
+    }
   } catch {
     return { missing: false, requiresTraining: true }
   }

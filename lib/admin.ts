@@ -17,6 +17,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { apiFetch, describeError } from '@/lib/client-api'
 import type { MaintenanceConfig } from '@/lib/maintenance-shared'
+import type { AssessmentQuestion, TrainingSection } from '@/lib/afterworks-data'
 
 export type AdminSessionState = {
   status: 'checking' | 'authorized' | 'anonymous'
@@ -377,6 +378,12 @@ export type AdminJobRow = {
   capacity: number
   slotsRemaining: number
   trainingRequired: boolean
+  /** Per-job training price in USD, set by the admin (0 = falls back to the global fee). */
+  trainingFeeUsd?: number
+  /** Authored training sections the worker steps through on the training page. */
+  trainingNotes?: TrainingSection[]
+  /** Authored assessment questions shown instead of the built-in category bank. */
+  assessmentQuestions?: AssessmentQuestion[]
   requiresVerified: boolean
   status: string
   closesAt: string

@@ -65,13 +65,19 @@ function PaystackCheckoutSection({
 }: {
   jobId: string
   userEmail: string
-  onVerifySuccess: (ref: string) => Promise<void>
+  onVerifySuccess: (ref: string) => Promise<boolean>
   payState: PayState
   setPayState: (st: PayState) => void
   errorMsg: string | null
   setErrorMsg: (msg: string | null) => void
 }) {
   const amountKes = getTrainingFeeKes()
+  const popupRef = useRef<Window | null>(null)
+  // True when the server said there is no browser-reachable callback URL, so this tab must stay
+  // put and confirm the charge itself while Paystack runs in a separate window.
+  const [popupCheckout, setPopupCheckout] = useState(false)
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  const [refDraft, setRefDraft] = useState('')
 
   const isLoading = payState === 'initializing' || payState === 'verifying' || payState === 'awaiting_payment'
 
@@ -81,6 +87,14 @@ function PaystackCheckoutSection({
    * The amount, the payer email and the reference all come back from `/api/paystack/initialize`
    * rather than being assembled here, so the price cannot be edited in devtools and the charge is
    * reconcilable when the worker returns to this page.
+   *
+   * Two ways to Paystack:
+   *  • normal: the whole tab navigates to the hosted checkout and Paystack redirects it back to
+   *    this training page (carrying `reference`/`trxref`) once the charge settles;
+   *  • `popupMode` (server flag): no browser-reachable callback exists on this deployment (e.g. a
+   *    preview tunnel whose host is a bind address like `0.0.0.0`), so navigating would strand the
+   *    worker on an unreachable page after paying. Instead Paystack opens in a new window and this
+   *    tab keeps polling `/api/paystack/verify` until the charge is confirmed.
    */
   async function handlePay() {
     if (isLoading) return
@@ -94,13 +108,29 @@ function PaystackCheckoutSection({
 
     setPayState('initializing')
     try {
-      const data = await authedFetch<{ authorizationUrl: string; reference: string; amountKes: number }>(
+      const data = await authedFetch<{ authorizationUrl: string; reference: string; amountKes: number; popupMode?: boolean }>(
         '/api/paystack/initialize',
         { method: 'POST', body: { jobId }, timeoutMs: 20_000 },
       )
       rememberReference(data.reference)
       setPayState('awaiting_payment')
-      window.location.assign(data.authorizationUrl)
+      if (data.popupMode === true) {
+        // No noopener here on purpose: the handle is how we detect a blocked popup and how we
+        // notice the window closing so verification runs immediately. Paystack's checkout is the
+        // only page that ever gets this handle, and it cannot read this tab's session storage.
+        const popup = window.open(data.authorizationUrl, '_blank', 'width=480,height=720')
+        if (!popup) {
+          rememberReference(null)
+          setPopupCheckout(false)
+          setPayState('error')
+          setErrorMsg('The secure payment window could not open. Please allow pop-ups for this site, then try again.')
+          return
+        }
+        popupRef.current = popup
+        setPopupCheckout(true)
+      } else {
+        window.location.assign(data.authorizationUrl)
+      }
     } catch (err) {
       setPayState('error')
       setErrorMsg(describeError(err))
@@ -115,6 +145,29 @@ function PaystackCheckoutSection({
     }
     await onVerifySuccess(ref)
   }
+
+  async function handleConfirmReference() {
+    const ref = refDraft.trim()
+    if (!ref) return
+    setErrorMsg(null)
+    const paid = await onVerifySuccess(ref)
+    if (paid) setConfirmOpen(false)
+  }
+
+  // When the checkout runs in a separate window, confirm the charge the moment that window closes
+  // (a fast path — the 4-second poll below is the safety net that keeps checking either way).
+  useEffect(() => {
+    if (payState !== 'awaiting_payment') return
+    const id = window.setInterval(() => {
+      const popup = popupRef.current
+      if (popup && popup.closed) {
+        popupRef.current = null
+        const ref = recalledReference()
+        if (ref) void onVerifySuccess(ref)
+      }
+    }, 800)
+    return () => window.clearInterval(id)
+  }, [payState, onVerifySuccess])
 
   return (
     <div className="mt-8 flex flex-col gap-6">
@@ -159,16 +212,20 @@ function PaystackCheckoutSection({
       {/* Status banners */}
       {payState === 'awaiting_payment' && (
         <div className="flex flex-col gap-2.5 rounded-xl border border-border bg-muted/50 p-3 text-sm text-muted-foreground">
-          <span className="flex items-center gap-2">
-            <Loader2 className="size-4 animate-spin text-primary" />
-            Waiting for Paystack to confirm the charge…
+          <span className="flex items-start gap-2">
+            <Loader2 className="mt-0.5 size-4 shrink-0 animate-spin text-primary" />
+            <span>
+              {popupCheckout
+                ? 'Waiting for Paystack to confirm the charge… Complete the payment in the window that just opened (or on your phone with M-Pesa). You can close that window once it shows a receipt — this page unlocks itself automatically.'
+                : 'Waiting for Paystack to confirm the charge…'}
+            </span>
           </span>
           <span className="flex flex-wrap items-center gap-2 text-xs">
             Back already?
             <Button type="button" size="sm" variant="outline" className="h-7 text-xs" onClick={() => void handleCheckNow()}>
               Check payment now
             </Button>
-            <Button type="button" size="sm" variant="ghost" className="h-7 text-xs" onClick={() => { rememberReference(null); setPayState('idle') }}>
+            <Button type="button" size="sm" variant="ghost" className="h-7 text-xs" onClick={() => { rememberReference(null); setPayState('idle'); setPopupCheckout(false) }}>
               Start over
             </Button>
           </span>
@@ -205,6 +262,60 @@ function PaystackCheckoutSection({
       <p className="text-center text-xs text-muted-foreground">
         M-Pesa, Mobile Money, Bank Transfer &amp; Card are supported. Training unlocks instantly upon payment detection.
       </p>
+
+      {/* Last resort for a charge that settled while the redirect never made it home: let the
+          worker paste the reference from their receipt and re-run server-side verification. */}
+      <div className="flex flex-col items-center gap-2">
+        {!confirmOpen ? (
+          <button
+            type="button"
+            onClick={() => setConfirmOpen(true)}
+            className="text-xs font-medium text-muted-foreground underline decoration-muted-foreground/40 underline-offset-2 transition-colors hover:text-foreground"
+          >
+            Paid already? Confirm your payment
+          </button>
+        ) : (
+          <div className="flex w-full max-w-md flex-col gap-2 rounded-xl border border-border bg-muted/30 p-3 text-left">
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              Enter the <strong className="font-mono text-foreground">aw_tr_…</strong> reference from
+              your Paystack receipt or the link you were sent after paying. We will re-check it
+              against Paystack and unlock this job card if the charge went through.
+            </p>
+            <div className="flex gap-2">
+              <input
+                value={refDraft}
+                onChange={(event) => setRefDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') void handleConfirmReference()
+                }}
+                placeholder="aw_tr_…"
+                spellCheck={false}
+                className="h-9 min-w-0 flex-1 rounded-lg border border-border bg-background px-3 font-mono text-xs outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/20"
+              />
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-9 shrink-0 text-xs"
+                disabled={!refDraft.trim() || payState === 'verifying'}
+                onClick={() => void handleConfirmReference()}
+              >
+                {payState === 'verifying' ? 'Checking…' : 'Check payment'}
+              </Button>
+            </div>
+            {payState === 'error' && errorMsg && (
+              <p className="text-xs font-medium text-destructive">{errorMsg}</p>
+            )}
+            <button
+              type="button"
+              onClick={() => { setConfirmOpen(false); if (payState === 'error') setErrorMsg(null) }}
+              className="w-fit text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+            >
+              Cancel
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   )
 }
@@ -237,21 +348,40 @@ function TrainingPageInner({ params }: { params: Promise<{ id: string }> }) {
   // ── Verify a reference and unlock training ──────────────────────────────
   // The server (not this component) decides whether the course is paid: /api/paystack/verify
   // confirms the reference against Paystack and writes the entitlement to the profile document.
-  const verifyReference = useCallback(async (ref: string) => {
+  // Returns true when the charge was confirmed, false otherwise (the caller can then decide
+  // whether to keep waiting, show the checkout again, or stop).
+  const verifyReference = useCallback(async (ref: string): Promise<boolean> => {
     setPayState('verifying')
     const result = await verifyTrainingPayment(id, ref)
     if (result.ok && result.paid) {
       rememberReference(null)
       setPayState('paid')
-      return
+      return true
     }
     if (result.ok && !result.paid) {
-      // Still pending on Paystack's side — keep polling instead of failing the worker.
+      // "Still pending on Paystack's side" keeps polling instead of failing the worker; a
+      // terminal status (no such charge / abandoned / failed / underpaid) stops and explains.
+      const terminal =
+        typeof result.status === 'string' &&
+        ['not_found', 'failed', 'abandoned', 'reversed', 'underpaid'].includes(result.status)
+      if (terminal) {
+        rememberReference(null)
+        setPayState('error')
+        setErrorMsg(
+          result.message ??
+            (result.status === 'not_found'
+              ? 'We could not find a charge for that reference. It may have never reached Paystack — you can start a new payment below.'
+              : 'That payment did not complete on Paystack’s side. You can start a new payment below, or contact support if money was deducted.'),
+        )
+        return false
+      }
+      rememberReference(ref)
       setPayState('awaiting_payment')
-      return
+      return false
     }
     setPayState('error')
     setErrorMsg(result.error ?? 'Could not verify payment. Please refresh the page.')
+    return false
   }, [id, verifyTrainingPayment])
 
   // ── On mount: check if paid previously or returning from Paystack ────────
@@ -268,10 +398,42 @@ function TrainingPageInner({ params }: { params: Promise<{ id: string }> }) {
       clean.searchParams.delete('reference')
       clean.searchParams.delete('trxref')
       window.history.replaceState({}, '', clean.toString())
-      
-      verifyReference(urlRef)
+
+      // Remember it so the poller below can keep checking while the charge is still pending.
+      rememberReference(urlRef)
+      void verifyReference(urlRef)
     }
   }, [id, searchParams, isJobPaid, verifyReference])
+
+  // ── Auto-recover a charge that settled but never unlocked this page ─────
+  // When the Paystack redirect could not reach the app (unreachable callback URL, closed tab,
+  // webhook not configured), /initialize still wrote a server-side `pending` row. Ask the server
+  // for this member's pending references for this job card and re-verify each one: a charge that
+  // actually went through is then confirmed, recorded as `success` in the admin ledger and the
+  // training unlocks — with no reference for the worker to hunt down.
+  useEffect(() => {
+    if (payState !== 'idle' || !job?.trainingRequired || isJobPaid(id)) return
+    let cancelled = false
+    void (async () => {
+      try {
+        const data = await authedFetch<{ refs: string[] }>(
+          `/api/paystack/pending?jobId=${encodeURIComponent(id)}`,
+          { timeoutMs: 10_000 },
+        )
+        if (cancelled) return
+        for (const ref of Array.isArray(data.refs) ? data.refs : []) {
+          if (cancelled) return
+          if (await verifyReference(ref)) return
+          if (cancelled) return
+        }
+      } catch {
+        /* demo mode / storage offline — the checkout below still works normally */
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [payState, id, isJobPaid, job?.trainingRequired, verifyReference])
 
   // ── Poll for payment while awaiting ─────────────────────────────────────
   useEffect(() => {

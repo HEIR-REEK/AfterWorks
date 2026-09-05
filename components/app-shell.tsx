@@ -185,19 +185,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             © {new Date().getFullYear()} {site.legalName}. All rights reserved.
           </p>
           <div className="flex items-center gap-5">
-            <Link href="/status" className="transition-colors hover:text-foreground">
-              Platform status
-            </Link>
             <a href={`mailto:${site.supportEmail}`} className="transition-colors hover:text-foreground">
               Support
             </a>
-            <Link
-              href="/admin"
-              className="inline-flex items-center gap-1 font-medium text-muted-foreground transition-colors hover:text-primary"
-            >
-              <Shield className="size-3.5" />
-              Operations Console
-            </Link>
           </div>
         </div>
       </footer>

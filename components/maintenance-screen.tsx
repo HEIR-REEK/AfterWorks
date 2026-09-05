@@ -1,19 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import Link from 'next/link'
-import {
-  Activity,
-  ArrowRight,
-  CheckCircle2,
-  Clock3,
-  Mail,
-  RefreshCw,
-  ShieldAlert,
-  AlertTriangle,
-  Wrench,
-} from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import { CheckCircle2, Clock3, Mail, ShieldAlert, AlertTriangle, Wrench } from 'lucide-react'
 import { StatusBadge } from '@/components/status-badge'
 import { site } from '@/lib/site'
 import type { MaintenanceView } from '@/lib/maintenance-shared'
@@ -74,16 +62,42 @@ function formatRemaining(ms: number | null): { label: string; expired: boolean }
 
 export function MaintenanceScreen({
   config,
-  onRefresh,
   embedded = false,
 }: {
   config: MaintenanceView
-  onRefresh?: () => void
   /** true when rendered inside the app chrome rather than as the full-page takeover. */
   embedded?: boolean
 }) {
-  const [checking, setChecking] = useState(false)
   const { label: countdown, expired } = useCountdown(config.remainingMs)
+
+  // During a full blackout the middleware serves this screen directly, without the app shell's
+  // background poller — so the screen itself watches the public maintenance feed and reloads the
+  // instant the window lifts. This is what replaced the old "Check if we are back" button: there
+  // is nothing for a worker to click, the page simply comes back on its own.
+  useEffect(() => {
+    if (embedded || !config.enabled) return
+    let stopped = false
+    const check = async () => {
+      try {
+        const res = await fetch('/api/maintenance', { cache: 'no-store' })
+        if (!res.ok) return
+        const data = (await res.json().catch(() => null)) as { enabled?: boolean } | null
+        if (!stopped && data && data.enabled === false) window.location.assign('/')
+      } catch {
+        /* feed unreachable — keep waiting */
+      }
+    }
+    const id = window.setInterval(() => void check(), 15_000)
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void check()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      stopped = true
+      window.clearInterval(id)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  }, [embedded, config.enabled])
 
   const etaLabel = useMemo(() => {
     if (!config.estimatedEnd) return null
@@ -99,17 +113,6 @@ export function MaintenanceScreen({
 
   const contact = config.contactEmail || site.supportEmail
   const unknown = config.unknown
-
-  const handleRefresh = () => {
-    setChecking(true)
-    if (onRefresh) onRefresh()
-    if (typeof window !== 'undefined') {
-      window.setTimeout(() => {
-        setChecking(false)
-        window.location.reload()
-      }, 600)
-    }
-  }
 
   return (
     <div
@@ -164,7 +167,8 @@ export function MaintenanceScreen({
         {unknown && (
           <p className="mt-4 inline-flex items-center gap-2 rounded-xl border border-warning/40 bg-warning/10 px-3 py-1.5 text-xs font-medium text-warning-foreground">
             <AlertTriangle className="size-3.5" />
-            We cannot confirm the exact end time right now. Retrying automatically.
+            We cannot confirm the exact end time right now. This page checks again automatically and
+            reloads the moment the platform is back.
           </p>
         )}
 
@@ -209,21 +213,6 @@ export function MaintenanceScreen({
           </ul>
         )}
 
-        <div className="mt-7 flex w-full flex-wrap items-center justify-center gap-2.5">
-          <Button onClick={handleRefresh} disabled={checking} size="lg" className="gap-2">
-            <RefreshCw className={`size-4 ${checking ? 'animate-spin' : ''}`} />
-            {checking ? 'Checking…' : 'Check if we are back'}
-          </Button>
-          <Button render={<Link href="/status" />} variant="outline" size="lg" className="gap-2">
-            <Activity className="size-4" />
-            Live status
-          </Button>
-          <Button render={<Link href={`mailto:${contact}`} />} variant="ghost" size="lg" className="gap-2 text-muted-foreground">
-            <Mail className="size-4" />
-            Contact support
-          </Button>
-        </div>
-
         <div className="mt-8 grid w-full grid-cols-1 gap-2.5 text-left sm:grid-cols-2">
           <div className="flex items-start gap-2.5 rounded-xl border border-border/60 bg-card/50 p-3 text-xs text-muted-foreground">
             <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-success" />
@@ -236,14 +225,6 @@ export function MaintenanceScreen({
             </span>
           </div>
         </div>
-
-        <Link
-          href="/admin/login"
-          className="mt-6 inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
-        >
-          Staff sign in
-          <ArrowRight className="size-3.5" />
-        </Link>
       </main>
 
       {!embedded && (
@@ -252,9 +233,6 @@ export function MaintenanceScreen({
             © {new Date().getFullYear()} {site.legalName}
           </p>
           <div className="flex items-center gap-4">
-            <Link href={site.statusUrl} className="hover:text-foreground">
-              Platform status
-            </Link>
             <a href={`mailto:${contact}`} className="flex items-center gap-1 hover:text-foreground">
               <Mail className="size-3.5" />
               {contact}

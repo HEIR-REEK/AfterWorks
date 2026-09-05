@@ -1,10 +1,58 @@
 import { NextRequest } from 'next/server'
 import { consumeBucket, audit, fail, json, maintenanceBlockForApi, requireVerifiedUser, routeError } from '@/lib/guards'
-import { env, envInt, readJsonBody, sanitizeLine } from '@/lib/security-core'
+import { env, envInt, isHostAllowed, readJsonBody, sanitizeLine } from '@/lib/security-core'
 import { getPaystackAmountSubunits, getTrainingFeeKes, getTrainingFeeUsd } from '@/lib/afterworks-data'
 import { randomId } from '@/lib/session-token'
 
 export const dynamic = 'force-dynamic'
+
+/**
+ * Hosts a browser can never reach: the app's *bind* address and loopback. Paystack redirects the
+ * payer's browser to the callback URL, so handing it `https://0.0.0.0:10000/…` (what `Host` looks
+ * like behind a port-forwarding preview tunnel) sends the worker to a page that says "site not
+ * reachable" the moment the payment succeeds.
+ */
+const BIND_OR_LOOPBACK_HOST = /^(localhost|127(\.\d+){1,3}|\[::1\]|0\.0\.0\.0)(:\d+)?$/i
+
+/**
+ * The public origin Paystack should send the payer back to after the charge settles.
+ *
+ * Resolution order: the deployment's configured public URL, then trusted forwarded host/proto
+ * headers, then the request Host — skipping any candidate that is a bind/loopback address. When
+ * nothing usable exists (a bare preview tunnel with no APP_URL), `popupMode` is returned instead:
+ * the checkout then opens Paystack in a new tab while the training page stays open and confirms
+ * the charge itself, so a successful payment never ends in an unreachable redirect.
+ */
+function browserReachableOrigin(req: NextRequest): { origin: string; popupMode: boolean } {
+  const configured = env('NEXT_PUBLIC_APP_URL') || env('APP_URL') || env('RENDER_EXTERNAL_URL') || env('VERCEL_URL')
+  if (configured) {
+    try {
+      const url = new URL(configured.startsWith('http') ? configured : `https://${configured}`)
+      if (url.hostname && !BIND_OR_LOOPBACK_HOST.test(url.host)) return { origin: url.origin.replace(/\/+$/, ''), popupMode: false }
+    } catch {
+      /* malformed config — fall through to the request headers */
+    }
+  }
+
+  const forwardedProto = req.headers.get('x-forwarded-proto')?.split(',')[0]?.trim().toLowerCase()
+  const forwardedHost = req.headers.get('x-forwarded-host')?.trim().replace(/\/+$/, '')
+  const hostHeader = req.headers.get('host')?.trim().replace(/\/+$/, '')
+  for (const host of [forwardedHost, hostHeader]) {
+    if (!host || BIND_OR_LOOPBACK_HOST.test(host)) continue
+    if (!isHostAllowed(host)) continue
+    const scheme = forwardedProto === 'http' ? 'http' : 'https'
+    return { origin: `${scheme}://${host}`, popupMode: false }
+  }
+
+  // Last resort: Next's own reconstruction of the origin. Still refuse bind/loopback addresses.
+  try {
+    const url = new URL(req.nextUrl.origin)
+    if (url.hostname && !BIND_OR_LOOPBACK_HOST.test(url.host)) return { origin: url.origin.replace(/\/+$/, ''), popupMode: false }
+  } catch {
+    /* no usable origin */
+  }
+  return { origin: '', popupMode: true }
+}
 
 /**
  * POST /api/paystack/initialize — start a training payment.
@@ -56,7 +104,8 @@ export async function POST(req: NextRequest) {
     const subunits = getPaystackAmountSubunits()
 
     const reference = `aw_tr_${randomId(10)}`
-    const callbackUrl = `${req.nextUrl.origin}/training/${encodeURIComponent(jobId)}`
+    const { origin: callbackOrigin, popupMode } = browserReachableOrigin(req)
+    const callbackUrl = popupMode ? '' : `${callbackOrigin}/training/${encodeURIComponent(jobId)}`
 
     const upstream = await fetch('https://api.paystack.co/transaction/initialize', {
       method: 'POST',
@@ -70,7 +119,7 @@ export async function POST(req: NextRequest) {
         amount: subunits,
         currency: 'KES',
         reference,
-        callback_url: callbackUrl,
+        ...(callbackUrl ? { callback_url: callbackUrl } : {}),
         metadata: { uid, jobId, purpose: 'training_access', expectedAmountKes: amountKes },
       }),
       cache: 'no-store',
@@ -108,6 +157,9 @@ export async function POST(req: NextRequest) {
       amountKes,
       currency: 'KES',
       expiresInSec: 600,
+      // true = no browser-reachable callback origin exists, so the checkout must NOT navigate the
+      // tab away; the client opens Paystack in a new window and confirms the charge itself.
+      popupMode,
     })
   } catch (err) {
     return routeError('paystack/initialize', err)

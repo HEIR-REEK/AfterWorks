@@ -55,7 +55,10 @@ type AfterWorksContextValue = {
   getJob: (id: string) => Job | undefined
   getApplicationForJob: (jobId: string) => Application | undefined
   isJobPaid: (jobId: string) => boolean
-  verifyTrainingPayment: (jobId: string, reference: string) => Promise<{ ok: boolean; paid: boolean; error?: string }>
+  verifyTrainingPayment: (
+    jobId: string,
+    reference: string,
+  ) => Promise<{ ok: boolean; paid: boolean; status?: string; message?: string; error?: string }>
   applyToJob: (jobId: string) => Promise<ApplyResult>
   submitWork: (applicationId: string, note?: string) => Promise<ApplyResult>
   withdrawApplication: (applicationId: string) => Promise<ApplyResult>
@@ -323,13 +326,20 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
       if (!reference) return { ok: false, paid: false, error: 'No payment reference was returned by the checkout.' }
       setBusy(`training:${jobId}`, true)
       try {
-        const data = await authedFetch<{ paid: boolean; status?: string }>(`/api/paystack/verify/${encodeURIComponent(reference)}`)
+        const data = await authedFetch<{ paid: boolean; status?: string; message?: string }>(
+          `/api/paystack/verify/${encodeURIComponent(reference)}`,
+        )
         const paid = data.paid === true
         if (paid) {
           setPaidTrainings((prev) => (prev.includes(jobId) ? prev : [...prev, jobId]))
           await refreshWallet()
         }
-        return { ok: true, paid }
+        return {
+          ok: true,
+          paid,
+          status: data.status,
+          message: typeof data.message === 'string' ? data.message : undefined,
+        }
       } catch (err) {
         return { ok: false, paid: false, error: describeError(err) }
       } finally {

@@ -72,7 +72,9 @@ function Gate({ children }: { children: React.ReactNode }) {
   }, [])
 
   if (blackoutAll && !isAdminRoute) {
-    return <MaintenanceScreen config={view} onRefresh={() => admin.refresh()} />
+    // The shell's maintenance subscription polls /api/maintenance on a visibility-aware interval,
+    // so the screen lifts itself as soon as the window ends — no button needed.
+    return <MaintenanceScreen config={view} />
   }
 
   if (isPublic) return <>{children}</>
@@ -102,7 +104,7 @@ function Gate({ children }: { children: React.ReactNode }) {
     return (
       <AfterWorksProvider>
         <AppShell>
-          <MaintenanceScreen config={view} embedded onRefresh={() => admin.refresh()} />
+          <MaintenanceScreen config={view} embedded />
         </AppShell>
       </AfterWorksProvider>
     )

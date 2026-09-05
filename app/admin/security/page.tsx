@@ -19,7 +19,7 @@ import {
   XCircle,
 } from 'lucide-react'
 import { adminApi, terminateAdminSession, useAdminCapabilities, useAdminSession, type ActiveAdminSession } from '@/lib/admin'
-import { AdminCard, LiveDot, ReasonDialog, useToasts } from '@/components/admin-ui'
+import { AdminCard, LiveDot, OwnerOnlyNotice, ReasonDialog, useToasts } from '@/components/admin-ui'
 import { Button } from '@/components/ui/button'
 import { StatusBadge } from '@/components/status-badge'
 import { cn } from '@/lib/utils'
@@ -40,6 +40,14 @@ type Check = { id: string; label: string; severity: 'pass' | 'warn' | 'fail'; de
 type Lockout = { key: string; until: number }
 
 export default function AdminSecurityPage() {
+  const session = useAdminSession()
+  if (session.status === 'authorized' && session.role !== 'owner') {
+    return <OwnerOnlyNotice area="The security centre" />
+  }
+  return <AdminSecurityPageInner />
+}
+
+function AdminSecurityPageInner() {
   const session = useAdminSession()
   const capabilities = useAdminCapabilities()
   const { push, toasts } = useToasts()

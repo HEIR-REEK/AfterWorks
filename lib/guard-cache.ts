@@ -12,8 +12,15 @@
 
 export type RevocationState = { revokedBefore: number; revokedJtis: Set<string>; expiresAt: number }
 
+/**
+ * Cached privilege decision for one email: `'owner'` (full console authority), `'staff'`
+ * (limited console access) or `'none'` (no console access at all). Negative answers are cached
+ * too, so a spray of random emails does not become a stream of Firestore reads.
+ */
+export type CachedRole = 'owner' | 'staff' | 'none'
+
 type Store = {
-  roles: Map<string, { value: boolean; expiresAt: number }>
+  roles: Map<string, { value: CachedRole; expiresAt: number }>
   revocation: RevocationState | null
 }
 
@@ -28,7 +35,7 @@ function store(): Store {
 
 const ROLE_CACHE_MAX = 5_000
 
-export function getCachedRole(email: string): boolean | null {
+export function getCachedRole(email: string): CachedRole | null {
   const { roles } = store()
   const hit = roles.get(email)
   if (!hit) return null
@@ -39,7 +46,7 @@ export function getCachedRole(email: string): boolean | null {
   return hit.value
 }
 
-export function setCachedRole(email: string, value: boolean, ttlMs: number): void {
+export function setCachedRole(email: string, value: CachedRole, ttlMs: number): void {
   const { roles } = store()
   roles.set(email, { value, expiresAt: Date.now() + ttlMs })
   if (roles.size > ROLE_CACHE_MAX) {

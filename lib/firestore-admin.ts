@@ -679,6 +679,192 @@ export async function touchAdminSession(jti: string): Promise<void> {
   }
 }
 
+// ─── Console staff accounts (admin_accounts) ─────────────────────────────────
+/**
+ * Staff credentials for the operations console, kept apart from worker accounts on purpose:
+ *
+ *  • The main administrator ("owner") is the env roster (ADMIN_EMAILS) and signs in with the
+ *    shared master passcode. Owners are never stored here.
+ *  • Staff members are documents in this server-only collection: an email, a role and an
+ *    individual scrypt passcode hash that only the main admin can set or reset.
+ *  • A worker account with the same email is untouched — its Firebase Auth password keeps
+ *    working for the worker app. Console access and worker access are different doors with
+ *    different keys.
+ *
+ * Clients can never read or write this collection (firestore.rules denies both); it exists only
+ * for the Admin SDK inside /api/admin/* routes.
+ */
+
+const ADMIN_ACCOUNTS_COLLECTION = 'admin_accounts'
+
+export type AdminAccountRow = {
+  email: string
+  role: 'owner' | 'staff'
+  status: 'active' | 'disabled'
+  /** True when a passcode hash is on file (the hash itself never leaves the server). */
+  passcodeSet: boolean
+  createdBy: string
+  createdAt: string
+  updatedAt: string
+  lastSignInAt: string | null
+}
+
+type AdminAccountDoc = {
+  email: string
+  role: 'owner' | 'staff'
+  status: 'active' | 'disabled'
+  passcodeHash: string
+  createdBy: string
+  createdAt: string
+  updatedAt: string
+  lastSignInAt: string | null
+}
+
+function adminAccountRef(db: Firestore, email: string) {
+  return db.collection(ADMIN_ACCOUNTS_COLLECTION).doc(email.trim().toLowerCase().slice(0, 200))
+}
+
+function mapAdminAccount(id: string, data: Record<string, unknown>): AdminAccountDoc {
+  return {
+    email: String(data.email ?? id).toLowerCase(),
+    role: data.role === 'owner' ? 'owner' : 'staff',
+    status: data.status === 'disabled' ? 'disabled' : 'active',
+    passcodeHash: String(data.passcodeHash ?? ''),
+    createdBy: String(data.createdBy ?? ''),
+    createdAt: String(data.createdAt ?? ''),
+    updatedAt: String(data.updatedAt ?? ''),
+    lastSignInAt: typeof data.lastSignInAt === 'string' ? data.lastSignInAt : null,
+  }
+}
+
+/** Full account document including the hash — server-side login only. */
+export async function getAdminAccount(email: string): Promise<AdminAccountDoc | null> {
+  const db = dbOrNull()
+  if (!db) return null
+  try {
+    const snap = await adminAccountRef(db, email).get()
+    if (!snap.exists) return null
+    return mapAdminAccount(snap.id, (snap.data() ?? {}) as Record<string, unknown>)
+  } catch (err) {
+    console.warn('[FirestoreAdmin] getAdminAccount failed:', err)
+    return null
+  }
+}
+
+/** Console role for an active account, or null when there is no usable staff account. */
+export async function getAdminAccountRole(email: string): Promise<'owner' | 'staff' | null> {
+  const account = await getAdminAccount(email)
+  if (!account || account.status !== 'active' || !account.passcodeHash) return null
+  return account.role === 'owner' ? 'owner' : 'staff'
+}
+
+export async function listAdminAccounts(): Promise<AdminAccountRow[]> {
+  const db = dbOrNull()
+  if (!db) return []
+  try {
+    const snap = await db.collection(ADMIN_ACCOUNTS_COLLECTION).orderBy('createdAt', 'desc').limit(500).get()
+    return snap.docs.map((d) => {
+      const row = mapAdminAccount(d.id, (d.data() ?? {}) as Record<string, unknown>)
+      return {
+        email: row.email,
+        role: row.role,
+        status: row.status,
+        passcodeSet: row.passcodeHash.length > 0,
+        createdBy: row.createdBy,
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+        lastSignInAt: row.lastSignInAt,
+      }
+    })
+  } catch (err) {
+    // No composite index on createdAt yet? Fall back to an unordered read rather than an empty page.
+    console.warn('[FirestoreAdmin] listAdminAccounts ordered read failed, retrying unordered:', err)
+    try {
+      const snap = await db.collection(ADMIN_ACCOUNTS_COLLECTION).limit(500).get()
+      return snap.docs.map((d) => {
+        const row = mapAdminAccount(d.id, (d.data() ?? {}) as Record<string, unknown>)
+        return {
+          email: row.email,
+          role: row.role,
+          status: row.status,
+          passcodeSet: row.passcodeHash.length > 0,
+          createdBy: row.createdBy,
+          createdAt: row.createdAt,
+          updatedAt: row.updatedAt,
+          lastSignInAt: row.lastSignInAt,
+        }
+      })
+    } catch (fallbackErr) {
+      console.error('[FirestoreAdmin] listAdminAccounts failed:', fallbackErr)
+      return []
+    }
+  }
+}
+
+export async function createAdminAccount(input: {
+  email: string
+  passcodeHash: string
+  role?: 'owner' | 'staff'
+  createdBy: string
+}): Promise<{ email: string }> {
+  const db = adminDb()
+  const email = input.email.trim().toLowerCase()
+  const ref = adminAccountRef(db, email)
+  const existing = await ref.get()
+  if (existing.exists) throw new Error('That email already has a staff account. Reset its password instead.')
+  const now = new Date().toISOString()
+  await ref.set({
+    email,
+    role: input.role === 'owner' ? 'owner' : 'staff',
+    status: 'active',
+    passcodeHash: input.passcodeHash,
+    createdBy: input.createdBy,
+    createdAt: now,
+    updatedAt: now,
+    lastSignInAt: null,
+  })
+  await createAuditEntry('STAFF_ACCOUNT_CREATED', { email, role: input.role ?? 'staff' }, input.createdBy)
+  return { email }
+}
+
+export async function updateAdminAccountPasscode(email: string, passcodeHash: string, actorEmail: string): Promise<void> {
+  const db = adminDb()
+  const ref = adminAccountRef(db, email)
+  const snap = await ref.get()
+  if (!snap.exists) throw new Error('No staff account exists for that email.')
+  await ref.set({ passcodeHash, updatedAt: new Date().toISOString() }, { merge: true })
+  await createAuditEntry('STAFF_PASSWORD_RESET', { email: email.trim().toLowerCase() }, actorEmail)
+}
+
+export async function setAdminAccountStatus(email: string, status: 'active' | 'disabled', actorEmail: string): Promise<void> {
+  const db = adminDb()
+  const ref = adminAccountRef(db, email)
+  const snap = await ref.get()
+  if (!snap.exists) throw new Error('No staff account exists for that email.')
+  await ref.set({ status, updatedAt: new Date().toISOString() }, { merge: true })
+  await createAuditEntry(status === 'active' ? 'STAFF_ACCOUNT_ENABLED' : 'STAFF_ACCOUNT_DISABLED', { email: email.trim().toLowerCase() }, actorEmail)
+}
+
+export async function deleteAdminAccount(email: string, actorEmail: string): Promise<void> {
+  const db = adminDb()
+  const ref = adminAccountRef(db, email)
+  const snap = await ref.get()
+  if (!snap.exists) throw new Error('No staff account exists for that email.')
+  await ref.delete()
+  await createAuditEntry('STAFF_ACCOUNT_REMOVED', { email: email.trim().toLowerCase() }, actorEmail)
+}
+
+/** Login heartbeat for staff accounts — cheap, failure-tolerant. */
+export async function touchAdminAccountSignIn(email: string): Promise<void> {
+  const db = dbOrNull()
+  if (!db) return
+  try {
+    await adminAccountRef(db, email).set({ lastSignInAt: new Date().toISOString() }, { merge: true })
+  } catch {
+    /* a missed heartbeat must never fail a sign-in */
+  }
+}
+
 /** Mark a session ended (sign-out) or revoked. Does not touch the signing secret or other sessions. */
 export async function endAdminSession(
   jti: string,

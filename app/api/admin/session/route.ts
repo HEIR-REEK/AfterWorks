@@ -38,6 +38,9 @@ export async function GET(req: NextRequest) {
     authenticated: true,
     email: principal.email,
     via: principal.via,
+    // Resolved server-side on every probe: the console UI adapts (nav, owner-only areas), but
+    // authority is enforced by the API guards, not by this field.
+    role: principal.role,
     jti: principal.via === 'session-cookie' && !principal.jti.startsWith('uid:') ? principal.jti : undefined,
     expiresAt: new Date(principal.expiresAt).toISOString(),
     remainingSeconds: Math.max(0, Math.floor((principal.expiresAt - Date.now()) / 1000)),

@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server'
-import { fail, json, requireAdmin, routeError } from '@/lib/guards'
+import { fail, json, requireOwner, routeError } from '@/lib/guards'
 import { sanitizeLine } from '@/lib/security-core'
 
 /**
@@ -14,7 +14,7 @@ import { sanitizeLine } from '@/lib/security-core'
 export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest) {
-  const guard = await requireAdmin(req)
+  const guard = await requireOwner(req)
   if (!guard.ok) return guard.response
 
   const limit = Math.min(200, Math.max(10, Number(req.nextUrl.searchParams.get('limit') ?? 60)))
@@ -66,7 +66,7 @@ export async function GET(req: NextRequest) {
 
 /** Lets console-side actions append a legitimate audit line (server-redacted, actor forced). */
 export async function POST(req: NextRequest) {
-  const guard = await requireAdmin(req)
+  const guard = await requireOwner(req)
   if (!guard.ok) return guard.response
 
   let body: Record<string, unknown>

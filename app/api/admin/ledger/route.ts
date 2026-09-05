@@ -1,5 +1,5 @@
 import type { NextRequest } from 'next/server'
-import { fail, json, requireAdmin, routeError } from '@/lib/guards'
+import { fail, json, requireOwner, routeError } from '@/lib/guards'
 import { listLedgerPage } from '@/lib/firestore-admin'
 
 /**
@@ -16,7 +16,7 @@ export const dynamic = 'force-dynamic'
 const SOURCES = new Set(['wallet', 'payment', 'all'])
 
 export async function GET(req: NextRequest) {
-  const guard = await requireAdmin(req)
+  const guard = await requireOwner(req)
   if (!guard.ok) return guard.response
 
   const params = req.nextUrl.searchParams

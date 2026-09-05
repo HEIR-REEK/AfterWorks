@@ -159,6 +159,14 @@ service cloud.firestore {
       allow read, write: if false; // via Admin SDK only (session record + revoke endpoints)
     }
 
+    // ── Console staff accounts (server-only) ─────────────────────────────────
+    // Owner-created staff logins for the operations console: email + role + scrypt passcode
+    // hash. Even staff themselves must never read this collection (it holds credential
+    // material); it is reachable only through /api/admin/staff behind the owner guard.
+    match /admin_accounts/{email} {
+      allow read, write: if false; // via Admin SDK only
+    }
+
     // ── Email-verification tokens (server-only) ──────────────────────────────
     // HMAC payload lives in the link; this collection is the single-use ledger (jti, usedAt).
     match /email_verifications/{jti} {

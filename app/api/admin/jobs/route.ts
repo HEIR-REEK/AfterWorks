@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server'
-import { audit, consumeBucket, fail, json, requireAdmin, routeError } from '@/lib/guards'
+import { audit, consumeBucket, fail, json, requireAdmin, requireOwner, routeError } from '@/lib/guards'
 import { sanitizeLine } from '@/lib/security-core'
 
 /**
@@ -42,7 +42,8 @@ async function readBody(req: NextRequest): Promise<Record<string, unknown> | nul
 }
 
 export async function PUT(req: NextRequest) {
-  const guard = await requireAdmin(req)
+  // Authoring the catalogue — pay, capacity, training content — is owner authority.
+  const guard = await requireOwner(req)
   if (!guard.ok) return guard.response
 
   const bucket = consumeBucket('admin-jobs', 30, 60_000, String(guard.value.jti).slice(0, 12))
@@ -123,7 +124,7 @@ export async function PATCH(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
-  const guard = await requireAdmin(req)
+  const guard = await requireOwner(req)
   if (!guard.ok) return guard.response
   const jobId = sanitizeLine(req.nextUrl.searchParams.get('jobId'), 80)
   if (!jobId) return fail(400, 'A job id is required.', { code: 'missing_id' })

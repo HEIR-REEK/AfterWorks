@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Download, Loader2, Lock, ScrollText, Search, ShieldCheck } from 'lucide-react'
 import { adminApi, useAdminSession } from '@/lib/admin'
-import { AdminCard, inputClass, useToasts } from '@/components/admin-ui'
+import { AdminCard, OwnerOnlyNotice, inputClass, useToasts } from '@/components/admin-ui'
 import { Button } from '@/components/ui/button'
 import { StatusBadge } from '@/components/status-badge'
 import { cn } from '@/lib/utils'
@@ -37,6 +37,14 @@ const GROUPS = [
 ] as const
 
 export default function AdminAuditLogPage() {
+  const session = useAdminSession()
+  if (session.status === 'authorized' && session.role !== 'owner') {
+    return <OwnerOnlyNotice area="The audit log" />
+  }
+  return <AdminAuditLogPageInner />
+}
+
+function AdminAuditLogPageInner() {
   const session = useAdminSession()
   const { push, toasts } = useToasts()
 

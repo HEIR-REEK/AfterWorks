@@ -11,6 +11,7 @@
 
 import { env, isEmailLike, isProduction, sanitizeLine } from '@/lib/security-core'
 import { site } from '@/lib/site'
+import { EMAIL_BRAND_LOGO_HTML, prepareEmailBranding } from '@/lib/email-brand'
 
 export type SendEmailInput = {
   to: string
@@ -127,7 +128,7 @@ export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult>
     from: emailFromAddress(),
     to: [to],
     subject: sanitizeLine(input.subject, 140) || 'AfterWorks',
-    html: input.html,
+    ...(await prepareEmailBranding(input.html)),
     text: input.text,
   }
   const replyTo = input.replyTo || emailReplyToAddress()
@@ -206,7 +207,6 @@ export function verificationEmailHtml(copy: VerificationEmailCopy): string {
   const url = escapeHtml(copy.verifyUrl)
   const hours = String(copy.expiresHours)
   const support = escapeHtml(site.supportEmail)
-  const brand = escapeHtml(site.name)
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -221,8 +221,8 @@ export function verificationEmailHtml(copy: VerificationEmailCopy): string {
       <td align="center">
         <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;">
           <tr>
-            <td style="padding:8px 8px 20px;font-size:13px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#2F5FE0;">
-              ${brand}
+            <td align="center" style="padding:8px 8px 20px;">
+              ${EMAIL_BRAND_LOGO_HTML}
             </td>
           </tr>
           <tr>
@@ -301,7 +301,6 @@ export function passwordResetEmailHtml(copy: PasswordResetEmailCopy): string {
   const code = escapeHtml(copy.code)
   const minutes = String(copy.expiresMinutes)
   const support = escapeHtml(site.supportEmail)
-  const brand = escapeHtml(site.name)
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -316,8 +315,8 @@ export function passwordResetEmailHtml(copy: PasswordResetEmailCopy): string {
       <td align="center">
         <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;">
           <tr>
-            <td style="padding:8px 8px 20px;font-size:13px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#2F5FE0;">
-              ${brand}
+            <td align="center" style="padding:8px 8px 20px;">
+              ${EMAIL_BRAND_LOGO_HTML}
             </td>
           </tr>
           <tr>

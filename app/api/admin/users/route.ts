@@ -85,6 +85,12 @@ export async function PATCH(req: NextRequest) {
 
   if (!uid) return fail(400, 'A user id is required.', { code: 'missing_uid' })
 
+  // Role split: staff operate the KYC queue; everything else on a member — moderation,
+  // credentials, wallets, roles, deletion — is main-administrator authority.
+  if (guard.value.role !== 'owner' && action !== 'kyc') {
+    return fail(403, 'Staff accounts can review KYC only. This action is restricted to the main administrator.', { code: 'owner_only' })
+  }
+
   try {
     const firestore = await import('@/lib/firestore-admin')
     if (!firestore.isFirebaseAdminUsable()) return fail(503, 'Storage unavailable — no changes were made.', { code: 'storage_unavailable' })

@@ -96,6 +96,13 @@ export async function PATCH(req: NextRequest) {
   }
 
   const action = String(body.action ?? '')
+
+  // Role split: staff may leave audit notes; revoking sessions, clearing lockouts and flushing
+  // caches are security operations reserved for the main administrator.
+  if (guard.value.role !== 'owner' && action !== 'note') {
+    return fail(403, 'This operator action is restricted to the main administrator.', { code: 'owner_only' })
+  }
+
   try {
     const firestore = await import('@/lib/firestore-admin')
 

@@ -85,6 +85,9 @@ const STATUSES = ['open', 'paused', 'closed'] as const
 export default function AdminJobsPage() {
   const session = useAdminSession()
   const { push, toasts } = useToasts()
+  // Authoring (create/edit/delete, pay, training content) is owner authority; staff can still
+  // pause or reopen a card when operations require it. The API enforces the same split.
+  const isOwner = session.role === 'owner'
 
   const [jobs, setJobs] = useState<AdminJobRow[]>([])
   const [loading, setLoading] = useState(true)
@@ -242,10 +245,12 @@ export default function AdminJobsPage() {
                 </option>
               ))}
             </select>
-            <Button size="sm" className="gap-1.5" onClick={() => openEditor()}>
-              <Plus className="size-3.5" />
-              New job
-            </Button>
+            {isOwner && (
+              <Button size="sm" className="gap-1.5" onClick={() => openEditor()}>
+                <Plus className="size-3.5" />
+                New job
+              </Button>
+            )}
           </div>
         }
       >
@@ -300,10 +305,12 @@ export default function AdminJobsPage() {
                   </p>
                 </div>
                 <div className="flex shrink-0 flex-wrap items-center gap-1.5">
-                  <Button size="sm" variant="outline" className="h-8 gap-1.5 text-xs" onClick={() => openEditor(job)}>
-                    <Settings2 className="size-3.5" />
-                    Edit
-                  </Button>
+                  {isOwner && (
+                    <Button size="sm" variant="outline" className="h-8 gap-1.5 text-xs" onClick={() => openEditor(job)}>
+                      <Settings2 className="size-3.5" />
+                      Edit
+                    </Button>
+                  )}
                   {job.status === 'open' ? (
                     <Button size="sm" variant="outline" className="h-8 gap-1.5 text-xs" disabled={busy} onClick={() => void setStatus(job, 'paused')}>
                       <Pause className="size-3.5" />
@@ -315,16 +322,18 @@ export default function AdminJobsPage() {
                       Open
                     </Button>
                   )}
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="h-8 gap-1.5 text-xs text-destructive hover:bg-destructive/10 hover:text-destructive"
-                    disabled={busy}
-                    onClick={() => setConfirmDelete(job)}
-                  >
-                    <Trash2 className="size-3.5" />
-                    Close
-                  </Button>
+                  {isOwner && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-8 gap-1.5 text-xs text-destructive hover:bg-destructive/10 hover:text-destructive"
+                      disabled={busy}
+                      onClick={() => setConfirmDelete(job)}
+                    >
+                      <Trash2 className="size-3.5" />
+                      Close
+                    </Button>
+                  )}
                   <Button render={<a href={`/training/${encodeURIComponent(job.id)}`} target="_blank" rel="noreferrer" />} size="sm" variant="ghost" className="h-8 gap-1.5 text-xs">
                     <Eye className="size-3.5" />
                     Preview

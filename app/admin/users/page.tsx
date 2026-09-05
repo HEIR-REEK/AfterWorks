@@ -70,6 +70,9 @@ function UsersPageInner() {
   const session = useAdminSession()
   const searchParams = useSearchParams()
   const { push, toasts } = useToasts()
+  // Role split: staff run the KYC queue; moderation, credentials, wallets and deletion are
+  // owner-only (the API enforces the same line — this just keeps the drawer honest).
+  const isOwner = session.role === 'owner'
 
   const [rows, setRows] = useState<AdminUserRow[]>([])
   const [nextCursor, setNextCursor] = useState<string | null>(null)
@@ -385,7 +388,7 @@ function UsersPageInner() {
                     Revoke KYC
                   </Button>
                 )}
-                {selected.accountState === 'active' ? (
+                {isOwner && (selected.accountState === 'active' ? (
                   <Button size="sm" variant="outline" className="gap-1.5" disabled={busy} onClick={() => setConfirm({ action: 'suspend', title: 'Suspend account', description: 'The member cannot apply or withdraw funds until restored. They are notified with your reason.', confirmLabel: 'Suspend', tone: 'destructive' })}>
                     <Lock className="size-3.5" />
                     Suspend
@@ -395,74 +398,96 @@ function UsersPageInner() {
                     <Unlock className="size-3.5" />
                     Restore
                   </Button>
+                ))}
+                {isOwner && (
+                  <Button size="sm" variant="outline" className="gap-1.5" disabled={busy} onClick={() => setConfirm({ action: 'wallet', title: 'Adjust wallet balances', description: 'Manual ledger correction. Recorded against your account with the reason you give.', confirmLabel: 'Apply adjustment', tone: 'destructive' })}>
+                    <Wallet className="size-3.5" />
+                    Adjust wallet
+                  </Button>
                 )}
-                <Button size="sm" variant="outline" className="gap-1.5" disabled={busy} onClick={() => setConfirm({ action: 'wallet', title: 'Adjust wallet balances', description: 'Manual ledger correction. Recorded against your account with the reason you give.', confirmLabel: 'Apply adjustment', tone: 'destructive' })}>
-                  <Wallet className="size-3.5" />
-                  Adjust wallet
-                </Button>
-                <Button size="sm" variant="outline" className="gap-1.5" disabled={busy} onClick={() => setConfirm({ action: 'role', title: selected.role === 'admin' ? 'Revoke staff access' : 'Grant staff access', description: 'Role changes are immediate, always audited, and cannot be applied to your own account.', confirmLabel: selected.role === 'admin' ? 'Revoke role' : 'Grant role', tone: selected.role === 'admin' ? 'destructive' : 'default' })}>
-                  <ShieldCheck className="size-3.5" />
-                  {selected.role === 'admin' ? 'Revoke staff' : 'Make staff'}
-                </Button>
-                <Button size="sm" variant="outline" className="gap-1.5" disabled={busy || account === null} onClick={() => setConfirm({
-                  action: account?.disabled ? 'credential-enable' : 'credential-disable',
-                  title: account?.disabled ? 'Re-enable sign-in' : 'Disable sign-in credential',
-                  description: account?.disabled
-                    ? 'The member can sign in again immediately. Their profile state is set back to active as well, so the two systems agree.'
-                    : 'Ends access now: existing sessions stop working at the next token refresh. Use this, not suspension alone, when a credential must die today.',
-                  confirmLabel: account?.disabled ? 'Enable credential' : 'Disable credential',
-                  tone: account?.disabled ? 'default' : 'destructive',
-                  requireReason: false,
-                })}>
-                  <KeyRound className="size-3.5" />
-                  {account?.disabled ? 'Enable sign-in' : 'Disable sign-in'}
-                </Button>
-                <Button size="sm" variant="outline" className="gap-1.5" disabled={busy} onClick={() => setConfirm({
-                  action: 'temp-password',
-                  title: 'Issue a temporary password',
-                  description: 'For a locked-out member who cannot receive a reset email. The password is shown once, is never stored, and this action is audited.',
-                  confirmLabel: 'Generate password',
-                  tone: 'destructive',
-                  minReasonLength: 4,
-                })}>
-                  <KeyRound className="size-3.5" />
-                  Temporary password
-                </Button>
-                <Button size="sm" variant="outline" className="gap-1.5" disabled={busy || account?.emailVerified === true} onClick={() => setConfirm({
-                  action: 'verification-link',
-                  title: 'Mint an email-verification link',
-                  description: 'The link is generated server-side and handed to you to send — nothing is emailed from this app. Valid one hour.',
-                  confirmLabel: 'Generate link',
-                  tone: 'default',
-                  requireReason: false,
-                })}>
-                  <MailCheck className="size-3.5" />
-                  Verification link
-                </Button>
-                <Button size="sm" variant="ghost" className="gap-1.5 text-destructive hover:bg-destructive/10 hover:text-destructive" disabled={busy} onClick={() => setConfirm({
-                  action: 'erase',
-                  title: 'Erase this account completely',
-                  description: 'Deletes the profile, the Firebase Auth credential, the notifications and any pending applications. Money rows are kept with names redacted unless you tick the box — a payout with no counterparty is worse for everybody.',
-                  confirmLabel: 'Erase permanently',
-                  tone: 'destructive',
-                  minReasonLength: 12,
-                })}>
-                  <Trash2 className="size-3.5" />
-                  Erase account
-                </Button>
-                <Button size="sm" variant="ghost" className="gap-1.5 text-destructive hover:bg-destructive/10 hover:text-destructive" disabled={busy} onClick={() => setConfirm({ action: 'delete', title: 'Flag for deletion', description: 'Bans the account and marks it for the retention job. Records are kept for financial audit; this is not an instant erase.', confirmLabel: 'Ban & flag', tone: 'destructive' })}>
-                  <Trash2 className="size-3.5" />
-                  Flag for deletion
-                </Button>
-                <Button size="sm" variant="ghost" className="gap-1.5" disabled={busy} onClick={() => setConfirm({ action: 'restrict', title: 'Mark under review', description: 'Keeps the account signed in but holds it for manual review; use instead of suspending when you are still gathering facts.', confirmLabel: 'Set under review', tone: 'destructive' })}>
-                  <CircleSlash className="size-3.5" />
-                  Under review
-                </Button>
+                {isOwner && (
+                  <Button size="sm" variant="outline" className="gap-1.5" disabled={busy} onClick={() => setConfirm({ action: 'role', title: selected.role === 'admin' ? 'Revoke staff access' : 'Grant staff access', description: 'Role changes are immediate, always audited, and cannot be applied to your own account.', confirmLabel: selected.role === 'admin' ? 'Revoke role' : 'Grant role', tone: selected.role === 'admin' ? 'destructive' : 'default' })}>
+                    <ShieldCheck className="size-3.5" />
+                    {selected.role === 'admin' ? 'Revoke staff' : 'Make staff'}
+                  </Button>
+                )}
+                {isOwner && (
+                  <Button size="sm" variant="outline" className="gap-1.5" disabled={busy || account === null} onClick={() => setConfirm({
+                    action: account?.disabled ? 'credential-enable' : 'credential-disable',
+                    title: account?.disabled ? 'Re-enable sign-in' : 'Disable sign-in credential',
+                    description: account?.disabled
+                      ? 'The member can sign in again immediately. Their profile state is set back to active as well, so the two systems agree.'
+                      : 'Ends access now: existing sessions stop working at the next token refresh. Use this, not suspension alone, when a credential must die today.',
+                    confirmLabel: account?.disabled ? 'Enable credential' : 'Disable credential',
+                    tone: account?.disabled ? 'default' : 'destructive',
+                    requireReason: false,
+                  })}>
+                    <KeyRound className="size-3.5" />
+                    {account?.disabled ? 'Enable sign-in' : 'Disable sign-in'}
+                  </Button>
+                )}
+                {isOwner && (
+                  <Button size="sm" variant="outline" className="gap-1.5" disabled={busy} onClick={() => setConfirm({
+                    action: 'temp-password',
+                    title: 'Issue a temporary password',
+                    description: 'For a locked-out member who cannot receive a reset email. The password is shown once, is never stored, and this action is audited.',
+                    confirmLabel: 'Generate password',
+                    tone: 'destructive',
+                    minReasonLength: 4,
+                  })}>
+                    <KeyRound className="size-3.5" />
+                    Temporary password
+                  </Button>
+                )}
+                {isOwner && (
+                  <Button size="sm" variant="outline" className="gap-1.5" disabled={busy || account?.emailVerified === true} onClick={() => setConfirm({
+                    action: 'verification-link',
+                    title: 'Mint an email-verification link',
+                    description: 'The link is generated server-side and handed to you to send — nothing is emailed from this app. Valid one hour.',
+                    confirmLabel: 'Generate link',
+                    tone: 'default',
+                    requireReason: false,
+                  })}>
+                    <MailCheck className="size-3.5" />
+                    Verification link
+                  </Button>
+                )}
+                {isOwner && (
+                  <Button size="sm" variant="ghost" className="gap-1.5 text-destructive hover:bg-destructive/10 hover:text-destructive" disabled={busy} onClick={() => setConfirm({
+                    action: 'erase',
+                    title: 'Erase this account completely',
+                    description: 'Deletes the profile, the Firebase Auth credential, the notifications and any pending applications. Money rows are kept with names redacted unless you tick the box — a payout with no counterparty is worse for everybody.',
+                    confirmLabel: 'Erase permanently',
+                    tone: 'destructive',
+                    minReasonLength: 12,
+                  })}>
+                    <Trash2 className="size-3.5" />
+                    Erase account
+                  </Button>
+                )}
+                {isOwner && (
+                  <Button size="sm" variant="ghost" className="gap-1.5 text-destructive hover:bg-destructive/10 hover:text-destructive" disabled={busy} onClick={() => setConfirm({ action: 'delete', title: 'Flag for deletion', description: 'Bans the account and marks it for the retention job. Records are kept for financial audit; this is not an instant erase.', confirmLabel: 'Ban & flag', tone: 'destructive' })}>
+                    <Trash2 className="size-3.5" />
+                    Flag for deletion
+                  </Button>
+                )}
+                {isOwner && (
+                  <Button size="sm" variant="ghost" className="gap-1.5" disabled={busy} onClick={() => setConfirm({ action: 'restrict', title: 'Mark under review', description: 'Keeps the account signed in but holds it for manual review; use instead of suspending when you are still gathering facts.', confirmLabel: 'Set under review', tone: 'destructive' })}>
+                    <CircleSlash className="size-3.5" />
+                    Under review
+                  </Button>
+                )}
               </div>
-              <p className="text-[11px] leading-relaxed text-muted-foreground">
-                Every action below is sent to <code className="font-mono">PATCH /api/admin/users</code> with a reason, checked against the allowed state transitions, and appended to
-                <code className="font-mono"> admin_logs</code>.
-              </p>
+              {isOwner ? (
+                <p className="text-[11px] leading-relaxed text-muted-foreground">
+                  Every action below is sent to <code className="font-mono">PATCH /api/admin/users</code> with a reason, checked against the allowed state transitions, and appended to
+                  <code className="font-mono"> admin_logs</code>.
+                </p>
+              ) : (
+                <p className="text-[11px] leading-relaxed text-muted-foreground">
+                  Staff accounts handle KYC decisions only. Moderation, credentials, wallets and deletion are restricted to the main administrator.
+                </p>
+              )}
             </div>
           </aside>
         </div>

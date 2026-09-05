@@ -6,7 +6,7 @@ import {
   type MaintenanceConfig,
   type MaintenanceService,
 } from '@/lib/maintenance-shared'
-import { audit, consumeBucket, fail, json, requireAdmin, routeError } from '@/lib/guards'
+import { audit, consumeBucket, fail, json, requireOwner, routeError } from '@/lib/guards'
 import { isEmailLike, parseEmailList, sanitizeLine, sanitizePlainText } from '@/lib/security-core'
 import { normaliseBlockedPath } from '@/lib/maintenance-shared'
 import { invalidateGuardCaches } from '@/lib/guard-cache'
@@ -163,7 +163,7 @@ function validatePatch(body: Record<string, unknown>): { ok: true; patch: Partia
 }
 
 export async function GET(req: NextRequest) {
-  const guard = await requireAdmin(req)
+  const guard = await requireOwner(req)
   if (!guard.ok) return guard.response
 
   try {
@@ -191,7 +191,7 @@ export async function PATCH(req: NextRequest) {
 }
 
 async function save(req: NextRequest) {
-  const guard = await requireAdmin(req)
+  const guard = await requireOwner(req)
   if (!guard.ok) return guard.response
 
   const bucket = consumeBucket('admin-maintenance', 20, 60_000, guard.value.jti.slice(0, 12))
@@ -255,7 +255,7 @@ async function save(req: NextRequest) {
 
 /** Fast "flip it off" for an on-call operator (and for the outage banner). */
 export async function DELETE(req: NextRequest) {
-  const guard = await requireAdmin(req)
+  const guard = await requireOwner(req)
   if (!guard.ok) return guard.response
   try {
     const { saveMaintenanceConfigServer } = await import('@/lib/firestore-admin')

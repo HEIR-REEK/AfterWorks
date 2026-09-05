@@ -88,7 +88,9 @@ export default function AdminLoginPage() {
           </span>
           <h1 className="text-2xl font-semibold tracking-tight text-balance sm:text-3xl">Administrator sign-in</h1>
           <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
-            Staff accounts on the approved roster, verified server-side. Not a worker login.
+            Main administrators and console staff, verified server-side. Use the password issued for
+            this console — your worker-account password does not open it, and this one does not open
+            the worker app.
           </p>
         </div>
 

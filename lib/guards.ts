@@ -39,12 +39,24 @@ import {
   setCachedRevocation,
 } from '@/lib/guard-cache'
 
+/**
+ * Console authority level.
+ *
+ *  • `owner` — the main administrator: the env roster (ADMIN_EMAILS) plus the shared master
+ *    passcode. Full authority over the console and the site configuration.
+ *  • `staff` — a limited operator: an `admin_accounts` entry with an individual password set by
+ *    the owner (or a legacy `users.isAdmin` grant). Day-to-day operations only.
+ */
+export type AdminRole = 'owner' | 'staff'
+
 export type AdminPrincipal = {
   email: string
   /** Session id (revocable) or the Firebase uid when the caller used a bearer ID token. */
   jti: string
   expiresAt: number
   via: 'session-cookie' | 'firebase-token'
+  /** Resolved server-side on every request — never carried by (or trusted from) the token. */
+  role: AdminRole
 }
 
 export type GuardResult<T> = { ok: true; value: T } | { ok: false; response: NextResponse }
@@ -177,29 +189,50 @@ function isAuthRoute(pathname: string): boolean {
 
 // ─── Firestore-backed privileged helpers (lazy import keeps edge-safe paths light) ─
 
-/** Env roster ∪ Firestore role — never a client-asserted value. */
-export async function isPrivilegedEmail(email: string): Promise<boolean> {
+/**
+ * The console role for one email — resolved server-side, never a client-asserted value.
+ *
+ * Precedence:
+ *  1. `ADMIN_EMAILS` env roster        → `owner`  (the main administrator; master passcode)
+ *  2. active `admin_accounts` document → the role stored on it (staff accounts the owner created
+ *     in the console, each with its own password)
+ *  3. legacy `users.isAdmin` grant     → `staff`  (pre-role-split grants keep working, limited)
+ *  4. anything else                    → `null`   (no console access)
+ */
+export async function resolveAdminRole(email: string): Promise<AdminRole | null> {
   const clean = email.trim().toLowerCase()
-  if (!clean) return false
+  if (!clean) return null
 
   const cached = getCachedRole(`role:${clean}`)
-  if (cached !== null) return cached
+  if (cached !== null) return cached === 'none' ? null : cached
 
   const roster = parseEmailList(env('ADMIN_EMAILS'))
-  let decision = roster.includes(clean)
+  let role: AdminRole | null = null
 
-  if (!decision) {
+  if (roster.includes(clean)) {
+    role = 'owner'
+  } else {
     try {
-      const { checkUserAdminRoleAdmin } = await import('@/lib/firestore-admin')
-      decision = await checkUserAdminRoleAdmin(clean)
+      const firestore = await import('@/lib/firestore-admin')
+      role = await firestore.getAdminAccountRole(clean)
+      if (!role) {
+        // Legacy grants (issued before staff accounts existed) still open the console, but only
+        // with the shared passcode and only with staff-level authority.
+        role = (await firestore.checkUserAdminRoleAdmin(clean)) ? 'staff' : null
+      }
     } catch (err) {
       console.warn('[guard] Firestore role lookup failed; denying privilege escalation:', err)
-      decision = false
+      role = null
     }
   }
 
-  setCachedRole(`role:${clean}`, decision, Math.max(5, envInt('ADMIN_ROLE_CACHE_SECONDS', 45)) * 1000)
-  return decision
+  setCachedRole(`role:${clean}`, role ?? 'none', Math.max(5, envInt('ADMIN_ROLE_CACHE_SECONDS', 45)) * 1000)
+  return role
+}
+
+/** Env roster ∪ staff account ∪ legacy Firestore role — kept for call sites that only need "any console role". */
+export async function isPrivilegedEmail(email: string): Promise<boolean> {
+  return (await resolveAdminRole(email)) !== null
 }
 
 async function getRevocationState(): Promise<{ revokedBefore: number; revokedJtis: Set<string> }> {
@@ -244,8 +277,11 @@ export async function resolveAdmin(req: NextRequest): Promise<AdminPrincipal | n
     if (claims) {
       const { revokedBefore, revokedJtis } = await getRevocationState()
       const revoked = claims.iat <= revokedBefore || revokedJtis.has(claims.jti)
-      if (!revoked && (await isPrivilegedEmail(claims.sub))) {
-        return { email: claims.sub, jti: claims.jti, expiresAt: claims.exp, via: 'session-cookie' }
+      // The role is re-resolved on every request (cached briefly): disabling or removing a staff
+      // account takes effect immediately, without waiting for their cookie to expire.
+      const role = revoked ? null : await resolveAdminRole(claims.sub)
+      if (role) {
+        return { email: claims.sub, jti: claims.jti, expiresAt: claims.exp, via: 'session-cookie', role }
       }
     }
   }
@@ -260,12 +296,16 @@ export async function resolveAdmin(req: NextRequest): Promise<AdminPrincipal | n
       const decoded = await verifyIdToken(bearer)
       if (decoded?.email) {
         const claimedAdmin = (decoded as unknown as { admin?: boolean }).admin === true
-        if (claimedAdmin || (await isPrivilegedEmail(decoded.email))) {
+        const role = await resolveAdminRole(decoded.email)
+        if (claimedAdmin || role) {
           return {
             email: decoded.email.toLowerCase(),
             jti: `uid:${decoded.uid}`,
             expiresAt: (decoded.exp ?? 0) * 1000,
             via: 'firebase-token',
+            // A raw `admin` claim with no resolvable role keeps the historical behaviour but at
+            // the lowest authority level; the roster is the only source of owner power.
+            role: role ?? 'staff',
           }
         }
       }
@@ -288,6 +328,22 @@ export async function requireAdmin(req: NextRequest): Promise<GuardResult<AdminP
         : 'Administrator session required. Sign in at /admin/login (dev: ensure ADMIN_SESSION_SECRET + ADMIN_EMAILS are set).',
     ),
   }
+}
+
+/**
+ * Owner-only gate. Staff sessions are authenticated but not authorised here: money, maintenance,
+ * audit, security, staff management and catalogue authoring belong to the main administrator.
+ */
+export async function requireOwner(req: NextRequest): Promise<GuardResult<AdminPrincipal>> {
+  const guard = await requireAdmin(req)
+  if (!guard.ok) return guard
+  if (guard.value.role !== 'owner') {
+    return {
+      ok: false,
+      response: forbidden('This area is restricted to the main administrator. Staff accounts have day-to-day operations access only.'),
+    }
+  }
+  return guard
 }
 
 export type UserPrincipal = {

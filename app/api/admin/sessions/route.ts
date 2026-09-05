@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server'
-import { json, fail, requireAdmin, routeError } from '@/lib/guards'
+import { json, fail, requireOwner, routeError } from '@/lib/guards'
 
 /**
  * GET /api/admin/sessions — the live console sessions behind the Security Centre's
@@ -14,7 +14,7 @@ import { json, fail, requireAdmin, routeError } from '@/lib/guards'
 export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest) {
-  const guard = await requireAdmin(req)
+  const guard = await requireOwner(req)
   if (!guard.ok) return guard.response
 
   try {

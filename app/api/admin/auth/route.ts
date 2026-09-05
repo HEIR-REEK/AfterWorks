@@ -11,8 +11,8 @@ import {
   registerFailedAttempt,
   verifyPasscode,
 } from '@/lib/security'
-import { envBool, envInt, isEmailLike, isProduction, NO_STORE_HEADERS } from '@/lib/security-core'
-import { audit, consumeBucket, fail, json, requestContext, isPrivilegedEmail } from '@/lib/guards'
+import { env, envBool, envInt, isEmailLike, isProduction, parseEmailList, NO_STORE_HEADERS } from '@/lib/security-core'
+import { audit, consumeBucket, fail, json, requestContext, type AdminRole } from '@/lib/guards'
 
 /**
  * POST /api/admin/auth — the only door into the operations console.
@@ -105,16 +105,56 @@ export async function POST(req: NextRequest) {
     })
   }
 
-  // 4. Roster check first — the passcode alone is never sufficient.
-  if (!(await isPrivilegedEmail(email))) return reject('Invalid administrator credentials.', 'not_privileged')
+  // 4+5. Identify the account, then verify *its own* credential (constant-time by construction:
+  // hash the candidate, compare digests).
+  //
+  //   • owner  — email on the ADMIN_EMAILS roster; signs in with the shared master passcode.
+  //   • staff  — an `admin_accounts` entry created by the owner in the console, with an
+  //              individual password the owner chose. A worker account with the same email is
+  //              unaffected: this password opens the console only, never the worker app.
+  //   • legacy — a pre-role-split `users.isAdmin` grant; still uses the master passcode but
+  //              only ever gets staff-level authority.
+  const roster = parseEmailList(env('ADMIN_EMAILS'))
+  let role: AdminRole | null = null
+  let credential: 'master' | 'staff-account' = 'master'
+  let passcodeOk = false
 
-  // 5. Passcode (constant-time by construction: hash the candidate, compare digests).
-  if (cfg.passcode.source === 'none') {
-    return fail(503, 'No admin passcode is configured. Sign in with a staff Firebase account instead.', {
-      code: 'passcode_unconfigured',
-    })
+  if (roster.includes(email)) {
+    role = 'owner'
+    if (cfg.passcode.source === 'none') {
+      return fail(503, 'No admin passcode is configured. Sign in with a staff Firebase account instead.', {
+        code: 'passcode_unconfigured',
+      })
+    }
+    passcodeOk = verifyPasscode(cfg.passcode.value, passcode)
+  } else {
+    try {
+      const firestore = await import('@/lib/firestore-admin')
+      const account = await firestore.getAdminAccount(email)
+      if (account && account.status === 'disabled') {
+        return reject('This staff account has been disabled by the main administrator.', 'staff_disabled')
+      }
+      if (account && account.passcodeHash) {
+        role = account.role === 'owner' ? 'owner' : 'staff'
+        credential = 'staff-account'
+        passcodeOk = verifyPasscode(account.passcodeHash, passcode)
+      } else if (await firestore.checkUserAdminRoleAdmin(email)) {
+        // Legacy role grant without a managed staff account.
+        role = 'staff'
+        if (cfg.passcode.source === 'none') {
+          return fail(503, 'No admin passcode is configured. Sign in with a staff Firebase account instead.', {
+            code: 'passcode_unconfigured',
+          })
+        }
+        passcodeOk = verifyPasscode(cfg.passcode.value, passcode)
+      }
+    } catch (err) {
+      console.warn('[admin/auth] account lookup failed:', err)
+    }
   }
-  if (!verifyPasscode(cfg.passcode.value, passcode)) return reject('Invalid administrator credentials.', 'bad_passcode')
+
+  if (!role) return reject('Invalid administrator credentials.', 'not_privileged')
+  if (!passcodeOk) return reject('Invalid administrator credentials.', 'bad_passcode')
 
   // 6. Issue the session.
   const session = await createAdminSession(email)
@@ -126,9 +166,19 @@ export async function POST(req: NextRequest) {
   await audit({
     action: 'ADMIN_LOGIN_SUCCESS',
     actorEmail: email,
-    details: { jti: session.jti, ip: ctx.identity.ipHash, expiresAt: new Date(session.expiresAt).toISOString() },
+    details: { jti: session.jti, role, credential, ip: ctx.identity.ipHash, expiresAt: new Date(session.expiresAt).toISOString() },
     req,
   })
+
+  // Staff-account heartbeat for the Staff page ("last sign-in"), fire-and-forget.
+  if (credential === 'staff-account') {
+    try {
+      const { isFirebaseAdminUsable, touchAdminAccountSignIn } = await import('@/lib/firestore-admin')
+      if (isFirebaseAdminUsable()) void touchAdminAccountSignIn(email)
+    } catch {
+      /* cosmetic field — never fail a sign-in over it */
+    }
+  }
 
   // Record the live session (server-only collection) so the Security Centre can list active
   // operators and revoke a single device. Never contains the token or any secret.
@@ -155,6 +205,8 @@ export async function POST(req: NextRequest) {
   const response = NextResponse.json({
     ok: true,
     email,
+    // Convenience for the UI only — every privileged request re-resolves the role server-side.
+    role,
     session: {
       // Deliberately no token here: the HttpOnly cookie is the only carrier of privilege.
       mode: 'http-only-cookie',

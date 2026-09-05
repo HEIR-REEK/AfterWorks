@@ -27,16 +27,18 @@ import { useMaintenance } from '@/components/maintenance-provider'
 import { BrandMark } from '@/components/brand'
 import AdminLoginPage from './login/page'
 
+// `ownerOnly` sections are hidden from staff sessions — the API guards enforce the same split,
+// this just keeps the console honest about what each role can reach.
 const adminNavItems = [
   { href: '/admin', label: 'Overview', icon: LayoutDashboard, exact: true },
   { href: '/admin/users', label: 'Users & KYC', icon: Users },
-  { href: '/admin/staff', label: 'Staff', icon: UserCog },
   { href: '/admin/jobs', label: 'Jobs Catalogue', icon: Briefcase },
   { href: '/admin/applications', label: 'Applications & QA', icon: ListChecks },
-  { href: '/admin/money', label: 'Money Ledger', icon: Landmark },
-  { href: '/admin/maintenance', label: 'Maintenance Mode', icon: Wrench },
-  { href: '/admin/audit-log', label: 'Audit Log', icon: ScrollText },
-  { href: '/admin/security', label: 'Security', icon: Shield },
+  { href: '/admin/staff', label: 'Staff', icon: UserCog, ownerOnly: true },
+  { href: '/admin/money', label: 'Money Ledger', icon: Landmark, ownerOnly: true },
+  { href: '/admin/maintenance', label: 'Maintenance Mode', icon: Wrench, ownerOnly: true },
+  { href: '/admin/audit-log', label: 'Audit Log', icon: ScrollText, ownerOnly: true },
+  { href: '/admin/security', label: 'Security', icon: Shield, ownerOnly: true },
 ]
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
@@ -109,6 +111,15 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                 session {formatDuration(remaining)}
               </span>
             )}
+            <span
+              className={cn(
+                'hidden shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider sm:inline',
+                session.role === 'owner' ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground',
+              )}
+              title={session.role === 'owner' ? 'Main administrator — full console authority' : 'Staff — limited operations access'}
+            >
+              {session.role === 'owner' ? 'Owner' : 'Staff'}
+            </span>
             <span className="hidden max-w-[16ch] truncate text-xs font-medium text-muted-foreground md:inline" title={session.email}>
               {session.email}
             </span>
@@ -143,7 +154,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         )}
 
         <nav className="no-scrollbar -mx-1 flex gap-1.5 overflow-x-auto border-b border-border px-1 pb-2.5 sm:gap-2" aria-label="Console sections">
-          {adminNavItems.map((item) => {
+          {adminNavItems.filter((item) => !item.ownerOnly || session.role === 'owner').map((item) => {
             const Icon = item.icon
             const active = item.exact ? pathname === item.href : pathname.startsWith(item.href)
             return (

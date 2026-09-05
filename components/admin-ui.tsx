@@ -10,9 +10,32 @@
  */
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import { AlertTriangle, CheckCircle2, Info, Loader2, X, XCircle } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Info, Loader2, ShieldAlert, X, XCircle } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
+
+/**
+ * Shown on owner-only console areas when the signed-in session is a staff account. The API
+ * guards are the real fence (every owner-only route returns 403 for staff); this is the honest
+ * UI so a staff member never stares at a broken page and wonders why.
+ */
+export function OwnerOnlyNotice({ area }: { area: string }) {
+  return (
+    <div className="flex flex-col items-center gap-4 rounded-2xl border border-border bg-card px-6 py-16 text-center shadow-sm">
+      <div className="flex size-12 items-center justify-center rounded-2xl bg-warning/15 text-warning">
+        <ShieldAlert className="size-6" />
+      </div>
+      <div>
+        <h2 className="text-base font-semibold tracking-tight text-foreground">{area} is restricted</h2>
+        <p className="mx-auto mt-1.5 max-w-md text-xs leading-relaxed text-muted-foreground">
+          This area belongs to the main administrator. Staff accounts cover day-to-day operations —
+          the QA desk, KYC review and the job board. Ask the main administrator if you need
+          something from this page.
+        </p>
+      </div>
+    </div>
+  )
+}
 
 export function AdminCard({
   title,

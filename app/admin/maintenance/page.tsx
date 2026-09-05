@@ -20,7 +20,7 @@ import {
   Zap,
 } from 'lucide-react'
 import { adminApi, useAdminSession } from '@/lib/admin'
-import { AdminCard, Field, LiveDot, useToasts, inputClass } from '@/components/admin-ui'
+import { AdminCard, Field, LiveDot, OwnerOnlyNotice, useToasts, inputClass } from '@/components/admin-ui'
 import { MaintenanceScreen } from '@/components/maintenance-screen'
 import { Button } from '@/components/ui/button'
 import { StatusBadge } from '@/components/status-badge'
@@ -52,6 +52,14 @@ const SERVICE_LABELS: Record<string, string> = {
 const SERVICE_STATUSES = ['operational', 'degraded', 'maintenance', 'outage'] as const
 
 export default function AdminMaintenancePage() {
+  const session = useAdminSession()
+  if (session.status === 'authorized' && session.role !== 'owner') {
+    return <OwnerOnlyNotice area="Maintenance mode" />
+  }
+  return <AdminMaintenancePageInner />
+}
+
+function AdminMaintenancePageInner() {
   const session = useAdminSession()
   const { push, toasts } = useToasts()
 

@@ -19,9 +19,18 @@ import { apiFetch, describeError } from '@/lib/client-api'
 import type { MaintenanceConfig } from '@/lib/maintenance-shared'
 import type { AssessmentQuestion, TrainingSection } from '@/lib/afterworks-data'
 
+/**
+ * Console authority level, resolved server-side:
+ *  • `owner` — main administrator (ADMIN_EMAILS roster + master passcode). Full authority.
+ *  • `staff` — limited operator with an individual password set by the owner. Day-to-day ops only.
+ * The UI uses this to hide owner-only areas; the API guards enforce it independently.
+ */
+export type AdminRole = 'owner' | 'staff'
+
 export type AdminSessionState = {
   status: 'checking' | 'authorized' | 'anonymous'
   email?: string
+  role?: AdminRole
   via?: 'session-cookie' | 'firebase-token'
   expiresAt?: string
   remainingSeconds?: number
@@ -58,6 +67,7 @@ async function probeAdminSession(force = false): Promise<AdminSessionState> {
       const data = await apiFetch<{
         authenticated: boolean
         email?: string
+        role?: AdminRole
         via?: 'session-cookie' | 'firebase-token'
         expiresAt?: string
         remainingSeconds?: number
@@ -66,6 +76,7 @@ async function probeAdminSession(force = false): Promise<AdminSessionState> {
         ? {
             status: 'authorized',
             email: data.email,
+            role: data.role,
             via: data.via,
             expiresAt: data.expiresAt,
             remainingSeconds: data.remainingSeconds,
@@ -142,12 +153,12 @@ export async function authenticateAdminSession(
   }
 
   try {
-    const data = await apiFetch<{ ok: true; email: string; session: { expiresAt: string } }>('/api/admin/auth', {
+    const data = await apiFetch<{ ok: true; email: string; role?: AdminRole; session: { expiresAt: string } }>('/api/admin/auth', {
       method: 'POST',
       body: { email: cleanEmail, password: cleanPass },
       timeoutMs: 25_000,
     })
-    publish({ status: 'authorized', email: data.email, via: 'session-cookie', expiresAt: data.session.expiresAt })
+    publish({ status: 'authorized', email: data.email, role: data.role, via: 'session-cookie', expiresAt: data.session.expiresAt })
     void probeAdminSession(true)
     return { ok: true, email: data.email, expiresAt: data.session.expiresAt }
   } catch (err) {
@@ -259,6 +270,7 @@ export const adminApi = {
       ok: boolean
       authenticated: boolean
       email?: string
+      role?: AdminRole
       via?: 'cookie' | 'firebase-token'
       expiresAt?: string
       remainingSeconds?: number
@@ -274,6 +286,26 @@ export const adminApi = {
   /** Live console sessions (server-only collection), for the Security Centre sessions panel. */
   sessions: () =>
     apiFetch<{ ok: boolean; count: number; generatedAt: string; sessions: ActiveAdminSession[] }>('/api/admin/sessions'),
+  /** Staff desk (owner only): list console accounts, add staff with an owner-chosen password, reset, disable, remove. */
+  staff: () => apiFetch<{ ok: boolean; owners: string[]; staff: AdminStaffAccountRow[]; degraded?: string }>('/api/admin/staff'),
+  staffAdd: (body: { email: string; passcode: string }) =>
+    apiFetch<{ ok: boolean; email: string; role: string; note?: string }>('/api/admin/staff', { method: 'POST', body }),
+  staffUpdate: (body: { email: string; action: 'password' | 'status'; passcode?: string; status?: 'active' | 'disabled' }) =>
+    apiFetch<{ ok: boolean; email: string; note?: string }>('/api/admin/staff', { method: 'PATCH', body }),
+  staffRemove: (email: string) =>
+    apiFetch<{ ok: boolean; email: string; note?: string }>('/api/admin/staff', { method: 'DELETE', query: { email } }),
+}
+
+/** One managed console staff account (the passcode hash never reaches the client). */
+export type AdminStaffAccountRow = {
+  email: string
+  role: 'owner' | 'staff'
+  status: 'active' | 'disabled'
+  passcodeSet: boolean
+  createdBy: string
+  createdAt: string
+  updatedAt: string
+  lastSignInAt: string | null
 }
 
 /** One live operator session as reported by `/api/admin/sessions`. */

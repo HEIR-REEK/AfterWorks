@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { ArrowDownLeft, ArrowUpRight, CreditCard, Download, Landmark, Loader2, Search, Wallet } from 'lucide-react'
 import { adminApi, useAdminSession, type AdminLedgerRow } from '@/lib/admin'
-import { AdminCard, AdminStat, LiveDot, Pager, inputClass, useToasts } from '@/components/admin-ui'
+import { AdminCard, AdminStat, LiveDot, OwnerOnlyNotice, Pager, inputClass, useToasts } from '@/components/admin-ui'
 import { Button } from '@/components/ui/button'
 import { StatusBadge } from '@/components/status-badge'
 import { cn } from '@/lib/utils'
@@ -53,6 +53,14 @@ function money(row: AdminLedgerRow): string {
 }
 
 export default function AdminLedgerPage() {
+  const session = useAdminSession()
+  if (session.status === 'authorized' && session.role !== 'owner') {
+    return <OwnerOnlyNotice area="The money ledger" />
+  }
+  return <AdminLedgerPageInner />
+}
+
+function AdminLedgerPageInner() {
   const session = useAdminSession()
   const { push, toasts } = useToasts()
 

@@ -127,6 +127,45 @@ Firebase already marks `email_verified` skips the hold. `EMAIL_FROM` must be a d
 Resend; until then only `beth.t@example.com` delivers, and `/api/health` reports the mail check as
 degraded.
 
+## Self-service password reset (email OTP)
+
+Members who forget their password recover it themselves from `/forgot-password` without a
+Firebase-hosted page or a Firebase-branded email. The one-time code travels through Resend like
+signup verification; Firebase Auth is only where the new password is written.
+
+| Step | Route body | What happens |
+| --- | --- | --- |
+| 1. request | `POST /api/auth/password-reset { step: 'request', email }` | If the address belongs to a live account, a 6-digit code is emailed (`PASSWORD_RESET_CODE_TTL_MINUTES`, default 15). The response is identical for unknown addresses; only the audit log distinguishes `PASSWORD_RESET_REQUESTED` from `_UNKNOWN` |
+| 2. verify | `{ step: 'verify', email, code }` | Constant-time HMAC compare inside a Firestore transaction. Wrong guesses are counted on the challenge (burned after `PASSWORD_RESET_MAX_ATTEMPTS`, default 5) **and** in the lockout store (`otp:` key). Success returns a signed reset *ticket* (`pr1.<payload>.<sig>`, `PASSWORD_RESET_TICKET_TTL_MINUTES`, default 10) |
+| 3. complete | `{ step: 'complete', ticket, password }` | Ticket is bound to the challenge `jti`; the challenge is consumed transactionally, the password is set through the Admin SDK and `revokeRefreshTokens` signs out every other device. Lockouts keyed on the address are cleared |
+
+Storage is one document per address in `password_resets` (doc id = HMAC of the email, holding an
+HMAC of the code — the code exists only in the email). Requesting again replaces the document, so
+at most one code is live per address. Requests are throttled per address (`reset:` lockout key, plus
+a `PASSWORD_RESET_RESEND_COOLDOWN_SECONDS` cooldown, default 60) and per IP (`PASSWORD_RESET_PER_IP`
+per 15 min, default 20). `PASSWORD_RESET_SECRET` (32+ chars) can dedicate a signing secret; otherwise
+`ADMIN_SESSION_SECRET` is used with a purpose prefix. The password policy (8+ chars, letters and
+digits, no obvious words) lives in `lib/password-reset.ts#passwordPolicyError`.
+
+The route is exempt from *scoped* maintenance windows together with `/api/auth/*`; a whole-site
+blackout still closes it. Staff can clear a member's lockouts from the Users drawer when the
+member has exhausted their guesses and the window has not lapsed.
+
+## Roles: what staff can do
+
+`lib/admin-domain.ts` holds the single capability table both the API guards and the console read:
+
+| Staff may | Owner only |
+| --- | --- |
+| Approve / reject KYC, run the QA desk, pause or reopen job cards | Suspend, ban, hold or delete accounts |
+| Issue a temporary password (`temp-password`) | Wallet adjustments and the money ledger |
+| Restore a suspended account (`moderate` → `active` only) | Staff accounts, role grants, maintenance mode |
+| Re-enable a disabled sign-in credential (`account` → `enable: true` only) | Audit log, Security Centre, session revocation |
+| Clear sign-in / reset lockouts for an email (`unlock`) and leave audit notes | Cache flushes |
+
+The rule of thumb: staff can *give access back*, never *take it away* or move money. Every staff
+action is still reason-gated and audited under the staff member's own email.
+
 ## Money
 
 * Training price is computed server-side (`/api/paystack/initialize`) from configuration, never from

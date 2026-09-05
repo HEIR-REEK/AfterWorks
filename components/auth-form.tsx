@@ -98,6 +98,7 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
   // Show a success banner on sign-in page when coming from sign-up or after verifying
   const justRegistered = !isSignUp && searchParams.get('registered') === '1'
   const justVerified = !isSignUp && searchParams.get('verified') === '1'
+  const justReset = !isSignUp && searchParams.get('reset') === '1'
 
   function handleEmailChange(value: string) {
     setEmail(value)
@@ -199,6 +200,14 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
           </span>
         </div>
       )}
+      {justReset && (
+        <div className="mb-5 flex items-start gap-3 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800 dark:border-green-800 dark:bg-green-950 dark:text-green-300">
+          <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-green-600" />
+          <span>
+            <strong>Password updated.</strong> Sign in with your new password — other devices were signed out.
+          </span>
+        </div>
+      )}
 
       {!configured && (
         <div className="mb-5 rounded-lg border border-warning/40 bg-warning/10 px-4 py-3 text-sm text-warning-foreground">
@@ -260,9 +269,19 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
         </div>
 
         <div className="flex flex-col gap-1.5">
-          <label htmlFor="password" className="text-sm font-medium">
-            Password
-          </label>
+          <div className="flex items-center justify-between">
+            <label htmlFor="password" className="text-sm font-medium">
+              Password
+            </label>
+            {!isSignUp && (
+              <Link
+                href={email.trim() ? `/forgot-password?email=${encodeURIComponent(email.trim())}` : '/forgot-password'}
+                className="text-xs font-medium text-primary hover:underline"
+              >
+                Forgot password?
+              </Link>
+            )}
+          </div>
           <div className="relative">
             <input
               id="password"

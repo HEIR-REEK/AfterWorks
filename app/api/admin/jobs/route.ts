@@ -31,7 +31,10 @@ export async function GET(req: NextRequest) {
 async function readBody(req: NextRequest): Promise<Record<string, unknown> | null> {
   try {
     const raw = await req.text()
-    if (raw.length > 64_000) return null
+    // A job now carries authored training sections and quiz questions, so the old 64 KB cap would
+    // silently reject a legitimately long course. 512 KB still leaves generous headroom below
+    // Firestore's 1 MiB document limit after sanitising.
+    if (raw.length > 512_000) return null
     return JSON.parse(raw || '{}')
   } catch {
     return null
@@ -69,6 +72,22 @@ export async function PUT(req: NextRequest) {
         capacity: Number(body.capacity ?? 10),
         slotsRemaining: body.slotsRemaining === undefined ? undefined : Number(body.slotsRemaining),
         trainingRequired: body.trainingRequired === true,
+        // Per-job training price + authored content. Shape-checked here, depth-limited and
+        // normalised by sanitizeJob() — the browser never gets to decide the real bounds.
+        trainingFeeUsd: body.trainingFeeUsd === undefined ? undefined : Number(body.trainingFeeUsd),
+        trainingNotes: Array.isArray(body.trainingNotes)
+          ? (body.trainingNotes as { title?: unknown; content?: unknown }[]).map((section) => ({
+              title: String(section?.title ?? ''),
+              content: String(section?.content ?? ''),
+            }))
+          : [],
+        assessmentQuestions: Array.isArray(body.assessmentQuestions)
+          ? (body.assessmentQuestions as { question?: unknown; options?: unknown; correctIndex?: unknown }[]).map((question) => ({
+              question: String(question?.question ?? ''),
+              options: Array.isArray(question?.options) ? (question.options as unknown[]).map(String) : [],
+              correctIndex: Number(question?.correctIndex ?? 0),
+            }))
+          : [],
         requiresVerified: body.requiresVerified !== false,
         status: String(body.status ?? 'open'),
         closesAt: typeof body.closesAt === 'string' ? body.closesAt : undefined,

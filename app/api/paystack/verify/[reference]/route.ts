@@ -1,10 +1,37 @@
 import { NextRequest } from 'next/server'
 import { consumeBucket, audit, fail, json, requireUser, routeError } from '@/lib/guards'
 import { env, normalizeEmail } from '@/lib/security-core'
-import { getTrainingFeeKes, getPaystackAmountSubunits } from '@/lib/afterworks-data'
+import { getPaystackAmountSubunits } from '@/lib/afterworks-data'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
+
+/**
+ * The subunit amount this charge was opened for.
+ *
+ * Training prices are per job card now, so a single global fee can no longer decide whether a
+ * charge covers its course. The authoritative figure is the `expectedSubunits` this server wrote
+ * on the pending `transactions` row at /initialize; the Paystack-side metadata is the fallback
+ * for a row that never got written, and only a charge with neither is judged against the
+ * globally configured fee.
+ */
+async function expectedSubunitsFor(reference: string, metadata?: Record<string, unknown>): Promise<number> {
+  try {
+    const { dbOrNull } = await import('@/lib/firestore-admin')
+    const db = dbOrNull()
+    if (db) {
+      const snap = await db.collection('transactions').doc(`tx_${reference}`).get()
+      const stored = (snap.data() ?? {}) as { metadata?: { expectedSubunits?: unknown } }
+      const fromRow = Number(stored.metadata?.expectedSubunits ?? 0)
+      if (Number.isFinite(fromRow) && fromRow > 0) return Math.round(fromRow)
+    }
+  } catch {
+    /* storage unavailable — fall through to the metadata the charge itself carries */
+  }
+  const fromMeta = Number(metadata?.expectedAmountKes ?? 0)
+  if (Number.isFinite(fromMeta) && fromMeta > 0) return Math.round(fromMeta) * 100
+  return getPaystackAmountSubunits()
+}
 
 /**
  * GET /api/paystack/verify/[reference] — "did my payment land?"
@@ -90,7 +117,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ refe
       return fail(403, 'This payment was made from a different email address. Contact support to have it applied.', { code: 'email_mismatch' })
     }
 
-    const expectedSubunits = getPaystackAmountSubunits()
+    const expectedSubunits = await expectedSubunitsFor(reference, tx.metadata)
     const paidSubunits = Number(tx.amount ?? 0)
     if (!Number.isFinite(paidSubunits) || paidSubunits < expectedSubunits) {
       await audit({ action: 'PAYMENT_UNDERPAID', actorEmail: email, details: { reference, paidSubunits, expectedSubunits }, req })
@@ -101,8 +128,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ refe
         reference,
         amountPaidKes: Math.round(paidSubunits / 100),
         amountDueKes: Math.round(expectedSubunits / 100),
-        message: `The charge was KES ${Math.round(paidSubunits / 100).toLocaleString()} but training costs KES ${(
-          getTrainingFeeKes()
+        message: `The charge was KES ${Math.round(paidSubunits / 100).toLocaleString()} but training costs KES ${Math.round(
+          expectedSubunits / 100,
         ).toLocaleString()}. Contact support and we will apply it manually.`,
       })
     }

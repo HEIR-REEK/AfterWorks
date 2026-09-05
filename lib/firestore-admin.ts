@@ -1801,6 +1801,12 @@ export type AdminJobInput = {
   capacity: number
   slotsRemaining?: number
   trainingRequired: boolean
+  /** Per-job training price in USD (admin-decided). Ignored when training is not required. */
+  trainingFeeUsd?: number
+  /** Admin-authored training sections workers step through. Empty list → built-in category modules. */
+  trainingNotes?: { title: string; content: string }[]
+  /** Admin-authored assessment questions. Empty list → built-in category bank. */
+  assessmentQuestions?: { question: string; options: string[]; correctIndex: number }[]
   requiresVerified: boolean
   status: string
   closesAt?: string
@@ -1812,6 +1818,49 @@ function sanitizeJob(input: AdminJobInput, existing?: Record<string, unknown> | 
   const capacity = Math.max(1, Math.min(100_000, Math.round(Number(input.capacity) || 0)))
   const requested = Math.round(Number(input.slotsRemaining ?? capacity))
   const slots = Math.max(0, Math.min(capacity, Number.isFinite(requested) ? requested : capacity))
+
+  const trainingRequired = input.trainingRequired === true
+
+  // Per-job training price. Only paid-training jobs carry one; when the admin omits it we keep the
+  // stored fee (edits that do not touch the fee) or default to the global $10-equivalent.
+  const feeRaw = Number(input.trainingFeeUsd)
+  const previousFee = Number(existing?.trainingFeeUsd ?? 0)
+  const trainingFeeUsd = trainingRequired
+    ? Math.max(1, Math.min(1_000, Math.round(((Number.isFinite(feeRaw) && feeRaw > 0 ? feeRaw : previousFee) || 10) * 100) / 100))
+    : 0
+
+  // Admin-authored training sections, bounded so a paste cannot balloon the document past
+  // Firestore's 1 MiB limit. Empty titles/contents are dropped; an empty list means "use the
+  // built-in category modules" on the worker side.
+  const trainingNotes = (Array.isArray(input.trainingNotes) ? input.trainingNotes : [])
+    .map((raw) => {
+      const section = (raw ?? {}) as Record<string, unknown>
+      return {
+        title: String(section.title ?? '').replace(/\s+/g, ' ').trim().slice(0, 140),
+        content: String(section.content ?? '').trim().slice(0, 8_000),
+      }
+    })
+    .filter((section) => section.title || section.content)
+    .slice(0, 40)
+
+  // Admin-authored quiz. Incomplete questions (no text, or fewer than two usable options) are
+  // dropped rather than rejected outright — a half-typed row must not brick the whole save.
+  const assessmentQuestions = (Array.isArray(input.assessmentQuestions) ? input.assessmentQuestions : [])
+    .map((raw) => {
+      const question = (raw ?? {}) as Record<string, unknown>
+      const options = (Array.isArray(question.options) ? question.options : [])
+        .map((option) => String(option).replace(/\s+/g, ' ').trim().slice(0, 400))
+        .filter(Boolean)
+        .slice(0, 4)
+      const correct = Math.max(0, Math.min(options.length - 1, Math.round(Number(question.correctIndex) || 0)))
+      return {
+        question: String(question.question ?? '').replace(/\s+/g, ' ').trim().slice(0, 500),
+        options,
+        correctIndex: correct,
+      }
+    })
+    .filter((question) => question.question && question.options.length >= 2)
+    .slice(0, 50)
 
   return {
     title,
@@ -1825,7 +1874,10 @@ function sanitizeJob(input: AdminJobInput, existing?: Record<string, unknown> | 
     estimatedMinutes: Math.max(5, Math.min(10_080, Math.round(Number(input.estimatedMinutes) || 60))),
     capacity,
     slotsRemaining: slots,
-    trainingRequired: input.trainingRequired === true,
+    trainingRequired,
+    trainingFeeUsd,
+    trainingNotes,
+    assessmentQuestions,
     requiresVerified: input.requiresVerified !== false,
     status: (JOB_STATUSES as readonly string[]).includes(input.status) ? input.status : 'open',
     closesAt: input.closesAt || (existing?.closesAt as string) || new Date(Date.now() + 7 * 86400_000).toISOString(),
@@ -2271,6 +2323,9 @@ export type JobRow = {
   capacity: number
   slotsRemaining: number
   trainingRequired: boolean
+  trainingFeeUsd: number
+  trainingNotes: { title: string; content: string }[]
+  assessmentQuestions: { question: string; options: string[]; correctIndex: number }[]
   requiresVerified: boolean
   status: string
   closesAt: string
@@ -2303,6 +2358,20 @@ export async function listJobsServer(opts: { status?: string; pageSize?: number 
         capacity: Number(data.capacity ?? 0) || 0,
         slotsRemaining: Number(data.slotsRemaining ?? 0) || 0,
         trainingRequired: data.trainingRequired === true,
+        trainingFeeUsd: Number(data.trainingFeeUsd ?? 0) || 0,
+        trainingNotes: Array.isArray(data.trainingNotes)
+          ? (data.trainingNotes as Record<string, unknown>[]).map((section) => ({
+              title: String(section?.title ?? ''),
+              content: String(section?.content ?? ''),
+            }))
+          : [],
+        assessmentQuestions: Array.isArray(data.assessmentQuestions)
+          ? (data.assessmentQuestions as Record<string, unknown>[]).map((question) => ({
+              question: String(question?.question ?? ''),
+              options: Array.isArray(question?.options) ? (question.options as unknown[]).map(String) : [],
+              correctIndex: Number(question?.correctIndex ?? 0) || 0,
+            }))
+          : [],
         requiresVerified: data.requiresVerified !== false,
         status: String(data.status ?? 'open'),
         closesAt: String(data.closesAt ?? ''),

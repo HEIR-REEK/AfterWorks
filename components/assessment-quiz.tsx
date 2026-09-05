@@ -1,8 +1,8 @@
 'use client'
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Button } from '@/components/ui/button'
-import type { JobCategory } from '@/lib/afterworks-data'
+import { assessmentPassMark, type AssessmentQuestion, type JobCategory } from '@/lib/afterworks-data'
 import { CheckCircle2, Circle, AlertCircle } from 'lucide-react'
 
 // Generate 15 distinct questions based on category
@@ -129,11 +129,27 @@ function generateQuestions(category: JobCategory) {
   }))
 }
 
-export function AssessmentQuiz({ category, onPass }: { category: JobCategory, onPass: () => void }) {
-  const [questions] = useState(() => generateQuestions(category))
+export function AssessmentQuiz({ category, onPass, customQuestions }: { category: JobCategory; onPass: () => void; customQuestions?: AssessmentQuestion[] }) {
+  // Admin-authored questions win; otherwise the built-in per-category bank.
+  const questions = useMemo(() => {
+    const authored = (customQuestions ?? [])
+      .map((question, index) => ({
+        id: index + 1,
+        question: String(question?.question ?? '').trim(),
+        options: (Array.isArray(question?.options) ? question.options : []).map((option) => String(option)).filter(Boolean),
+        correctIndex: Number(question?.correctIndex ?? 0) || 0,
+      }))
+      .filter((question) => question.question && question.options.length >= 2 && question.correctIndex < question.options.length)
+    if (authored.length > 0) return authored
+    return generateQuestions(category)
+  }, [customQuestions, category])
+
+  const passMark = assessmentPassMark(questions.length)
+
   const [answers, setAnswers] = useState<Record<number, number>>({})
   const [submitted, setSubmitted] = useState(false)
   const [passed, setPassed] = useState(false)
+  const [score, setScore] = useState(0)
 
   const handleSelect = (qId: number, oIdx: number) => {
     if (submitted) return
@@ -141,13 +157,14 @@ export function AssessmentQuiz({ category, onPass }: { category: JobCategory, on
   }
 
   const handleSubmit = () => {
-    let score = 0
+    let finalScore = 0
     questions.forEach(q => {
-      if (answers[q.id] === q.correctIndex) score++
+      if (answers[q.id] === q.correctIndex) finalScore++
     })
-    
+
+    setScore(finalScore)
     setSubmitted(true)
-    if (score >= 10) { // pass mark 10 out of 15
+    if (finalScore >= passMark) {
       setPassed(true)
     }
   }
@@ -158,7 +175,7 @@ export function AssessmentQuiz({ category, onPass }: { category: JobCategory, on
         <CheckCircle2 className="size-16 text-success" />
         <h3 className="text-2xl font-bold text-success-foreground">Assessment Passed!</h3>
         <p className="text-muted-foreground text-center max-w-md">
-          You have successfully demonstrated your skills for {category} tasks by scoring at least 10/15.
+          You scored {score}/{questions.length} — at or above the {passMark}/{questions.length} pass mark — and demonstrated your skills for {category} tasks.
         </p>
         <Button onClick={onPass} size="lg" className="mt-4 px-8">
           Proceed to Application
@@ -179,7 +196,7 @@ export function AssessmentQuiz({ category, onPass }: { category: JobCategory, on
           </div>
           <div className="flex items-center gap-2 bg-accent/50 px-3 py-1.5 rounded-lg text-sm font-medium">
             <AlertCircle className="size-4 text-primary" />
-            <span>Pass mark: 10/15</span>
+            <span>Pass mark: {passMark}/{questions.length}</span>
           </div>
         </div>
 
@@ -248,19 +265,19 @@ export function AssessmentQuiz({ category, onPass }: { category: JobCategory, on
           <div className="mt-10 pt-8 border-t border-border flex flex-col items-center gap-4 bg-destructive/5 rounded-xl p-6">
             <p className="text-destructive font-bold text-lg flex items-center gap-2">
               <AlertCircle className="size-5" />
-              You did not meet the passing score.
+              You scored {score}/{questions.length} — the pass mark is {passMark}/{questions.length}.
             </p>
             <p className="text-sm text-muted-foreground text-center">
               Please review the training notes and guidelines, then try again.
             </p>
-            <Button 
-              size="lg" 
+            <Button
+              size="lg"
               variant="outline"
               onClick={() => {
                 setAnswers({})
                 setSubmitted(false)
                 window.scrollTo({ top: 0, behavior: 'smooth' })
-              }} 
+              }}
               className="mt-2 w-full sm:w-auto min-w-[200px]"
             >
               Retake Assessment

@@ -23,6 +23,7 @@ import {
   APPLICATION_TONE,
   formatDuration,
   formatUsd,
+  trainingFeeUsdFor,
   Application,
 } from '../../../lib/afterworks-data'
 
@@ -57,6 +58,7 @@ export default function JobDetailPage({
   const isClosed = job.status !== 'open' || job.slotsRemaining <= 0
   const filled = job.capacity - job.slotsRemaining
   const fillPct = Math.round((filled / job.capacity) * 100)
+  const trainingFee = formatUsd(trainingFeeUsdFor(job.trainingFeeUsd))
 
   async function handleApply() {
     setError(null)
@@ -135,12 +137,12 @@ export default function JobDetailPage({
                 <li className="flex items-start gap-2.5 text-muted-foreground">
                   <GraduationCap className="mt-0.5 size-4 shrink-0 text-primary" />
                   <div>
-                    <span>Step 1: Pay 10$ → Step 2: Access Training → Step 3: Skill Assessment → Step 4: Apply for Job Card</span>
+                    <span>Step 1: Pay {trainingFee} → Step 2: Access Training → Step 3: Skill Assessment → Step 4: Apply for Job Card</span>
                     <p className="mt-1 text-xs text-muted-foreground">
                       {isPaid ? (
                         <strong className="text-success font-medium">✓ Payment confirmed. Training &amp; assessment unlocked for this job card!</strong>
                       ) : (
-                        <span>Each job card requires its own separate 10$ payment. Completing payment unlocks training &amp; assessment for this specific job card only.</span>
+                        <span>Each job card requires its own separate {trainingFee} payment. Completing payment unlocks training &amp; assessment for this specific job card only.</span>
                       )}
                     </p>
                   </div>
@@ -199,7 +201,7 @@ export default function JobDetailPage({
                 <span>
                   {isPaid
                     ? 'Payment detected! Training modules & assessment are unlocked.'
-                    : 'This job card requires payment detection (10$) before training and assessment open.'}
+                    : `This job card requires payment detection (${trainingFee}) before training and assessment open.`}
                 </span>
               </div>
             )}
@@ -257,7 +259,7 @@ export default function JobDetailPage({
                       : job.trainingRequired
                         ? isPaid
                           ? 'Continue Training & Assessment'
-                          : 'Pay 10$ to Unlock Training'
+                          : `Pay ${trainingFee} to Unlock Training`
                         : 'Take Assessment to Apply'}
                 </Button>
               )}

@@ -264,6 +264,94 @@ export function verificationEmailHtml(copy: VerificationEmailCopy): string {
 </html>`
 }
 
+// ─── Password reset (one-time code) ─────────────────────────────────────────
+
+export type PasswordResetEmailCopy = {
+  name: string
+  email: string
+  /** Six-digit code, already formatted for display (e.g. "482 913"). */
+  code: string
+  expiresMinutes: number
+}
+
+export function passwordResetEmailSubject(code: string): string {
+  return `${code.replace(/\s+/g, '')} is your AfterWorks password reset code`
+}
+
+export function passwordResetEmailText(copy: PasswordResetEmailCopy): string {
+  const first = firstName(copy.name, copy.email)
+  return [
+    `Hi ${first},`,
+    '',
+    'Someone asked to reset the password for your AfterWorks account. Enter this code on the reset page to choose a new password:',
+    '',
+    `    ${copy.code}`,
+    '',
+    `The code expires in ${copy.expiresMinutes} minutes and works once. AfterWorks staff will never ask you for it.`,
+    '',
+    'If you did not request a reset, ignore this email — your password has not changed and nothing else will happen.',
+    '',
+    `— ${site.name}`,
+    site.supportEmail,
+  ].join('\n')
+}
+
+export function passwordResetEmailHtml(copy: PasswordResetEmailCopy): string {
+  const first = escapeHtml(firstName(copy.name, copy.email))
+  const code = escapeHtml(copy.code)
+  const minutes = String(copy.expiresMinutes)
+  const support = escapeHtml(site.supportEmail)
+  const brand = escapeHtml(site.name)
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Your AfterWorks password reset code</title>
+</head>
+<body style="margin:0;padding:0;background:#F4F6FB;font-family:Inter,Segoe UI,Helvetica,Arial,sans-serif;color:#1A1F36;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F4F6FB;padding:32px 12px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;">
+          <tr>
+            <td style="padding:8px 8px 20px;font-size:13px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#2F5FE0;">
+              ${brand}
+            </td>
+          </tr>
+          <tr>
+            <td style="background:#ffffff;border:1px solid #E4E7F1;border-radius:16px;padding:36px 32px;">
+              <p style="margin:0 0 8px;font-size:13px;font-weight:600;color:#2F5FE0;">Password reset</p>
+              <h1 style="margin:0 0 16px;font-size:24px;line-height:1.3;font-weight:700;color:#1A1F36;">Your one-time code</h1>
+              <p style="margin:0 0 20px;font-size:15px;line-height:1.6;color:#3C4257;">
+                Hi ${first}, someone asked to reset the password for <strong>${escapeHtml(copy.email)}</strong>. Enter this code on the reset page to choose a new password.
+              </p>
+              <p style="margin:0 0 20px;padding:18px 16px;border-radius:12px;background:#F4F6FB;border:1px dashed #C9D1EA;text-align:center;font-family:'JetBrains Mono',SFMono-Regular,Menlo,Consolas,monospace;font-size:32px;letter-spacing:0.28em;font-weight:700;color:#1A1F36;">
+                ${code}
+              </p>
+              <p style="margin:0 0 8px;font-size:14px;line-height:1.6;color:#3C4257;">
+                The code expires in <strong>${minutes} minutes</strong> and works once.
+              </p>
+              <p style="margin:0;font-size:13px;line-height:1.6;color:#B42318;">
+                AfterWorks staff will never ask you for this code. Do not share it with anyone.
+              </p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:20px 8px 0;font-size:12px;line-height:1.55;color:#667085;">
+              If you did not request a reset, ignore this email — your password has not changed and nothing else will happen.
+              Questions? ${support}
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`
+}
+
 function firstName(name: string, email: string): string {
   const trimmed = name.trim()
   if (trimmed) return trimmed.split(/\s+/)[0]!.slice(0, 40)

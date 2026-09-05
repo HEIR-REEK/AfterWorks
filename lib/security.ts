@@ -363,6 +363,22 @@ export function unlockIdentifier(fragment: string): number {
   return removed
 }
 
+/**
+ * Clears every lockout budget keyed on one email address: console sign-in (`email:`), the
+ * password-reset request budget (`reset:`) and the OTP-guess budget (`otp:`). The store only
+ * holds HMAC digests, so we re-derive each key from the address rather than scanning for it.
+ */
+export function unlockEmail(email: string): number {
+  const clean = email.trim().toLowerCase()
+  if (!clean) return 0
+  const store = attempts()
+  let removed = 0
+  for (const kind of ['email', 'reset', 'otp'] as const) {
+    if (store.map.delete(attemptKey(kind, clean))) removed += 1
+  }
+  return removed
+}
+
 export function attemptSnapshot(): { tracked: number; totalAttempts: number; totalBlocked: number; locked: { key: string; until: number }[] } {
   const store = attempts()
   const now = Date.now()
@@ -374,7 +390,11 @@ export function attemptSnapshot(): { tracked: number; totalAttempts: number; tot
   return { tracked: store.map.size, totalAttempts: store.totalAttempts, totalBlocked: store.totalBlocked, locked }
 }
 
-export function attemptKey(kind: 'ip' | 'email' | 'route', value: string): string {
+/**
+ * Lockout-budget key. `kind` namespaces the budget so a password-reset storm against one address
+ * (`reset:`) and OTP guessing (`otp:`) never share a counter with console sign-in (`email:`).
+ */
+export function attemptKey(kind: 'ip' | 'email' | 'route' | 'reset' | 'otp', value: string): string {
   return `${kind}:${createHmac('sha256', getSecurityConfig().sessionSecret || 'unsalted').update(value.toLowerCase()).digest('hex').slice(0, 24)}`
 }
 

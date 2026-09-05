@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server'
 import { audit, consumeBucket, fail, json, requireAdmin, routeError } from '@/lib/guards'
 import { sanitizeLine } from '@/lib/security-core'
-import { ADMIN_MUTABLE_STATES, isStateTransitionAllowed } from '@/lib/admin-domain'
+import { ADMIN_MUTABLE_STATES, isStateTransitionAllowed, staffUserActionVerdict } from '@/lib/admin-domain'
 
 /**
  * /api/admin/users
@@ -85,10 +85,13 @@ export async function PATCH(req: NextRequest) {
 
   if (!uid) return fail(400, 'A user id is required.', { code: 'missing_uid' })
 
-  // Role split: staff operate the KYC queue; everything else on a member — moderation,
-  // credentials, wallets, roles, deletion — is main-administrator authority.
-  if (guard.value.role !== 'owner' && action !== 'kyc') {
-    return fail(403, 'Staff accounts can review KYC only. This action is restricted to the main administrator.', { code: 'owner_only' })
+  // Role split: staff run the support desk — KYC verdicts, temporary passwords, restoring a
+  // suspended account, re-enabling a credential. Anything that takes access away, moves money,
+  // changes a role or deletes data is main-administrator authority. One table decides both
+  // here and in the console (`lib/admin-domain.ts`).
+  if (guard.value.role !== 'owner') {
+    const verdict = staffUserActionVerdict(action, payload)
+    if (!verdict.allowed) return fail(403, verdict.reason, { code: 'owner_only' })
   }
 
   try {

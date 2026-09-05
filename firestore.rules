@@ -173,6 +173,14 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // ── Password-reset challenges (server-only) ──────────────────────────────
+    // One doc per address (id = HMAC of the email) holding an HMAC of the one-time code, the
+    // attempt counter and the uid. The code itself exists only in the email. Never client-readable:
+    // even the hash would let an offline guess of a 6-digit space.
+    match /password_resets/{emailHash} {
+      allow read, write: if false;
+    }
+
     // ── Deny by default ──────────────────────────────────────────────────────
     match /{document=**} {
       allow read, write: if false;

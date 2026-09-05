@@ -267,15 +267,25 @@ function ForgotPasswordInner() {
             <label htmlFor="reset-code" className="text-sm font-medium">
               {CODE_LENGTH}-digit code
             </label>
+            {/* The pattern accepts the displayed grouping as well as six unspaced digits. */}
             <input
               ref={codeRef}
               id="reset-code"
               inputMode="numeric"
               autoComplete="one-time-code"
-              pattern="[0-9]*"
+              pattern="[0-9]{3} ?[0-9]{3}"
+              required
               maxLength={CODE_LENGTH + 1}
               value={cleanCode.length > 3 ? `${cleanCode.slice(0, 3)} ${cleanCode.slice(3)}` : cleanCode}
               onChange={(e) => setCode(e.target.value)}
+              onPaste={(e) => {
+                // Read the whole clipboard before maxLength truncates whitespace copied from mail.
+                const pasted = e.clipboardData.getData('text').replace(/\D+/g, '')
+                if (pasted.length === CODE_LENGTH) {
+                  e.preventDefault()
+                  setCode(pasted)
+                }
+              }}
               className={`${inputClass} text-center font-mono text-2xl tracking-[0.35em]`}
               placeholder="000 000"
               disabled={busy}

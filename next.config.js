@@ -12,7 +12,7 @@ const isProduction = process.env.NODE_ENV === 'production'
  */
 const securityHeaders = [
   { key: 'X-Content-Type-Options', value: 'nosniff' },
-  { key: 'X-Frame-Options', value: 'DENY' },
+  ...(isProduction ? [{ key: 'X-Frame-Options', value: 'DENY' }] : []),
   { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
   { key: 'X-DNS-Prefetch-Control', value: 'off' },
   { key: 'X-Permitted-Cross-Domain-Policies', value: 'none' },
@@ -36,6 +36,12 @@ const noStore = [
 ]
 
 const nextConfig = {
+  // Hosted development previews are framed; production remains non-embeddable.
+  allowedDevOrigins: ['localhost', '127.0.0.1', '*.e2b.app'],
+  outputFileTracingIncludes: {
+    '/api/auth/password-reset': ['./public/brand/email-logo.png'],
+    '/api/auth/send-verification': ['./public/brand/email-logo.png'],
+  },
   env: {
     // Only the publishable key is exposed. PAYSTACK_SECRET_KEY must never be NEXT_PUBLIC_* —
     // anything prefixed that way is compiled into the JavaScript bundle and is public forever.

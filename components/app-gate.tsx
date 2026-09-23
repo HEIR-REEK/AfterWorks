@@ -24,7 +24,7 @@ import { matchesBlockedPath } from '@/lib/maintenance-shared'
  *    verified by `useAdminSession()`, plus the server-side allow-list check.
  */
 
-const PUBLIC_ROUTES = ['/sign-in', '/sign-up', '/verify-email', '/kyc/callback', '/maintenance', '/status']
+const PUBLIC_ROUTES = ['/sign-in', '/sign-up', '/forgot-password', '/verify-email', '/kyc/callback', '/maintenance', '/status']
 
 export function AppGate({ children }: { children: React.ReactNode }) {
   return (

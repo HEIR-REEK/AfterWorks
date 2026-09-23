@@ -224,7 +224,8 @@ export async function terminateAdminSession(): Promise<void> {
 
 export const adminApi = {
   stats: (refresh = false) => apiFetch<Record<string, unknown>>('/api/admin', { query: refresh ? { refresh: 1 } : undefined, timeoutMs: 30_000 }),
-  operatorAction: (body: Record<string, unknown>) => apiFetch<{ ok: boolean }>('/api/admin', { method: 'PATCH', body }),
+  operatorAction: (body: Record<string, unknown>) =>
+    apiFetch<{ ok: boolean; note?: string; removed?: number; revoked?: string; self?: boolean }>('/api/admin', { method: 'PATCH', body }),
   maintenance: () =>
     apiFetch<{ ok: boolean; config: MaintenanceConfig; status: Record<string, unknown>; forced?: boolean }>('/api/admin/maintenance'),
   saveMaintenance: (patch: Partial<MaintenanceConfig>) =>

@@ -43,6 +43,20 @@ Firebase's return channel and makes a successful Google selection look cancelled
 The console needs `ADMIN_EMAILS` (the roster), `ADMIN_SESSION_SECRET` (≥ 32 chars) and a passcode
 verifier from `npm run hash:admin-password`. Without those it fails closed and says why.
 
+## Regression tests
+
+```bash
+npm test                         # code-format and email payload tests; no real mail is sent
+npx playwright install chromium  # once per development machine
+npm run test:browser              # starts/reuses the local dev server
+```
+
+Browser tests cover typed/pasted OTPs (including leading zeros), native form validation, incomplete
+codes, server rejection/resend, and the reset UI flow. Every API call in these browser tests is
+mocked: they do not send email or change Firebase accounts. Email tests verify the actual PNG bytes,
+CID attachment payload and missing-asset fallback. Resend delivery and Firebase password changes
+still require a deployed check using a test account you control.
+
 ## Layout
 
 | Path | What lives there |

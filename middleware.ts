@@ -143,7 +143,7 @@ function buildCsp(production: boolean): string {
     `object-src 'none'`,
     `base-uri 'self'`,
     `form-action 'self'`,
-    `frame-ancestors 'none'`,
+    ...(production ? [`frame-ancestors 'none'`] : []),
     // No `require-trusted-types-for`: Next 14 injects inline bootstrap scripts, so declaring a
     // Trusted Types requirement here would break the app in a way that only shows up in production.
     // XSS is instead handled the other way round — no unsafe-inline in production script-src above.
@@ -153,7 +153,7 @@ function buildCsp(production: boolean): string {
 
 function applySecurityHeaders(res: NextResponse): void {
   res.headers.set('Content-Security-Policy', buildCsp(PRODUCTION))
-  res.headers.set('X-Frame-Options', 'DENY')
+  if (PRODUCTION) res.headers.set('X-Frame-Options', 'DENY')
   res.headers.set('X-Content-Type-Options', 'nosniff')
   res.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin')
   res.headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(self), browsing-topics=(), interest-cohort=()')

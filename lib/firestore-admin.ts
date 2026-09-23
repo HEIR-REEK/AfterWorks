@@ -1511,6 +1511,76 @@ export async function setTemporaryPassword(uid: string, actorEmail: string): Pro
   }
 }
 
+export type PasswordResetTarget = {
+  uid: string
+  email: string
+  name: string
+  disabled: boolean
+  /** True when the account can sign in with a password (vs. Google-only). */
+  hasPassword: boolean
+}
+
+/**
+ * Looks up the account behind a "Forgot password" request. Returns `null` for unknown addresses —
+ * the route must answer identically either way so this never becomes an account-enumeration oracle.
+ */
+export async function findPasswordResetTarget(email: string): Promise<PasswordResetTarget | null> {
+  const auth = authOrNull()
+  if (!auth) return null
+  const clean = email.trim().toLowerCase()
+  try {
+    const rec = await auth.getUserByEmail(clean)
+    let name = rec.displayName ?? ''
+    if (!name) {
+      try {
+        const profile = await getUserProfile(rec.uid)
+        if (typeof profile?.name === 'string') name = profile.name
+      } catch {
+        /* cosmetic */
+      }
+    }
+    return {
+      uid: rec.uid,
+      email: (rec.email ?? clean).toLowerCase(),
+      name,
+      disabled: rec.disabled === true,
+      hasPassword: (rec.providerData ?? []).some((p: UserInfo) => p.providerId === 'password'),
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : ''
+    if (/user-not-found|USER_NOT_FOUND|no user record/i.test(message)) return null
+    console.warn('[FirestoreAdmin] password reset lookup failed:', message)
+    return null
+  }
+}
+
+/**
+ * Sets the password the member chose after proving inbox ownership with the OTP, then revokes every
+ * refresh token so a session on a stolen device dies with the old password. A Google-only account
+ * gains a password provider as a side effect, which is the intended "I lost access to Google" path.
+ */
+export async function completePasswordReset(uid: string, newPassword: string): Promise<AccountActionResult> {
+  const auth = authOrNull()
+  if (!auth) return { ok: false, error: 'Firebase Auth is not reachable from this server.', code: 'auth_unavailable' }
+  try {
+    await auth.updateUser(uid, { password: newPassword })
+    await auth.revokeRefreshTokens(uid)
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Unknown error'
+    if (/uid-not-found|USER_NOT_FOUND|no such user/i.test(message)) {
+      return { ok: false, error: 'That account no longer exists.', code: 'account_missing' }
+    }
+    if (/invalid-password|WEAK_PASSWORD|at least 6/i.test(message)) {
+      return { ok: false, error: 'Firebase rejected that password as too weak.', code: 'weak_password' }
+    }
+    console.error('[FirestoreAdmin] password reset write failed:', message)
+    return { ok: false, error: 'The password could not be updated.', code: 'auth_write_failed' }
+  }
+  await createAuditEntry('PASSWORD_RESET_COMPLETED', { uid }, 'self-service')
+  invalidateGuardCaches?.(uid)
+  return { ok: true, note: 'Password updated and every other session signed out.' }
+}
+
 /**
  * Operator fallback: mint a Firebase-hosted verification link and hand it to staff. Worker signup
  * does not use this — it sends a Resend email (`POST /api/auth/send-verification`) and this

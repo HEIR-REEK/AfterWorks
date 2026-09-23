@@ -13,6 +13,7 @@
  *   mark-96.png     96² monogram                           (small slots, no optimiser needed)
  *   mark-64.png     64² monogram                           (edge-served outage page + favicon)
  *   lockup.png      monogram + wordmark, transparent       (sign-in, admin sign-in, marketing)
+ *   email-logo.png  opaque 400×240 PNG for inline email branding
  *   icon-192/512, maskable-512                              (PWA manifest)
  *   opengraph.png   1200×630 share card                      (open-graph / twitter card)
  *   app/icon.png, app/apple-icon.png                        (favicon + touch icon)
@@ -121,6 +122,10 @@ run([SOURCE, '-crop', geo(mark), '+repage', ...punch, '-trim', '+repage', '-bord
 run([path.join(OUT, 'mark.png'), '-resize', '96x96', ...QUANTISE, '-strip', `PNG8:${path.join(OUT, 'mark-96.png')}`], 'mark-96.png (chrome tiles)')
 run([path.join(OUT, 'mark.png'), '-resize', '64x64', ...QUANTISE, '-strip', `PNG8:${path.join(OUT, 'mark-64.png')}`], 'mark-64.png (favicon, outage page)')
 run([SOURCE, '-crop', geo(union, 10), '+repage', ...punch, '-trim', '+repage', '-bordercolor', 'none', '-border', '10', '-resize', '620x', ...QUANTISE, '-strip', `PNG8:${path.join(OUT, 'lockup.png')}`], 'lockup.png (mark + wordmark, 620 px)')
+
+// Email clients may block remote images or recolour backgrounds in dark mode. This small,
+// opaque PNG travels inside each email as a CID attachment, not a public URL or SVG.
+run([path.join(OUT, 'lockup.png'), '-resize', '360x210', '-background', '#FFFFFF', '-gravity', 'center', '-extent', '400x240', '-alpha', 'remove', '-alpha', 'off', ...QUANTISE, '-strip', `PNG8:${path.join(OUT, 'email-logo.png')}`], 'email-logo.png (400×240, opaque email attachment)')
 
 for (const [size, target] of [
   [192, path.join(OUT, 'icon-192.png')],

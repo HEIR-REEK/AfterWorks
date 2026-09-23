@@ -11,6 +11,8 @@ export type ApiError = {
   status: number
   code?: string
   retryAfterSec?: number
+  /** Wrong-guess budget left on a one-time code, when the server reports it. */
+  attemptsLeft?: number
   /** True when the caller should show this verbatim (validation), vs. a generic toast. */
   userFacing: boolean
 }
@@ -91,6 +93,7 @@ export async function apiFetch<T = Record<string, unknown>>(path: string, opts: 
         status: res.status,
         code,
         retryAfterSec: Number.isFinite(retryAfter) ? retryAfter : undefined,
+        attemptsLeft: typeof data.attemptsLeft === 'number' ? data.attemptsLeft : undefined,
         // 4xx validation errors from our own routes are written for humans; 5xx details are not.
         userFacing: res.status < 500,
       } satisfies ApiError

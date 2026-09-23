@@ -20,6 +20,7 @@ import { AdminCard, Field, OwnerOnlyNotice, ReasonDialog, inputClass, useToasts 
 import { Button } from '@/components/ui/button'
 import { StatusBadge } from '@/components/status-badge'
 import { cn } from '@/lib/utils'
+import { OWNER_ONLY_SUMMARY, STAFF_CAPABILITY_SUMMARY } from '@/lib/admin-domain'
 
 /**
  * Staff Management — OWNER ONLY.
@@ -350,11 +351,15 @@ function StaffPageInner() {
               <ShieldCheck className="size-3.5 text-muted-foreground" />
               Staff (limited)
             </p>
+            <ul className="flex flex-col gap-0.5 text-[11px] leading-relaxed text-muted-foreground">
+              {STAFF_CAPABILITY_SUMMARY.map((line) => (
+                <li key={line}>• {line}</li>
+              ))}
+            </ul>
             <p className="text-[11px] leading-relaxed text-muted-foreground">
-              Day-to-day operations: the QA desk, KYC review, and pausing/reopening job cards. No
-              money, maintenance, audit, security, staff or catalogue editing. Each staff member gets
-              an individual password that <strong>you</strong> choose — the worker-side password for
-              the same email stays separate and untouched.
+              Not for staff: {OWNER_ONLY_SUMMARY.map((line) => line.toLowerCase()).join('; ')}. Each staff
+              member gets an individual password that <strong>you</strong> choose — the worker-side
+              password for the same email stays separate and untouched.
             </p>
           </div>
         </div>

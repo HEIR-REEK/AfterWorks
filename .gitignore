@@ -87,3 +87,7 @@ tsconfig.tsbuildinfo
 new-chat.zip
 trial.html
 zip-diff.py
+
+# Browser test artifacts
+playwright-report/
+test-results/

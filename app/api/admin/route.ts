@@ -2,8 +2,9 @@ import { NextRequest } from 'next/server'
 import { attemptSnapshot, securityChecks } from '@/lib/security'
 import { guardCacheStats } from '@/lib/guard-cache'
 import { audit, fail, json, requireAdmin, routeError, consumeBucket } from '@/lib/guards'
-import { envBool, envInt, isProduction, sanitizeLine } from '@/lib/security-core'
+import { envBool, envInt, isEmailLike, isProduction, sanitizeLine } from '@/lib/security-core'
 import { resolveMaintenance } from '@/lib/maintenance-shared'
+import { staffOperatorActionVerdict } from '@/lib/admin-domain'
 
 /**
  * /api/admin — aggregate console data.
@@ -97,10 +98,12 @@ export async function PATCH(req: NextRequest) {
 
   const action = String(body.action ?? '')
 
-  // Role split: staff may leave audit notes; revoking sessions, clearing lockouts and flushing
-  // caches are security operations reserved for the main administrator.
-  if (guard.value.role !== 'owner' && action !== 'note') {
-    return fail(403, 'This operator action is restricted to the main administrator.', { code: 'owner_only' })
+  // Role split: staff may leave audit notes and clear a sign-in lockout for a member who is
+  // stuck; revoking sessions and flushing caches are security operations reserved for the main
+  // administrator. The table lives in `lib/admin-domain.ts` so the UI agrees with this check.
+  if (guard.value.role !== 'owner') {
+    const verdict = staffOperatorActionVerdict(action)
+    if (!verdict.allowed) return fail(403, verdict.reason, { code: 'owner_only' })
   }
 
   try {
@@ -136,17 +139,33 @@ export async function PATCH(req: NextRequest) {
       }
 
       case 'unlock': {
-        const { unlockIdentifier } = await import('@/lib/security')
+        // Two ways to name a lockout: a fragment of the hashed key (from the Security Centre
+        // list) or a member's email (from the Users drawer / support desk). The email form
+        // clears every budget keyed on that address — console sign-in, password-reset request
+        // and OTP verification — so a member who fat-fingered their code five times can retry.
+        const { unlockIdentifier, unlockEmail } = await import('@/lib/security')
+        const email = sanitizeLine(body.email ?? '', 200).toLowerCase()
         const fragment = String(body.fragment ?? '').trim()
-        if (fragment.length < 3) return fail(400, 'Provide at least 3 characters to identify the lockout.', { code: 'weak_fragment' })
-        const removed = unlockIdentifier(fragment)
+        const reason = sanitizeLine(body.reason ?? '', 300)
+        let removed = 0
+        if (email) {
+          if (!isEmailLike(email)) return fail(400, 'Enter a valid email address to unlock.', { code: 'invalid_email' })
+          removed = unlockEmail(email)
+        } else {
+          if (fragment.length < 3) return fail(400, 'Provide at least 3 characters to identify the lockout.', { code: 'weak_fragment' })
+          removed = unlockIdentifier(fragment)
+        }
         await audit({
           action: 'ADMIN_LOCKOUT_CLEARED',
           actorEmail: guard.value.email,
-          details: { fragmentHash: fragment.length, removed },
+          details: { fragmentHash: fragment.length, byEmail: Boolean(email), target: email || undefined, removed, reason },
           req,
         })
-        return json({ ok: true, removed })
+        return json({
+          ok: true,
+          removed,
+          note: removed > 0 ? `Cleared ${removed} lockout ${removed === 1 ? 'record' : 'records'}.` : 'Nothing was locked for that target on this server instance.',
+        })
       }
 
       case 'note': {

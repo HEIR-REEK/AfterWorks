@@ -107,7 +107,7 @@ export const MAINTENANCE_UNGATABLE_PATHS = ['/admin', '/status', '/maintenance',
  * *scoped* window (e.g. payouts paused, onboarding still open). A whole-site blackout always takes
  * them down — `isSignInExempt` is the only predicate that may skip the gate.
  */
-export const MAINTENANCE_SIGN_IN_PATHS = ['/sign-in', '/sign-up', '/verify-email', '/api/auth', '/api/kyc/callback']
+export const MAINTENANCE_SIGN_IN_PATHS = ['/sign-in', '/sign-up', '/forgot-password', '/verify-email', '/api/auth', '/api/kyc/callback']
 
 export function isSignInPath(pathname: string): boolean {
   const clean = pathname.startsWith('/') ? pathname : `/${pathname}`

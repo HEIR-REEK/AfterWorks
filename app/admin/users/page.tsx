@@ -172,6 +172,21 @@ function UsersPageInner() {
     }
   }
 
+  // Lockout counters live in the security store, not on the user document, so this goes through the
+  // operator-actions endpoint rather than PATCH /api/admin/users.
+  const clearLockout = async (email: string, reason: string) => {
+    setBusy(true)
+    try {
+      const result = await adminApi.operatorAction({ action: 'unlock', email, reason })
+      push(result.removed ? 'success' : 'info', result.note ?? 'Lockouts cleared.')
+      setConfirm(null)
+    } catch (err) {
+      push('error', err instanceof Error ? err.message : 'The lockout could not be cleared.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const summary = useMemo(
     () => ({
       verified: rows.filter((row) => row.kycVerified).length,
@@ -388,17 +403,19 @@ function UsersPageInner() {
                     Revoke KYC
                   </Button>
                 )}
-                {isOwner && (selected.accountState === 'active' ? (
-                  <Button size="sm" variant="outline" className="gap-1.5" disabled={busy} onClick={() => setConfirm({ action: 'suspend', title: 'Suspend account', description: 'The member cannot apply or withdraw funds until restored. They are notified with your reason.', confirmLabel: 'Suspend', tone: 'destructive' })}>
-                    <Lock className="size-3.5" />
-                    Suspend
-                  </Button>
+                {selected.accountState === 'active' ? (
+                  isOwner && (
+                    <Button size="sm" variant="outline" className="gap-1.5" disabled={busy} onClick={() => setConfirm({ action: 'suspend', title: 'Suspend account', description: 'The member cannot apply or withdraw funds until restored. They are notified with your reason.', confirmLabel: 'Suspend', tone: 'destructive' })}>
+                      <Lock className="size-3.5" />
+                      Suspend
+                    </Button>
+                  )
                 ) : (
-                  <Button size="sm" variant="outline" className="gap-1.5" disabled={busy} onClick={() => setConfirm({ action: 'restore', title: 'Restore account', description: 'Returns this member to good standing, keeping their earnings and applications.', confirmLabel: 'Restore access', tone: 'default' })}>
+                  <Button size="sm" variant="outline" className="gap-1.5" disabled={busy} onClick={() => setConfirm({ action: 'restore', title: 'Restore account', description: 'Returns this member to good standing, keeping their earnings and applications. The sign-in credential is re-enabled at the same time.', confirmLabel: 'Restore access', tone: 'default' })}>
                     <Unlock className="size-3.5" />
                     Restore
                   </Button>
-                ))}
+                )}
                 {isOwner && (
                   <Button size="sm" variant="outline" className="gap-1.5" disabled={busy} onClick={() => setConfirm({ action: 'wallet', title: 'Adjust wallet balances', description: 'Manual ledger correction. Recorded against your account with the reason you give.', confirmLabel: 'Apply adjustment', tone: 'destructive' })}>
                     <Wallet className="size-3.5" />
@@ -411,7 +428,7 @@ function UsersPageInner() {
                     {selected.role === 'admin' ? 'Revoke staff' : 'Make staff'}
                   </Button>
                 )}
-                {isOwner && (
+                {(isOwner || account?.disabled) && (
                   <Button size="sm" variant="outline" className="gap-1.5" disabled={busy || account === null} onClick={() => setConfirm({
                     action: account?.disabled ? 'credential-enable' : 'credential-disable',
                     title: account?.disabled ? 'Re-enable sign-in' : 'Disable sign-in credential',
@@ -426,19 +443,28 @@ function UsersPageInner() {
                     {account?.disabled ? 'Enable sign-in' : 'Disable sign-in'}
                   </Button>
                 )}
-                {isOwner && (
-                  <Button size="sm" variant="outline" className="gap-1.5" disabled={busy} onClick={() => setConfirm({
-                    action: 'temp-password',
-                    title: 'Issue a temporary password',
-                    description: 'For a locked-out member who cannot receive a reset email. The password is shown once, is never stored, and this action is audited.',
-                    confirmLabel: 'Generate password',
-                    tone: 'destructive',
-                    minReasonLength: 4,
-                  })}>
-                    <KeyRound className="size-3.5" />
-                    Temporary password
-                  </Button>
-                )}
+                <Button size="sm" variant="outline" className="gap-1.5" disabled={busy} onClick={() => setConfirm({
+                  action: 'temp-password',
+                  title: 'Issue a temporary password',
+                  description: 'For a locked-out member who cannot receive a reset email. The password is shown once, is never stored, and this action is audited. Members who can still read their inbox should use "Forgot password" on the sign-in page instead.',
+                  confirmLabel: 'Generate password',
+                  tone: 'destructive',
+                  minReasonLength: 4,
+                })}>
+                  <KeyRound className="size-3.5" />
+                  Temporary password
+                </Button>
+                <Button size="sm" variant="outline" className="gap-1.5" disabled={busy} onClick={() => setConfirm({
+                  action: 'clear-lockout',
+                  title: 'Clear sign-in lockouts',
+                  description: 'Removes the brute-force counters for this email — console sign-in, password-reset requests and reset-code guesses — so the member can try again now instead of waiting out the lockout. Audited as ADMIN_LOCKOUT_CLEARED.',
+                  confirmLabel: 'Clear lockouts',
+                  tone: 'default',
+                  minReasonLength: 4,
+                })}>
+                  <Unlock className="size-3.5" />
+                  Clear lockout
+                </Button>
                 {isOwner && (
                   <Button size="sm" variant="outline" className="gap-1.5" disabled={busy || account?.emailVerified === true} onClick={() => setConfirm({
                     action: 'verification-link',
@@ -485,7 +511,7 @@ function UsersPageInner() {
                 </p>
               ) : (
                 <p className="text-[11px] leading-relaxed text-muted-foreground">
-                  Staff accounts handle KYC decisions only. Moderation, credentials, wallets and deletion are restricted to the main administrator.
+                  Staff accounts can approve or reject KYC, issue a temporary password, restore a suspended account, re-enable a disabled sign-in and clear lockouts. Suspending, banning, wallets, roles and deletion are restricted to the main administrator.
                 </p>
               )}
             </div>
@@ -525,6 +551,8 @@ function UsersPageInner() {
               return act({ ...base, action: 'account', payload: { enable: true } })
             case 'temp-password':
               return act({ ...base, action: 'temp-password' })
+            case 'clear-lockout':
+              return clearLockout(selected.email, reason)
             case 'verification-link':
               return act({ ...base, action: 'verification-link', payload: { email: selected.email } })
             case 'erase': {

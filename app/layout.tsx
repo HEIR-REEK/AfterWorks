@@ -74,9 +74,9 @@ export async function generateMetadata(): Promise<Metadata> {
       creator: '@afterworks',
     },
     robots: {
-      index: !isProduction(),
+      index: true,
       follow: true,
-      googleBot: { index: false, follow: true, 'max-image-preview': 'large' },
+      googleBot: { index: true, follow: true, 'max-image-preview': 'large' },
     },
     alternates: { canonical: '/' },
     icons: {

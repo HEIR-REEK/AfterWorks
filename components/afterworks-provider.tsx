@@ -155,7 +155,7 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
       if (userDoc) {
         setWorker(userDoc.worker)
         setWallet(userDoc.wallet)
-        setPaidTrainings(userDoc.paidTrainings)
+        setPaidTrainings((prev) => Array.from(new Set([...prev, ...userDoc.paidTrainings])))
       }
       setProfileLoaded(true)
     }
@@ -191,7 +191,9 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
         availableKes: Number(((data.fx as Record<string, unknown>)?.availableKes as number) ?? 0) || 0,
         asOf: (data.asOf as string) ?? null,
       })
-      if (Array.isArray(data.paidTrainings)) setPaidTrainings((data.paidTrainings as string[]).filter(Boolean))
+      if (Array.isArray(data.paidTrainings)) {
+        setPaidTrainings((prev) => Array.from(new Set([...prev, ...(data.paidTrainings as string[]).filter(Boolean)])))
+      }
     } catch (err) {
       // A wallet read failing must not wipe the numbers already on screen.
       console.warn('[wallet] refresh failed:', describeError(err))

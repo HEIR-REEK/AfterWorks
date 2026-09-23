@@ -43,7 +43,7 @@ export async function generateMetadata(): Promise<Metadata> {
       template: `%s · ${site.name}`,
     },
     description: site.description,
-    metadataBase: new URL(site.url.startsWith('http') ? site.url : 'https://afterworks.io'),
+    metadataBase: new URL(site.url.startsWith('http') ? site.url : 'https://afterworks.site'),
     applicationName: site.name,
     generator: 'AfterWorks',
     keywords: [

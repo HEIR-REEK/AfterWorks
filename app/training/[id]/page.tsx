@@ -328,7 +328,7 @@ function TrainingPageInner({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
   const router = useRouter()
   const searchParams = useSearchParams()
-  const { getJob, worker, applyToJob, getApplicationForJob, isJobPaid, verifyTrainingPayment } = useAfterWorks()
+  const { getJob, worker, applyToJob, getApplicationForJob, isJobPaid, verifyTrainingPayment, profileLoaded } = useAfterWorks()
   const { user } = useAuth()
 
   const [isMounted, setIsMounted] = useState(false)
@@ -498,6 +498,14 @@ function TrainingPageInner({ params }: { params: Promise<{ id: string }> }) {
 
     setIsApplying(false)
     router.push('/applications')
+  }
+
+  if (!isMounted || !profileLoaded) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 text-center">
+        <Loader2 className="size-8 animate-spin text-muted-foreground" />
+      </div>
+    )
   }
 
   if (!job) {

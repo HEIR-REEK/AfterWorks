@@ -1,9 +1,52 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { assessmentPassMark, type AssessmentQuestion, type JobCategory } from '@/lib/afterworks-data'
 import { CheckCircle2, Circle, AlertCircle } from 'lucide-react'
+
+// ─── Assessment persistence helpers ──────────────────────────────────────────
+// Persists quiz progress in localStorage so a refresh during or after an
+// assessment does not wipe the worker's answers or their passing grade.
+// The key encodes both the category and the question count so stale state is
+// auto-discarded whenever the question bank changes.
+
+type StoredQuizState = {
+  answers: Record<number, number>
+  submitted: boolean
+  passed: boolean
+  score: number
+}
+
+function quizStorageKey(category: string, questionCount: number): string {
+  return `aw_quiz_state:${category}:${questionCount}`
+}
+
+function readStoredQuizState(category: string, questionCount: number): StoredQuizState | null {
+  try {
+    const raw = window.localStorage.getItem(quizStorageKey(category, questionCount))
+    if (!raw) return null
+    return JSON.parse(raw) as StoredQuizState
+  } catch {
+    return null
+  }
+}
+
+function writeStoredQuizState(category: string, questionCount: number, state: StoredQuizState): void {
+  try {
+    window.localStorage.setItem(quizStorageKey(category, questionCount), JSON.stringify(state))
+  } catch {
+    /* private mode — state lives in memory only */
+  }
+}
+
+export function clearStoredQuizState(category: string, questionCount: number): void {
+  try {
+    window.localStorage.removeItem(quizStorageKey(category, questionCount))
+  } catch {
+    /* ignore */
+  }
+}
 
 // Generate 15 distinct questions based on category
 function generateQuestions(category: JobCategory) {
@@ -151,9 +194,27 @@ export function AssessmentQuiz({ category, onPass, customQuestions }: { category
   const [passed, setPassed] = useState(false)
   const [score, setScore] = useState(0)
 
+  // Restore persisted quiz state on mount (e.g. after a page refresh)
+  useEffect(() => {
+    const stored = readStoredQuizState(category, questions.length)
+    if (!stored) return
+    setAnswers(stored.answers)
+    setSubmitted(stored.submitted)
+    setPassed(stored.passed)
+    setScore(stored.score)
+  }, [category, questions.length])
+
+  const persist = useCallback((state: StoredQuizState) => {
+    writeStoredQuizState(category, questions.length, state)
+  }, [category, questions.length])
+
   const handleSelect = (qId: number, oIdx: number) => {
     if (submitted) return
-    setAnswers(prev => ({ ...prev, [qId]: oIdx }))
+    setAnswers(prev => {
+      const next = { ...prev, [qId]: oIdx }
+      persist({ answers: next, submitted: false, passed: false, score: 0 })
+      return next
+    })
   }
 
   const handleSubmit = () => {
@@ -162,11 +223,17 @@ export function AssessmentQuiz({ category, onPass, customQuestions }: { category
       if (answers[q.id] === q.correctIndex) finalScore++
     })
 
+    const didPass = finalScore >= passMark
     setScore(finalScore)
     setSubmitted(true)
-    if (finalScore >= passMark) {
-      setPassed(true)
-    }
+    if (didPass) setPassed(true)
+    persist({ answers, submitted: true, passed: didPass, score: finalScore })
+  }
+
+  const handleProceed = () => {
+    // Clear state so a future visit to this quiz starts fresh
+    clearStoredQuizState(category, questions.length)
+    onPass()
   }
 
   if (passed) {
@@ -177,7 +244,7 @@ export function AssessmentQuiz({ category, onPass, customQuestions }: { category
         <p className="text-muted-foreground text-center max-w-md">
           You scored {score}/{questions.length} — at or above the {passMark}/{questions.length} pass mark — and demonstrated your skills for {category} tasks.
         </p>
-        <Button onClick={onPass} size="lg" className="mt-4 px-8">
+        <Button onClick={handleProceed} size="lg" className="mt-4 px-8">
           Proceed to Application
         </Button>
       </div>
@@ -274,6 +341,7 @@ export function AssessmentQuiz({ category, onPass, customQuestions }: { category
               size="lg"
               variant="outline"
               onClick={() => {
+                clearStoredQuizState(category, questions.length)
                 setAnswers({})
                 setSubmitted(false)
                 window.scrollTo({ top: 0, behavior: 'smooth' })

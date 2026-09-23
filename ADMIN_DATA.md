@@ -1,3 +1,4 @@
+
 # Where every console number comes from
 
 The rule for this project: **a figure in the admin panel is either read from the system that owns it, or it

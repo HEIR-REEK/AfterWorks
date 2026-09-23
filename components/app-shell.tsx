@@ -8,7 +8,6 @@ import {
   LayoutDashboard,
   ListChecks,
   LogOut,
-  Shield,
   ShieldCheck,
   User,
   Wrench,
@@ -20,8 +19,6 @@ import { NotificationsBell } from '@/components/notifications-bell'
 import { useMaintenance } from '@/components/maintenance-provider'
 import { BrandLink } from '@/components/brand'
 import { site } from '@/lib/site'
-
-import { isUserAdmin, useAdminSession } from '@/lib/admin'
 
 function initials(nameOrEmail: string) {
   const base = nameOrEmail.includes('@') ? nameOrEmail.split('@')[0] : nameOrEmail
@@ -46,19 +43,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const displayName = user?.displayName || user?.email || 'Worker'
   const avatar = initials(displayName).toUpperCase() || 'W'
 
-  // Shows the Admin link when an admin session is active or user has staff claims.
-  // The console itself is gated by useAdminSession() + the API guard.
-  const adminSession = useAdminSession()
-  const isAdmin =
-    adminSession.status === 'authorized' ||
-    isUserAdmin({ idTokenResult: { claims: (claims as Record<string, unknown>) ?? null } }, worker)
   // Three states worth a strip: banner mode, and a scoped blackout (only some areas are down).
   const scopedBlackout = view.blocking && !view.blocksAll
   const bannerVisible = (view.bannerOnly || scopedBlackout) && !view.unknown
 
-  const nav = isAdmin
-    ? [...baseNav, { href: '/admin', label: 'Admin', icon: Shield, isAdminLink: true }]
-    : baseNav
+  const nav = baseNav
 
   async function handleSignOut() {
     await signOut()
@@ -89,7 +78,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             {nav.map((item) => {
               const Icon = item.icon
               const active = isActive(item.href)
-              const isAdminLink = 'isAdminLink' in item && item.isAdminLink
 
               return (
                 <Link
@@ -101,12 +89,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     active
                       ? 'bg-secondary text-foreground'
                       : 'text-muted-foreground hover:bg-secondary hover:text-foreground',
-                    isAdminLink &&
-                      !active &&
-                      'border border-primary/20 bg-primary/5 text-primary hover:bg-primary/10',
                   )}
                 >
-                  <Icon className={cn('size-4', isAdminLink && 'text-primary')} />
+                  <Icon className="size-4" />
                   {item.label}
                 </Link>
               )
@@ -196,14 +181,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <nav
         className={cn(
           'fixed bottom-0 left-0 right-0 z-40 grid border-t border-border bg-background/95 backdrop-blur supports-[padding:max(0px)]:pb-[env(safe-area-inset-bottom)] md:hidden',
-          isAdmin ? 'grid-cols-5' : 'grid-cols-4',
+          'grid-cols-4',
         )}
         aria-label="Primary mobile"
       >
         {nav.map((item) => {
           const Icon = item.icon
           const active = isActive(item.href)
-          const isAdminLink = 'isAdminLink' in item && item.isAdminLink
 
           return (
             <Link
@@ -213,7 +197,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               className={cn(
                 'flex flex-col items-center gap-0.5 py-2.5 text-[10px] font-medium transition-colors',
                 active ? 'text-primary' : 'text-muted-foreground',
-                isAdminLink && !active && 'text-primary font-semibold',
               )}
             >
               <Icon className={cn('size-5 mb-0.5', active && 'stroke-[2.25]')} />

@@ -32,9 +32,17 @@ function progressKey(jobId: string): string {
   return `aw_training_progress:${jobId}`
 }
 
+function completionKey(jobId: string): string {
+  return `aw_training_complete:${jobId}`
+}
+
 function readStoredDone(jobId: string): number {
   try {
-    const raw = window.sessionStorage.getItem(progressKey(jobId))
+    // Prefer localStorage (persists across tab closes) with sessionStorage as a fallback
+    // for browsers that block localStorage in private mode.
+    const raw =
+      window.localStorage.getItem(progressKey(jobId)) ??
+      window.sessionStorage.getItem(progressKey(jobId))
     const value = Number(raw)
     return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0
   } catch {
@@ -44,9 +52,38 @@ function readStoredDone(jobId: string): number {
 
 function writeStoredDone(jobId: string, done: number): void {
   try {
-    window.sessionStorage.setItem(progressKey(jobId), String(done))
+    window.localStorage.setItem(progressKey(jobId), String(done))
   } catch {
-    /* private mode — progress simply will not survive a refresh */
+    try {
+      window.sessionStorage.setItem(progressKey(jobId), String(done))
+    } catch {
+      /* private mode — progress simply will not survive a refresh */
+    }
+  }
+}
+
+/** Persist a "all sections done" flag separately so the training page can detect completion
+ *  even after a full tab restart wipes the in-memory state. */
+export function markTrainingComplete(jobId: string): void {
+  try {
+    window.localStorage.setItem(completionKey(jobId), '1')
+  } catch {
+    try {
+      window.sessionStorage.setItem(completionKey(jobId), '1')
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+export function isTrainingMarkedComplete(jobId: string): boolean {
+  try {
+    return (
+      window.localStorage.getItem(completionKey(jobId)) === '1' ||
+      window.sessionStorage.getItem(completionKey(jobId)) === '1'
+    )
+  } catch {
+    return false
   }
 }
 
@@ -59,10 +96,13 @@ export function getJobTrainingSections(job: Job): TrainingSectionView[] {
   return categoryModules(job)
 }
 
-/** Where a worker left off. Safe to call during render (reads sessionStorage, never writes). */
+/** Where a worker left off. Safe to call during render. */
 export function readTrainingProgress(job: Job): { done: number; total: number; complete: boolean } {
   const total = getJobTrainingSections(job).length
-  const done = typeof window === 'undefined' ? 0 : Math.min(readStoredDone(job.id), total)
+  if (typeof window === 'undefined') return { done: 0, total, complete: false }
+  if (isTrainingMarkedComplete(job.id)) return { done: total, total, complete: true }
+  
+  const done = Math.min(readStoredDone(job.id), total)
   return { done, total, complete: total > 0 && done >= total }
 }
 
@@ -79,10 +119,18 @@ export function TrainingModules({ job, onComplete, onReset }: { job: Job; onComp
 
   // `done` = how many sections are marked complete. The section at index `done` is the one being
   // studied right now (locked ones are everything after it).
-  const [done, setDone] = useState(0)
+  const [done, setDone] = useState(() => {
+    if (typeof window !== 'undefined' && isTrainingMarkedComplete(job.id)) return total
+    return 0
+  })
   const [openIndex, setOpenIndex] = useState(0)
 
   useEffect(() => {
+    if (isTrainingMarkedComplete(job.id)) {
+      setDone(total)
+      setOpenIndex(Math.max(0, total - 1))
+      return
+    }
     const stored = Math.min(readStoredDone(job.id), total)
     setDone(stored)
     setOpenIndex(Math.min(stored, Math.max(0, total - 1)))
@@ -91,13 +139,19 @@ export function TrainingModules({ job, onComplete, onReset }: { job: Job; onComp
   const complete = total > 0 && done >= total
 
   useEffect(() => {
-    if (complete) onComplete?.()
-  }, [complete, onComplete])
+    if (complete) {
+      markTrainingComplete(job.id)
+      onComplete?.()
+    }
+  }, [complete, onComplete, job.id])
 
   const completeSection = useCallback(() => {
     setDone((prev) => {
       const next = Math.min(prev + 1, total)
       writeStoredDone(job.id, next)
+      if (next >= total) {
+        markTrainingComplete(job.id)
+      }
       setOpenIndex(Math.min(next, Math.max(0, total - 1)))
       return next
     })
@@ -107,7 +161,10 @@ export function TrainingModules({ job, onComplete, onReset }: { job: Job; onComp
     setDone(0)
     setOpenIndex(0)
     try {
+      window.localStorage.removeItem(progressKey(job.id))
+      window.localStorage.removeItem(completionKey(job.id))
       window.sessionStorage.removeItem(progressKey(job.id))
+      window.sessionStorage.removeItem(completionKey(job.id))
     } catch {
       /* ignore */
     }

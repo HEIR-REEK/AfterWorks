@@ -31,8 +31,18 @@ import {
   subscribeToUserDocument,
   updateUserProfile,
   updateUserWallet,
-  loadJobsOnce,
+  readCatalogue,
+  subscribeToJobs,
+  getJobSnapshot,
 } from '@/lib/firestore'
+import {
+  applyCatalogueSnapshot,
+  CATALOGUE_PAGE_SIZE,
+  CATALOGUE_POLL_MS,
+  catalogueEntriesEqual,
+  EMPTY_CATALOGUE,
+  type CatalogueState,
+} from '@/lib/job-catalogue'
 import { useAuth } from '@/components/firebase-auth-provider'
 import { isUserAdmin } from '@/lib/admin'
 import { authedFetch, describeError } from '@/lib/client-api'
@@ -48,6 +58,10 @@ type AfterWorksContextValue = {
   paidTrainings: string[]
   profileLoaded: boolean
   mode: 'live' | 'demo'
+  /** True when the cards on screen are real catalogue rows (not the sample catalogue). */
+  catalogueLive: boolean
+  /** When the worker-side catalogue last matched Firestore (ISO). null until the first live read. */
+  catalogueSyncedAt: string | null
   /** True while a mutation is in flight, keyed by `job:<id>` / `app:<id>` — drives per-card spinners. */
   pending: Record<string, boolean>
   error: string | null
@@ -55,6 +69,14 @@ type AfterWorksContextValue = {
   getJob: (id: string) => Job | undefined
   getApplicationForJob: (jobId: string) => Application | undefined
   isJobPaid: (jobId: string) => boolean
+  /** Re-read the catalogue from Firestore now (Jobs page refresh button, tests, manual recovery). */
+  refreshJobs: () => Promise<void>
+  /**
+   * Read one job card straight from Firestore and cache it for `getJob` — used by the job detail
+   * and training pages so a deep link resolves even when the card is outside the bounded list read,
+   * and so the fee/status shown there is the console's latest.
+   */
+  ensureJob: (id: string) => Promise<Job | null>
   verifyTrainingPayment: (
     jobId: string,
     reference: string,
@@ -93,11 +115,20 @@ type PendingApplication = Application & { _pending?: boolean }
 
 export function AfterWorksProvider({ children }: { children: ReactNode }) {
   const { user, configured } = useAuth()
+  const uid = user?.uid ?? null
   const [worker, setWorker] = useState<WorkerProfile>(() => seedWorker())
   const [wallet, setWallet] = useState<Wallet>(BLANK_WALLET)
   const [walletMeta, setWalletMeta] = useState<WalletMeta>(BLANK_META)
   const [profileLoaded, setProfileLoaded] = useState(false)
-  const [jobs, setJobs] = useState<Job[]>([])
+  /**
+   * The catalogue store. A ref mirrors the state because the catalogue callbacks do not re-create
+   * on every render (that keeps the Firestore listener from being torn down and re-subscribed).
+   */
+  const catalogueRef = useRef<CatalogueState>(EMPTY_CATALOGUE)
+  const [catalogue, setCatalogue] = useState<CatalogueState>(EMPTY_CATALOGUE)
+  const jobs = catalogue.jobs
+  /** Cards fetched individually (deep links, cards outside the bounded list). */
+  const [jobCards, setJobCards] = useState<Record<string, Job>>({})
   const [applications, setApplications] = useState<PendingApplication[]>([])
   const [paidTrainings, setPaidTrainings] = useState<string[]>([])
   const [pending, setPending] = useState<Record<string, boolean>>({})
@@ -121,23 +152,136 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
     })
   }, [])
 
-  // ── Catalogue: Firestore when configured, seeded demo data otherwise ──────────
+  // ── Catalogue: live from Firestore, seeded demo data otherwise ────────────────
+  //
+  // The board used to be read once per session, so anything the console changed afterwards — the
+  // training price most visibly — stayed invisible on an open dashboard until a hard reload. Three
+  // together now keep it current, in this order of importance:
+  //   1. a Firestore listener (an admin save lands on the worker's screen in about a second);
+  //   2. a visibility-aware poll, because a listener whose connection died does not reconnect by
+  //      itself and some networks never allow the long-lived connection at all;
+  //   3. focus/visibility refresh, which covers the everyday "I changed it in the console and
+  //      switched back to this tab" flow without waiting for either of the above.
+  //
+  // The rules for folding a snapshot into the board (which read may remove a card, when sample
+  // cards are allowed) live in `applyCatalogueSnapshot`; the ref mirrors the state so the callbacks
+  // below — which do not re-create on every render — always read the current board.
+  const applyLiveJobs = useCallback((incoming: Job[], authoritative: boolean) => {
+    const next = applyCatalogueSnapshot(catalogueRef.current, {
+      jobs: incoming,
+      authoritative,
+      sample: seedJobs,
+      at: new Date().toISOString(),
+    })
+    if (next === catalogueRef.current) return
+    catalogueRef.current = next
+    setCatalogue(next)
+  }, [])
+
+  const refreshJobs = useCallback(async () => {
+    if (!configured || !uid) return
+    const { jobs: live, ok } = await readCatalogue(CATALOGUE_PAGE_SIZE)
+    if (!mounted.current || !ok) return
+    applyLiveJobs(live, true)
+  }, [configured, uid, applyLiveJobs])
+
   useEffect(() => {
     if (!configured) {
-      setJobs(seedJobs())
+      applyLiveJobs([], false)
       return
     }
+    // The catalogue is readable by signed-in members (firestore.rules). Firing the read before the
+    // session is known would be denied, and a denied listener never retries — so wait for the uid,
+    // which also re-subscribes on sign-in/sign-out.
+    if (!uid) return
+
     let cancelled = false
-    void loadJobsOnce(60).then((live) => {
-      if (cancelled) return
-      // An empty collection still means "no live listings"; keep the demo catalogue visible so a
-      // fresh project is explorable, and let the banner say that this is demo data.
-      setJobs(live.length ? live : seedJobs())
-    })
+    const stopListening = subscribeToJobs(
+      (incoming, meta) => {
+        // A cached snapshot is a replay of what the browser last saw, so it may add to the board
+        // but never take cards off it.
+        if (!cancelled) applyLiveJobs(incoming, !meta.fromCache)
+      },
+      () => {
+        // The listener is dead (blocked websocket, denied before the session was restored). The
+        // poll below heals it; the board keeps whatever it already had.
+      },
+    )
+
+    const sync = () => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return
+      void refreshJobs()
+    }
+    const poll = setInterval(sync, CATALOGUE_POLL_MS)
+    if (typeof window !== 'undefined') window.addEventListener('focus', sync)
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', sync)
+
+    // The first read: a project with no catalogue yet stays explorable with the sample cards (the
+    // reducer decides that), and an admin edit made while this tab was closed is picked up here.
+    void refreshJobs()
+
     return () => {
       cancelled = true
+      stopListening()
+      clearInterval(poll)
+      if (typeof window !== 'undefined') window.removeEventListener('focus', sync)
+      if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', sync)
     }
-  }, [configured])
+  }, [configured, uid, applyLiveJobs, refreshJobs])
+
+  /**
+   * Read one card and fold it into whichever store it belongs to, so the live list and a
+   * single-document read can never disagree about a price, a slot count or a status.
+   *
+   * Rows are only ever *replaced*, never appended: a card outside the bounded list is served from
+   * `jobCards` (so a deep link works) without growing the board.
+   */
+  const ensureJob = useCallback(
+    async (id: string) => {
+      if (!configured || !id) return null
+      const { job, missing } = await getJobSnapshot(id)
+      if (!mounted.current) return job
+
+      if (job) {
+        const before = catalogueRef.current
+        if (before.jobs.some((row) => row.id === id)) {
+          // Still one of the cards the live read returns: replace it in place, never append (the
+          // board must not grow past the bounded read just because a card was opened).
+          const rows = before.jobs.map((row) => (row.id === id && !catalogueEntriesEqual(row, job) ? job : row))
+          if (rows.some((row, index) => row !== before.jobs[index])) {
+            const next = { ...before, jobs: rows }
+            catalogueRef.current = next
+            setCatalogue(next)
+          }
+        }
+        setJobCards((prev) => {
+          const previous = prev[id]
+          return previous && catalogueEntriesEqual(previous, job) ? prev : { ...prev, [id]: job }
+        })
+        return job
+      }
+
+      // A failed read reports `missing: false`: keep whatever is on screen rather than dropping a
+      // card the worker is reading because the network hiccuped. Sample cards are excluded too —
+      // they do not exist in Firestore and must not disappear as workers click them.
+      if (!missing || !catalogueRef.current.live) return null
+
+      setJobCards((prev) => {
+        if (!(id in prev)) return prev
+        const next = { ...prev }
+        delete next[id]
+        return next
+      })
+      const before = catalogueRef.current
+      if (before.jobs.some((row) => row.id === id)) {
+        const next = { ...before, jobs: before.jobs.filter((row) => row.id !== id) }
+        catalogueRef.current = next
+        setCatalogue(next)
+      }
+      return null
+    },
+    [configured],
+  )
 
   // ── Profile + wallet ────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -202,10 +346,6 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     void refreshWallet()
-    const id = setInterval(() => {
-      if (typeof document !== 'undefined' && document.visibilityState === 'visible') void refreshWallet()
-    }, 90_000)
-    return () => clearInterval(id)
   }, [refreshWallet])
 
   // ── Applications (server-owned) ─────────────────────────────────────────────────
@@ -229,6 +369,31 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     void refreshApplications()
   }, [refreshApplications])
+
+  /**
+   * Admin decisions arrive on the worker's dashboard through two server reads: the wallet ledger
+   * (payouts, clearing) and the application list (approval, revision request, QA outcome).
+   *
+   * Refreshing only on mount meant a decision made while the tab was open stayed invisible until a
+   * reload. This syncs both whenever the tab is looked at again and once a minute while it is
+   * visible — one small GET each, and nothing at all in the background.
+   */
+  useEffect(() => {
+    if (!user || !configured) return
+    const sync = () => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return
+      void refreshWallet()
+      void refreshApplications()
+    }
+    const id = setInterval(sync, 60_000)
+    if (typeof window !== 'undefined') window.addEventListener('focus', sync)
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', sync)
+    return () => {
+      clearInterval(id)
+      if (typeof window !== 'undefined') window.removeEventListener('focus', sync)
+      if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', sync)
+    }
+  }, [user, configured, refreshWallet, refreshApplications])
 
   // ── Mutations ───────────────────────────────────────────────────────────────────
   const applyToJob = useCallback(
@@ -403,12 +568,18 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
       paidTrainings,
       profileLoaded,
       mode: configured && user ? 'live' : 'demo',
+      catalogueLive: catalogue.live,
+      catalogueSyncedAt: catalogue.syncedAt,
       pending,
       error,
       clearError: () => setError(null),
-      getJob: (id: string) => byId.get(id),
+      // The live list is the authority (it hears about admin edits first); individually fetched
+      // cards fill the gaps for deep links and cards outside the bounded list.
+      getJob: (id: string) => byId.get(id) ?? jobCards[id],
       getApplicationForJob: (jobId: string) => applications.find((a) => a.jobId === jobId),
       isJobPaid: (jobId: string) => paidTrainings.includes(jobId),
+      refreshJobs,
+      ensureJob,
       verifyTrainingPayment,
       applyToJob,
       submitWork,
@@ -422,13 +593,17 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
     wallet,
     walletMeta,
     jobs,
+    jobCards,
     applications,
     paidTrainings,
     profileLoaded,
     configured,
     user,
+    catalogue,
     pending,
     error,
+    refreshJobs,
+    ensureJob,
     verifyTrainingPayment,
     applyToJob,
     submitWork,
@@ -498,4 +673,51 @@ export function useAfterWorks() {
   const ctx = useContext(AfterWorksContext)
   if (!ctx) throw new Error('useAfterWorks must be used within an AfterWorksProvider')
   return ctx
+}
+
+export type JobDetailState = {
+  job: Job | undefined
+  /** True while a card that is not in the live catalogue is being fetched — render a spinner, not a 404. */
+  checking: boolean
+}
+
+/**
+ * Job detail / training page resolution.
+ *
+ * Two things have to be true on these pages:
+ *  • a deep link works even when the card is outside the bounded list read (`ensureJob` reads the
+ *    document directly), and does not flash "This job could not be found" while that read runs;
+ *  • the price, slots and authored training content are the console's current ones, which is why
+ *    the card is re-read when the tab regains focus instead of only when the page first mounts.
+ */
+export function useJobDetail(id: string | undefined): JobDetailState {
+  const { getJob, ensureJob } = useAfterWorks()
+  const job = id ? getJob(id) : undefined
+  const [checking, setChecking] = useState(Boolean(id))
+
+  useEffect(() => {
+    if (!id) {
+      setChecking(false)
+      return
+    }
+    let cancelled = false
+    setChecking(true)
+    void ensureJob(id).finally(() => {
+      if (!cancelled) setChecking(false)
+    })
+    const onSync = () => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return
+      void ensureJob(id)
+    }
+    if (typeof window !== 'undefined') window.addEventListener('focus', onSync)
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onSync)
+    return () => {
+      cancelled = true
+      if (typeof window !== 'undefined') window.removeEventListener('focus', onSync)
+      if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onSync)
+    }
+  }, [id, ensureJob])
+
+  // A card already on the board needs no spinner; one that is missing may still be in flight.
+  return { job, checking: !job && checking }
 }

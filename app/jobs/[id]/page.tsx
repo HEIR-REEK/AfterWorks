@@ -14,7 +14,7 @@ import {
   ShieldCheck,
   Users,
 } from 'lucide-react'
-import { useAfterWorks } from '@/components/afterworks-provider'
+import { useAfterWorks, useJobDetail } from '@/components/afterworks-provider'
 import emailjs from '@emailjs/browser'
 import { StatusBadge } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
@@ -36,21 +36,32 @@ export default function JobDetailPage({
 }) {
   const { id } = use(params)
   const router = useRouter()
-  const { getJob, getApplicationForJob, isJobPaid, worker } = useAfterWorks()
+  const { getApplicationForJob, isJobPaid, worker } = useAfterWorks()
   const [error, setError] = useState<string | null>(null)
   const [isApplying, setIsApplying] = useState(false)
 
-  const job = getJob(id)
+  // Reads the card from the live catalogue, and re-reads the document when the tab regains focus
+  // so a price, slot count or status changed in the console is what this page shows.
+  const { job, checking } = useJobDetail(id)
   const application = getApplicationForJob(id) as Application | null
   const isPaid = job ? isJobPaid(job.id) : false
 
   if (!job) {
     return (
       <div className="flex flex-col items-center gap-4 py-20 text-center">
-        <p className="text-sm text-muted-foreground">This job could not be found.</p>
-        <Button render={<Link href="/jobs" />} variant="outline">
-          Back to jobs
-        </Button>
+        {checking ? (
+          <>
+            <Loader2 className="size-6 animate-spin text-muted-foreground" />
+            <p className="text-sm text-muted-foreground">Loading this job card…</p>
+          </>
+        ) : (
+          <>
+            <p className="text-sm text-muted-foreground">This job could not be found.</p>
+            <Button render={<Link href="/jobs" />} variant="outline">
+              Back to jobs
+            </Button>
+          </>
+        )}
       </div>
     )
   }

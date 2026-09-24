@@ -59,3 +59,30 @@ scrypt digest in `ADMIN_PASSWORD_SCRYPT` (`npm run hash:admin-password`).
    Admin SDK is not initialised — check the service account, not the code.
 5. `/admin/money` fills up as applications are completed and withdrawals are requested; before that it is
    legitimately empty, and says so.
+
+## How a console edit reaches a worker who is already on the site
+
+An edit in `/admin/jobs` (training price, pay, capacity, slots, status, title, description, authored
+training sections, quiz) is a write to `jobs/{id}`. The worker side reads the same documents through
+three layers, so the change lands on an open dashboard without a reload:
+
+| Layer | Where | What it does |
+| --- | --- | --- |
+| Live listener | `subscribeToJobs()` — `lib/firestore.ts`, wired in `components/afterworks-provider.tsx` | A Firestore `onSnapshot` on the bounded catalogue. An admin save usually reaches the worker's screen in about a second. |
+| Visibility-aware poll | `refreshJobs()` every `CATALOGUE_POLL_MS` (60 s) while the tab is visible | Heals a listener whose long-lived connection died or is blocked by the network — a failed `onSnapshot` does not retry on its own. |
+| Focus / visibility refresh | `window focus` + `visibilitychange` | Covers the ordinary "changed it in the console, switched back to this tab" flow. The job detail and training pages re-read their own card the same way (`ensureJob`). |
+
+Two rules keep the board honest, both enforced by `applyCatalogueSnapshot()` in
+`lib/job-catalogue.ts` (pure, unit-tested in `tests/job-catalogue.test.ts`):
+
+- **A read that proved nothing never removes a card.** A failed read or an offline-cache replay may
+  add or update rows, but it cannot empty a board the worker can still use.
+- **An empty read that succeeded is respected.** If the console genuinely has no cards, the board
+  shows empty instead of silently back-filling the sample catalogue. Sample cards are only ever a
+  first-run fallback, and `/jobs` labels them "Sample catalogue" rather than "Live".
+
+The training price is priced server-side from the same document (`/api/paystack/initialize` →
+`jobTrainingGate`), and the worker's card is normalised by `normaliseJobRecord()` — the document id
+wins over any `id` field stored inside the document, and a missing/zero fee falls back to the global
+configured price exactly as the checkout does. Wallet and application reads (payouts, QA decisions)
+refresh on the same focus/60 s schedule, and the notifications bell already polls every 45 s.

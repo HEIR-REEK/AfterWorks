@@ -13,7 +13,7 @@ import {
   CreditCard,
   SlidersHorizontal,
 } from 'lucide-react'
-import { useAfterWorks } from '@/components/afterworks-provider'
+import { useAfterWorks, useJobDetail } from '@/components/afterworks-provider'
 import emailjs from '@emailjs/browser'
 import { useAuth } from '@/components/firebase-auth-provider'
 import { Button } from '@/components/ui/button'
@@ -328,7 +328,7 @@ function TrainingPageInner({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
   const router = useRouter()
   const searchParams = useSearchParams()
-  const { getJob, worker, applyToJob, getApplicationForJob, isJobPaid, verifyTrainingPayment, profileLoaded } = useAfterWorks()
+  const { worker, applyToJob, getApplicationForJob, isJobPaid, verifyTrainingPayment, profileLoaded } = useAfterWorks()
   const { user } = useAuth()
 
   const [isMounted, setIsMounted] = useState(false)
@@ -349,7 +349,10 @@ function TrainingPageInner({ params }: { params: Promise<{ id: string }> }) {
   const [trainingComplete, setTrainingComplete] = useState(false)
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  const job = getJob(id)
+  // The card behind this course: live from the catalogue, re-read on focus, hydrated by document
+  // id for a deep link. A training price or authored section changed in the console shows up here
+  // without a reload — and the charge itself is priced server-side from the same document.
+  const { job, checking: loadingJob } = useJobDetail(id)
 
   // Restore course progress on load so a refresh does not re-lock a finished course.
   useEffect(() => {
@@ -511,10 +514,19 @@ function TrainingPageInner({ params }: { params: Promise<{ id: string }> }) {
   if (!job) {
     return (
       <div className="flex flex-col items-center gap-4 py-20 text-center">
-        <p className="text-sm text-muted-foreground">This job could not be found.</p>
-        <Button render={<Link href="/jobs" />} variant="outline">
-          Back to jobs
-        </Button>
+        {loadingJob ? (
+          <>
+            <Loader2 className="size-8 animate-spin text-muted-foreground" />
+            <p className="text-sm text-muted-foreground">Loading this job card…</p>
+          </>
+        ) : (
+          <>
+            <p className="text-sm text-muted-foreground">This job could not be found.</p>
+            <Button render={<Link href="/jobs" />} variant="outline">
+              Back to jobs
+            </Button>
+          </>
+        )}
       </div>
     )
   }

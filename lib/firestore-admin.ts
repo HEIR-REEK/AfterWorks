@@ -2063,7 +2063,12 @@ export type AdminJobInput = {
   closesAt?: string
 }
 
-function sanitizeJob(input: AdminJobInput, existing?: Record<string, unknown> | null) {
+/**
+ * The only way a job document is ever written, so the bounds here are the real ones — the console's
+ * form validation is a convenience. Exported (it is pure and touches no Firestore) so the fee/pay
+ * round trip an admin edit performs is covered by `tests/job-catalogue.test.ts`.
+ */
+export function sanitizeJob(input: AdminJobInput, existing?: Record<string, unknown> | null) {
   const title = String(input.title ?? '').replace(/\s+/g, ' ').trim().slice(0, 120)
   if (!title) throw new Error('Job title is required.')
   const capacity = Math.max(1, Math.min(100_000, Math.round(Number(input.capacity) || 0)))

@@ -396,20 +396,15 @@ export async function recordPaidTrainingAdmin(
   uid: string,
   jobId: string,
 ): Promise<void> {
-  try {
-    const app = getAdminApp()
-    const db = getFirestore(app)
-    const userRef = db.collection('users').doc(uid)
-    await userRef.set(
-      {
-        paidTrainings: FieldValue.arrayUnion(jobId),
-      },
-      { merge: true },
-    )
-    console.log(`[FirestoreAdmin] Recorded paid training for uid=${uid}, jobId=${jobId}`)
-  } catch (err) {
-    console.error('[FirestoreAdmin] recordPaidTrainingAdmin failed for uid:', uid, err)
-  }
+  const db = adminDb()
+  const userRef = db.collection('users').doc(uid)
+  await userRef.set(
+    {
+      paidTrainings: FieldValue.arrayUnion(jobId),
+    },
+    { merge: true },
+  )
+  console.log(`[FirestoreAdmin] Recorded paid training for uid=${uid}, jobId=${jobId}`)
 }
 
 // ─── Server Admin Audit Logs ──────────────────────────────────────────────────
@@ -2228,7 +2223,28 @@ export async function createApplicationServer(uid: string, jobId: string): Promi
   if (job.status !== 'open') throw new TransitionError('This job is no longer open.', 409)
   if (job.requiresVerified !== false && user.kycVerified !== true) throw new TransitionError('This job requires a verified profile.', 403)
   if (job.trainingRequired === true) {
-    const paid = Array.isArray(user.paidTrainings) ? (user.paidTrainings as string[]) : []
+    let paid = Array.isArray(user.paidTrainings) ? (user.paidTrainings as string[]) : []
+    if (!paid.includes(jobId)) {
+      // Check if a successful payment transaction exists in Firestore for this user and job
+      const txSnap = await db
+        .collection('transactions')
+        .where('userId', '==', uid)
+        .where('jobId', '==', jobId)
+        .where('status', '==', 'success')
+        .limit(1)
+        .get()
+        .catch(() => null)
+
+      if (txSnap && !txSnap.empty) {
+        // Auto-repair paidTrainings on user profile document
+        await db
+          .collection('users')
+          .doc(uid)
+          .set({ paidTrainings: FieldValue.arrayUnion(jobId) }, { merge: true })
+          .catch((err) => console.warn('[createApplicationServer] Auto-repair paidTrainings failed:', err))
+        paid = [...paid, jobId]
+      }
+    }
     if (!paid.includes(jobId)) throw new TransitionError('Finish the required training for this job before applying.', 403)
   }
   const closesAt = job.closesAt as string | undefined

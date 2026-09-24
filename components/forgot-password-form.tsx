@@ -434,7 +434,22 @@ function ForgotPasswordInner() {
 
 export function ForgotPasswordForm() {
   return (
-    <Suspense fallback={null}>
+    <Suspense
+      fallback={
+        <div className="mx-auto flex min-h-dvh w-full max-w-md flex-col justify-center px-4 py-10">
+          <div className="mb-8 flex flex-col items-center text-center">
+            <BrandLockup width={210} className="mb-4" />
+            <h1 className="text-2xl font-semibold tracking-tight text-balance">Reset your password</h1>
+            <p className="mt-2 text-sm text-muted-foreground text-pretty">
+              Enter the email you signed up with and we will send you a one-time code.
+            </p>
+          </div>
+          <div className="flex items-center justify-center py-8">
+            <Loader2 className="size-6 animate-spin text-muted-foreground" />
+          </div>
+        </div>
+      }
+    >
       <ForgotPasswordInner />
     </Suspense>
   )

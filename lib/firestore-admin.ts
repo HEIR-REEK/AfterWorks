@@ -2074,10 +2074,12 @@ function sanitizeJob(input: AdminJobInput, existing?: Record<string, unknown> | 
 
   // Per-job training price. Only paid-training jobs carry one; when the admin omits it we keep the
   // stored fee (edits that do not touch the fee) or default to the global $10-equivalent.
+  // Sub-dollar fees are legal (min $0.0001) and kept at 4 decimal places — a 0.0077 fee is a
+  // real price that maps to Paystack's 1 KES test minimum.
   const feeRaw = Number(input.trainingFeeUsd)
   const previousFee = Number(existing?.trainingFeeUsd ?? 0)
   const trainingFeeUsd = trainingRequired
-    ? Math.max(1, Math.min(1_000, Math.round(((Number.isFinite(feeRaw) && feeRaw > 0 ? feeRaw : previousFee) || 10) * 100) / 100))
+    ? Math.max(0.0001, Math.min(1_000, Math.round(((Number.isFinite(feeRaw) && feeRaw > 0 ? feeRaw : previousFee) || 10) * 10000) / 10000))
     : 0
 
   // Admin-authored training sections, bounded so a paste cannot balloon the document past

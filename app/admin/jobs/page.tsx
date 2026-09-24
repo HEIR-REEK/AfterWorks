@@ -158,8 +158,8 @@ export default function AdminJobsPage() {
 
     // ── Validate the learning content before it leaves the browser ──────────
     const fee = Number(editing.trainingFeeUsd)
-    if (editing.trainingRequired && !(Number.isFinite(fee) && fee >= 1 && fee <= 1000)) {
-      push('error', 'Set a training fee between $1 and $1,000, or switch the card to assessment-only.')
+    if (editing.trainingRequired && !(Number.isFinite(fee) && fee >= 0.0001 && fee <= 1000)) {
+      push('error', 'Set a training fee between $0.0001 and $1,000 — amounts under $1 are fine, the KES charge is rounded — or switch the card to assessment-only.')
       return
     }
     const cleanedQuestions = editing.assessmentQuestions.map((question, index) => {
@@ -467,9 +467,9 @@ export default function AdminJobsPage() {
                   >
                     <input
                       type="number"
-                      min="1"
+                      min="0.0001"
                       max="1000"
-                      step="1"
+                      step="0.0001"
                       value={editing.trainingFeeUsd}
                       onChange={(e) => setEditing({ ...editing, trainingFeeUsd: Number(e.target.value) })}
                       className={cn(inputClass, 'font-mono')}

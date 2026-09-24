@@ -82,6 +82,7 @@ function Gate({ children }: { children: React.ReactNode }) {
   if (loading || (admin.status === 'checking' && view.unknown && !redirectArmed)) {
     return (
       <div className="flex min-h-dvh flex-col items-center justify-center gap-3" role="status" aria-live="polite">
+        <h1 className="sr-only">AfterWorks — Verified Microwork Platform</h1>
         <Loader2 className="size-6 animate-spin text-primary" />
         <span className="text-xs font-medium text-muted-foreground">Loading your workspace…</span>
       </div>
@@ -94,6 +95,7 @@ function Gate({ children }: { children: React.ReactNode }) {
   if (user && !user.emailVerified) {
     return (
       <div className="flex min-h-dvh flex-col items-center justify-center gap-3" role="status" aria-live="polite">
+        <h1 className="sr-only">Verify your email — AfterWorks</h1>
         <Loader2 className="size-6 animate-spin text-primary" />
         <span className="text-xs font-medium text-muted-foreground">Verify your email to continue…</span>
       </div>

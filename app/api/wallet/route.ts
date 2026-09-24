@@ -78,7 +78,15 @@ export async function GET(req: NextRequest) {
       .map((e) => e.clearedAt as string)
       .sort()[0]
 
-    const paidTrainings = Array.isArray(data.paidTrainings) ? (data.paidTrainings as string[]) : []
+    const paidTrainingsFromDoc = Array.isArray(data.paidTrainings) ? (data.paidTrainings as string[]) : []
+    const txSnap = await db
+      .collection('transactions')
+      .where('userId', '==', uid)
+      .where('status', '==', 'success')
+      .get()
+      .catch(() => null)
+    const txJobIds = txSnap ? txSnap.docs.map((d) => String(d.data()?.jobId ?? '')).filter(Boolean) : []
+    const paidTrainings = Array.from(new Set([...paidTrainingsFromDoc, ...txJobIds]))
     const rate = getExchangeRateUsdToKes()
     const availableUsd = Number(wallet.availableUsd ?? 0) || 0
     const pendingUsd = Number(wallet.pendingUsd ?? 0) || 0

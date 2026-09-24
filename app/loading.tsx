@@ -10,6 +10,7 @@ import { Loader2 } from 'lucide-react'
 export default function AppLoading() {
   return (
     <div className="flex flex-col gap-5" aria-busy="true" aria-live="polite">
+      <h1 className="sr-only">Loading workspace…</h1>
       <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
         <Loader2 className="size-3.5 animate-spin text-primary" />
         Loading…

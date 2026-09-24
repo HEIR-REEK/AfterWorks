@@ -292,7 +292,12 @@ export async function loadJobsOnce(max = 60): Promise<Job[]> {
   try {
     const snap = await getDocs(query(collection(db, 'jobs'), fsLimit(max)))
     const jobs: Job[] = []
-    snap.forEach((d) => jobs.push(d.data() as Job))
+    snap.forEach((d) => {
+      // Doc data first, then the document id as the fallback key: a row missing its embedded
+      // `id` must still be addressable via getJob()/links, which key off `job.id`.
+      const data = d.data() as Job
+      jobs.push({ ...data, id: data.id || d.id })
+    })
     return jobs
   } catch (err) {
     console.warn('[Firestore] loadJobsOnce failed:', err instanceof Error ? err.message : err)
@@ -300,22 +305,39 @@ export async function loadJobsOnce(max = 60): Promise<Job[]> {
   }
 }
 
-export function subscribeToJobs(onUpdate: (jobs: Job[]) => void): () => void {
+/**
+ * Live catalogue listener. Pushes every catalogue edit (fee, pay, slots, copy) to open tabs —
+ * the console writes through `/api/admin/jobs`, Firestore fans the change out, and workers see
+ * it without a reload. `onError` lets the caller distinguish "the listener died" (retry with
+ * backoff) from a legitimately empty collection; without a handler the old behaviour (report
+ * `[]`) is preserved.
+ */
+export function subscribeToJobs(
+  onUpdate: (jobs: Job[]) => void,
+  onError?: (err: Error) => void,
+): () => void {
   const db = getDB()
   if (!db) {
-    onUpdate([])
+    const err = new Error('Firestore is not initialized.')
+    if (onError) onError(err)
+    else onUpdate([])
     return () => {}
   }
   return onSnapshot(
     query(collection(db, 'jobs'), fsLimit(60)),
     (snap) => {
       const jobs: Job[] = []
-      snap.forEach((d) => jobs.push(d.data() as Job))
+      snap.forEach((d) => {
+        const data = d.data() as Job
+        jobs.push({ ...data, id: data.id || d.id })
+      })
       onUpdate(jobs)
     },
     (err) => {
       console.warn('[Firestore] subscribeToJobs error:', err instanceof Error ? err.message : err)
-      onUpdate([])
+      const error = err instanceof Error ? err : new Error(String(err))
+      if (onError) onError(error)
+      else onUpdate([])
     },
   )
 }

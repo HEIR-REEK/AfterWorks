@@ -31,7 +31,7 @@ import {
   subscribeToUserDocument,
   updateUserProfile,
   updateUserWallet,
-  loadJobsOnce,
+  subscribeToJobs,
 } from '@/lib/firestore'
 import { useAuth } from '@/components/firebase-auth-provider'
 import { isUserAdmin } from '@/lib/admin'
@@ -92,7 +92,10 @@ const AfterWorksContext = createContext<AfterWorksContextValue | null>(null)
 type PendingApplication = Application & { _pending?: boolean }
 
 export function AfterWorksProvider({ children }: { children: ReactNode }) {
-  const { user, configured } = useAuth()
+  const { user, configured, loading: authLoading } = useAuth()
+  // Key catalogue effects off the stable uid — the User object can be re-set (focus reload)
+  // without the account actually changing, and that must not tear down live listeners.
+  const userId = user?.uid ?? null
   const [worker, setWorker] = useState<WorkerProfile>(() => seedWorker())
   const [wallet, setWallet] = useState<Wallet>(BLANK_WALLET)
   const [walletMeta, setWalletMeta] = useState<WalletMeta>(BLANK_META)
@@ -121,23 +124,64 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
     })
   }, [])
 
-  // ── Catalogue: Firestore when configured, seeded demo data otherwise ──────────
+  // ── Catalogue: live Firestore listener when configured, seeded demo data otherwise ──────
   useEffect(() => {
     if (!configured) {
       setJobs(seedJobs())
       return
     }
+    // The rules only let a signed-in member list `jobs`, so wait for auth to settle and
+    // re-attach whenever the account changes. The old one-shot load ran on mount regardless:
+    // a read fired before `onAuthStateChanged` resolves comes back permission-denied, that
+    // failure was swallowed into `[]`, and the board silently fell back to seed data for the
+    // whole session — which is why console edits (training fee, pay, slots, copy) never
+    // reached the worker side. A live listener also pushes later edits to every open tab.
+    if (authLoading) return
+    if (!userId) {
+      setJobs(seedJobs())
+      return
+    }
+
     let cancelled = false
-    void loadJobsOnce(60).then((live) => {
+    let unsubscribe: (() => void) | null = null
+    let retryTimer: ReturnType<typeof setTimeout> | undefined
+    let attempt = 0
+
+    const attach = () => {
       if (cancelled) return
-      // An empty collection still means "no live listings"; keep the demo catalogue visible so a
-      // fresh project is explorable, and let the banner say that this is demo data.
-      setJobs(live.length ? live : seedJobs())
-    })
+      // A listener that errored is already dead; unsubscribe is a safe no-op there but keeps
+      // retries from stacking subscriptions if one somehow survives.
+      unsubscribe?.()
+      unsubscribe = subscribeToJobs(
+        (live) => {
+          if (cancelled) return
+          attempt = 0
+          // An empty collection still means "no live listings"; keep the demo catalogue visible
+          // so a fresh project is explorable — and because this is a listener, publishing the
+          // first real job replaces the sample cards without needing a reload.
+          setJobs(live.length ? live : seedJobs())
+        },
+        () => {
+          if (cancelled) return
+          // The listener died (rare: token/permission edge or a misconfigured project). Keep
+          // what is already on screen and re-attach with a short backoff. Never swap live
+          // listings for demo seeds here — silently showing seed data while the banner says
+          // "live" is exactly what made console edits look like they never saved.
+          attempt += 1
+          if (attempt <= 5) {
+            retryTimer = setTimeout(attach, Math.min(15_000, 1_000 * 2 ** (attempt - 1)))
+          }
+        },
+      )
+    }
+    attach()
+
     return () => {
       cancelled = true
+      if (retryTimer) clearTimeout(retryTimer)
+      unsubscribe?.()
     }
-  }, [configured])
+  }, [configured, authLoading, userId])
 
   // ── Profile + wallet ────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -228,6 +272,19 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     void refreshApplications()
+    // Admin decisions (approve / reject / QA verdicts) land server-side at any moment; re-read
+    // when the worker comes back to the tab so the dashboard is not showing a stale pipeline.
+    const onVisible = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        void refreshApplications()
+      }
+    }
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVisible)
+    if (typeof window !== 'undefined') window.addEventListener('focus', onVisible)
+    return () => {
+      if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisible)
+      if (typeof window !== 'undefined') window.removeEventListener('focus', onVisible)
+    }
   }, [refreshApplications])
 
   // ── Mutations ───────────────────────────────────────────────────────────────────

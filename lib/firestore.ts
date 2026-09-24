@@ -27,6 +27,7 @@ import {
   type Firestore,
 } from 'firebase/firestore'
 import type { Job } from '@/lib/afterworks-data'
+import { normaliseJobRecord } from '@/lib/job-catalogue'
 import { apiFetch, authedFetch } from '@/lib/client-api'
 import {
   DEFAULT_MAINTENANCE_CONFIG,
@@ -286,49 +287,89 @@ export async function fetchWallet(): Promise<WalletData & { entries?: unknown[];
 
 // ─── Jobs (public catalogue, bounded read) ───────────────────────────────────
 
-export async function loadJobsOnce(max = 60): Promise<Job[]> {
+/**
+ * The catalogue the worker sees, normalised through `normaliseJobRecord` so the document id is
+ * always the row id (a stored `id` field that drifted used to make a card unopenable) and so a
+ * hand-edited document cannot render `undefined` on a card.
+ *
+ * `ok: false` means the read itself failed — deliberately different from "the board is empty",
+ * because only a read that really succeeded is allowed to take cards off a worker's screen.
+ */
+export async function readCatalogue(max = 60): Promise<{ jobs: Job[]; ok: boolean }> {
   const db = getDB()
-  if (!db) return []
+  if (!db) return { jobs: [], ok: false }
   try {
     const snap = await getDocs(query(collection(db, 'jobs'), fsLimit(max)))
     const jobs: Job[] = []
-    snap.forEach((d) => jobs.push(d.data() as Job))
-    return jobs
+    snap.forEach((d) => {
+      const job = normaliseJobRecord(d.id, d.data())
+      if (job) jobs.push(job)
+    })
+    return { jobs, ok: true }
   } catch (err) {
-    console.warn('[Firestore] loadJobsOnce failed:', err instanceof Error ? err.message : err)
-    return []
+    console.warn('[Firestore] readCatalogue failed:', err instanceof Error ? err.message : err)
+    return { jobs: [], ok: false }
   }
 }
 
-export function subscribeToJobs(onUpdate: (jobs: Job[]) => void): () => void {
+/** Convenience wrapper: the rows only, for callers that cannot act on failure. */
+export async function loadJobsOnce(max = 60): Promise<Job[]> {
+  return (await readCatalogue(max)).jobs
+}
+
+/**
+ * Live catalogue. This is the path that makes an admin edit appear on an already-open worker
+ * dashboard — the previous implementation read the collection once per session, so a changed
+ * training price stayed invisible until a full reload.
+ *
+ * `onError` lets the caller know the listener is dead (a failed `onSnapshot` does not retry, and
+ * `permission-denied` before the session is restored is a real case). A listener error must **not**
+ * push an empty list: that would blank a board the worker can still use. `meta.fromCache` marks a
+ * snapshot served from the offline cache, which the caller must not treat as "these are all the
+ * cards there are".
+ */
+export function subscribeToJobs(
+  onUpdate: (jobs: Job[], meta: { fromCache: boolean }) => void,
+  onError?: (err: unknown) => void,
+): () => void {
   const db = getDB()
-  if (!db) {
-    onUpdate([])
-    return () => {}
-  }
+  if (!db) return () => {}
   return onSnapshot(
     query(collection(db, 'jobs'), fsLimit(60)),
     (snap) => {
       const jobs: Job[] = []
-      snap.forEach((d) => jobs.push(d.data() as Job))
-      onUpdate(jobs)
+      snap.forEach((d) => {
+        const job = normaliseJobRecord(d.id, d.data())
+        if (job) jobs.push(job)
+      })
+      onUpdate(jobs, { fromCache: snap.metadata.fromCache })
     },
     (err) => {
       console.warn('[Firestore] subscribeToJobs error:', err instanceof Error ? err.message : err)
-      onUpdate([])
+      onError?.(err)
     },
   )
 }
 
-/** Jobs the member has open slots for, without their own applications leaking into the query. */
-export async function getJobSnapshot(jobId: string): Promise<Job | null> {
+/**
+ * One job card, read straight from Firestore.
+ *
+ * `missing` distinguishes "the console deleted this card" (stop showing a cached copy) from "the
+ * read failed" (keep what we have) — a distinction the old `null` return threw away. Detail pages
+ * also use this so a deep link works even when the card is outside the bounded list read.
+ */
+export type JobCardRead = { job: Job | null; missing: boolean }
+
+export async function getJobSnapshot(jobId: string): Promise<JobCardRead> {
   const db = getDB()
-  if (!db) return null
+  if (!db) return { job: null, missing: false }
   try {
     const snap = await getDoc(doc(db, 'jobs', jobId))
-    return snap.exists() ? (snap.data() as Job) : null
-  } catch {
-    return null
+    if (!snap.exists()) return { job: null, missing: true }
+    return { job: normaliseJobRecord(snap.id, snap.data()), missing: false }
+  } catch (err) {
+    console.warn('[Firestore] getJobSnapshot failed:', err instanceof Error ? err.message : err)
+    return { job: null, missing: false }
   }
 }
 

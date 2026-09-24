@@ -3,8 +3,9 @@
 import { useMemo, useState } from 'react'
 import { useAfterWorks } from '@/components/afterworks-provider'
 import Link from 'next/link'
-import { AlertCircle, ChevronRight } from 'lucide-react'
+import { AlertCircle, ChevronRight, RefreshCw } from 'lucide-react'
 import { JobCard } from '@/components/job-card'
+import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import type { JobCategory } from '@/lib/afterworks-data'
 
@@ -19,9 +20,26 @@ const categories: (JobCategory | 'All')[] = [
 ]
 
 export default function JobsPage() {
-  const { jobs, worker, profileLoaded } = useAfterWorks()
+  const { jobs, worker, profileLoaded, mode, catalogueLive, catalogueSyncedAt, refreshJobs } = useAfterWorks()
   const [category, setCategory] = useState<(typeof categories)[number]>('All')
   const [hideFull, setHideFull] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
+
+  // The board is fed by a live Firestore listener (see AfterWorksProvider), so an admin edit —
+  // a changed training price, pay, slot count or status — lands here by itself. The button is the
+  // manual escape hatch for a worker who has just been told something changed.
+  const syncedLabel = catalogueSyncedAt
+    ? new Date(catalogueSyncedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : null
+
+  const onRefresh = async () => {
+    setRefreshing(true)
+    try {
+      await refreshJobs()
+    } finally {
+      setRefreshing(false)
+    }
+  }
 
   const filtered = useMemo(() => {
     return jobs.filter((job) => {
@@ -33,12 +51,46 @@ export default function JobsPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <header>
-        <h1 className="text-2xl font-semibold tracking-tight">Browse jobs</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          {filtered.length} {filtered.length === 1 ? 'job' : 'jobs'} available. Applying is
-          always free.
-        </p>
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Browse jobs</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {filtered.length} {filtered.length === 1 ? 'job' : 'jobs'} available. Applying is
+            always free.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          {catalogueLive ? (
+            <span
+              className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-2.5 py-1 text-[11px] font-medium text-muted-foreground"
+              title="The board refreshes automatically when the AfterWorks team changes a job card."
+            >
+              <span className="relative flex size-1.5">
+                <span className="absolute inline-flex size-full animate-ping rounded-full bg-success opacity-75" />
+                <span className="relative inline-flex size-1.5 rounded-full bg-success" />
+              </span>
+              Live{syncedLabel ? ` · updated ${syncedLabel}` : ''}
+            </span>
+          ) : (
+            <span
+              className="inline-flex items-center rounded-full border border-border bg-card px-2.5 py-1 text-[11px] font-medium text-muted-foreground"
+              title="These cards are sample data: this deployment is not serving a live catalogue yet."
+            >
+              Sample catalogue
+            </span>
+          )}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-8 gap-1.5 text-xs"
+            disabled={refreshing || mode !== 'live'}
+            onClick={() => void onRefresh()}
+          >
+            <RefreshCw className={cn('size-3.5', refreshing && 'animate-spin')} />
+            Refresh
+          </Button>
+        </div>
       </header>
 
       {profileLoaded && (!worker.kycVerified || !worker.phone || !worker.country || !worker.school || !worker.course || !worker.jobExperience || !worker.career) && (

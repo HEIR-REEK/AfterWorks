@@ -204,7 +204,15 @@ export default function AdminJobsPage() {
         status: editing.status,
         closesAt: editing.closesAt ? new Date(editing.closesAt).toISOString() : undefined,
       })
-      push('success', editing.id ? `Saved ${result.id}.` : `Published as ${result.id}.`)
+      // Worker dashboards are fed by a live listener on `jobs`, so a save lands there within about a
+      // second (a poll covers blocked sockets). Saying so turns "did my edit go through?" into a
+      // non-question for whoever made the change.
+      push(
+        'success',
+        editing.id
+          ? `Saved ${result.id}. Open worker dashboards show this within a second.`
+          : `Published as ${result.id}. Workers can see it immediately.`,
+      )
       setEditing(null)
       await load()
     } catch (err) {

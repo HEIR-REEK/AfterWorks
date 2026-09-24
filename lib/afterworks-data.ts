@@ -73,6 +73,8 @@ export type ApplicationStatus =
   | 'revision_requested'
   | 'completed'
   | 'failed_qa'
+  /** Worker withdrew their application (written by `withdrawApplicationServer`). Terminal. */
+  | 'withdrawn'
 
 export type Application = {
   id: string
@@ -83,7 +85,15 @@ export type Application = {
   reviewExpiresAt: string // ISO
   rejectionReason?: string
   revisionNote?: string
-  history: { status: ApplicationStatus; at: string }[]
+  /** Job title denormalised onto the application by the server (UI convenience). */
+  jobTitle?: string
+  /** The pay amount for this specific application, set from the job card at apply time. */
+  payAmountUsd?: number
+  workStartedAt?: string
+  workSubmittedAt?: string
+  workerNote?: string
+  workLinks?: { label: string; url: string }[]
+  history: { status: ApplicationStatus; at: string; by?: string }[]
 }
 
 /**
@@ -903,6 +913,7 @@ export const APPLICATION_LABELS: Record<ApplicationStatus, string> = {
   revision_requested: 'Revision requested',
   completed: 'Completed & paid',
   failed_qa: 'Failed QA',
+  withdrawn: 'Withdrawn',
 }
 
 export type StatusTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger'
@@ -916,4 +927,5 @@ export const APPLICATION_TONE: Record<ApplicationStatus, StatusTone> = {
   revision_requested: 'warning',
   completed: 'success',
   failed_qa: 'danger',
+  withdrawn: 'neutral',
 }

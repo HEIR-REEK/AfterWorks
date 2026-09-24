@@ -82,15 +82,32 @@ type AfterWorksContextValue = {
     reference: string,
   ) => Promise<{ ok: boolean; paid: boolean; status?: string; message?: string; error?: string }>
   applyToJob: (jobId: string) => Promise<ApplyResult>
-  submitWork: (applicationId: string, note?: string) => Promise<ApplyResult>
+  /** Worker-initiated: `approved` → `in_progress`. Idempotent. */
+  startWork: (applicationId: string) => Promise<ApplyResult>
+  submitWork: (
+    applicationId: string,
+    note?: string,
+    links?: { label: string; url: string }[],
+  ) => Promise<ApplyResult>
   withdrawApplication: (applicationId: string) => Promise<ApplyResult>
   refreshWallet: () => Promise<void>
+  /** Move `amountUsd` from the available balance into a mobile money payout request. */
+  requestWithdrawal: (amountUsd: number) => Promise<{ ok: boolean; error?: string }>
   refreshApplications: () => Promise<void>
   updateProfile: (updatedFields: Partial<WorkerProfile>) => Promise<void>
 }
 
 type WalletMeta = {
-  entries: { id: string; kind: string; amountUsd: number; status: string; createdAt: string; clearedAt: string | null; jobTitle?: string }[]
+  entries: {
+    id: string
+    kind: string
+    amountUsd: number
+    status: string
+    createdAt: string
+    clearedAt: string | null
+    jobTitle?: string
+    applicationId?: string
+  }[]
   nextClearingAt: string | null
   clearingHours: number
   minWithdrawalUsd: number
@@ -348,6 +365,36 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
     void refreshWallet()
   }, [refreshWallet])
 
+  /**
+   * Request a payout of part or all of the available balance to the mobile money number on file.
+   * The server moves the money into a `processing` withdrawal row inside one transaction; the
+   * local state is refreshed straight from `/api/wallet` afterwards (never trusted to be right
+   * from the request alone).
+   */
+  const requestWithdrawal = useCallback(
+    async (amountUsd: number): Promise<{ ok: boolean; error?: string }> => {
+      if (!user || !configured) return { ok: false, error: 'Sign in to withdraw.' }
+      const key = 'wallet:withdraw'
+      setBusy(key, true)
+      try {
+        await authedFetch('/api/wallet/withdraw', {
+          method: 'POST',
+          body: { amountUsd, method: 'M-Pesa' },
+          idempotencyKey: `withdraw:${user.uid}:${Date.now().toString(36)}`,
+        })
+        await refreshWallet()
+        return { ok: true }
+      } catch (err) {
+        const message = describeError(err)
+        setError(message)
+        return { ok: false, error: message }
+      } finally {
+        setBusy(key, false)
+      }
+    },
+    [user, configured, refreshWallet, setBusy],
+  )
+
   // ── Applications (server-owned) ─────────────────────────────────────────────────
   const refreshApplications = useCallback(async () => {
     if (!user || !configured) return
@@ -433,19 +480,60 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
     [user, configured, refreshApplications, setBusy],
   )
 
-  const submitWork = useCallback(
-    async (applicationId: string, note = ''): Promise<ApplyResult> => {
-      if (!user || !configured) return { ok: false, reason: 'Sign in to submit your work.' }
+  /** Worker starts an approved assignment (slot is already reserved; this only opens the work window). */
+  const startWork = useCallback(
+    async (applicationId: string): Promise<ApplyResult> => {
+      if (!user || !configured) return { ok: false, reason: 'Sign in to start your work.' }
       setBusy(`app:${applicationId}`, true)
       try {
-        await authedFetch('/api/applications', { method: 'PATCH', body: { applicationId, action: 'submit_work', note } })
+        await authedFetch('/api/applications', { method: 'PATCH', body: { applicationId, action: 'start_work' } })
+        setApplications((prev) =>
+          prev.map((a) =>
+            a.id === applicationId
+              ? {
+                  ...a,
+                  status: 'in_progress',
+                  workStartedAt: a.workStartedAt ?? new Date().toISOString(),
+                  history: [...a.history, { status: 'in_progress' as const, at: new Date().toISOString(), by: 'worker' }],
+                }
+              : a,
+          ),
+        )
+        void refreshApplications()
+        return { ok: true, applicationId }
+      } catch (err) {
+        const message = describeError(err)
+        setError(message)
+        return { ok: false, reason: message }
+      } finally {
+        setBusy(`app:${applicationId}`, false)
+      }
+    },
+    [user, configured, refreshApplications, setBusy],
+  )
+
+  const submitWork = useCallback(
+    async (applicationId: string, note = '', links: { label: string; url: string }[] = []): Promise<ApplyResult> => {
+      if (!user || !configured) return { ok: false, reason: 'Sign in to submit your work.' }
+      // Mirror the server's link rules for the optimistic row: only http(s), so an unsanitised
+      // href can never be rendered into the UI in the window before the server copy arrives.
+      const safeLinks = links.filter((l) => typeof l?.url === 'string' && /^https?:\/\//i.test(l.url))
+      setBusy(`app:${applicationId}`, true)
+      try {
+        await authedFetch('/api/applications', {
+          method: 'PATCH',
+          body: { applicationId, action: 'submit_work', note, links },
+        })
         setApplications((prev) =>
           prev.map((a) =>
             a.id === applicationId
               ? {
                   ...a,
                   status: 'submitted_for_review',
-                  history: [...a.history, { status: 'submitted_for_review' as const, at: new Date().toISOString() }],
+                  workSubmittedAt: new Date().toISOString(),
+                  workerNote: note,
+                  workLinks: safeLinks,
+                  history: [...a.history, { status: 'submitted_for_review' as const, at: new Date().toISOString(), by: 'worker' }],
                 }
               : a,
           ),
@@ -582,9 +670,11 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
       ensureJob,
       verifyTrainingPayment,
       applyToJob,
+      startWork,
       submitWork,
       withdrawApplication,
       refreshWallet,
+      requestWithdrawal,
       refreshApplications,
       updateProfile,
     }
@@ -606,9 +696,11 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
     ensureJob,
     verifyTrainingPayment,
     applyToJob,
+    startWork,
     submitWork,
     withdrawApplication,
     refreshWallet,
+    requestWithdrawal,
     refreshApplications,
     updateProfile,
   ])

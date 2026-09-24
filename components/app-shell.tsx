@@ -8,6 +8,7 @@ import {
   LayoutDashboard,
   ListChecks,
   LogOut,
+  PenLine,
   ShieldCheck,
   User,
   Wrench,
@@ -29,6 +30,7 @@ function initials(nameOrEmail: string) {
 const baseNav = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/jobs', label: 'Jobs', icon: Briefcase },
+  { href: '/work', label: 'Work', icon: PenLine },
   { href: '/applications', label: 'Applied', icon: ListChecks },
   { href: '/profile', label: 'Profile', icon: User },
 ]
@@ -181,7 +183,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <nav
         className={cn(
           'fixed bottom-0 left-0 right-0 z-40 grid border-t border-border bg-background/95 backdrop-blur supports-[padding:max(0px)]:pb-[env(safe-area-inset-bottom)] md:hidden',
-          'grid-cols-4',
+          'grid-cols-5',
         )}
         aria-label="Primary mobile"
       >

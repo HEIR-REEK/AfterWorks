@@ -34,6 +34,19 @@ const SESSION_SECRET = (process.env.ADMIN_SESSION_SECRET ?? '').trim()
 const SIGNING_OK = SESSION_SECRET.length >= 32
 const TRUST_PROXY = (process.env.TRUST_PROXY_HEADERS ?? (PRODUCTION ? 'false' : 'true')) !== 'false'
 const EDGE_RATE_LIMIT_ON = (process.env.MIDDLEWARE_RATE_LIMIT ?? 'true') !== 'false'
+/**
+ * Catch-all per-IP flood ceiling for every /api/ route that has no stricter rule below. This is
+ * the "something is scanning or hammering us" brake: a legitimate worker makes at most a handful
+ * of API calls per minute, so 120/min per IP is generous for real use and low enough to make a
+ * naive flood expensive. The per-route buckets are the precise limits; this one is the backstop.
+ */
+const API_FLOOD_PER_MINUTE = Number(process.env.EDGE_API_FLOOD_LIMIT_PER_MINUTE ?? 120)
+/**
+ * Hard body-size ceiling applied at the edge from the Content-Length header, before any route
+ * handler runs. Routes keep their own (smaller) caps; this stops multi-megabyte bodies from ever
+ * reaching the app (a classic exhaustion vector).
+ */
+const MAX_BODY_BYTES = Number(process.env.EDGE_MAX_BODY_BYTES ?? 262144)
 const MAINTENANCE_GATE_ON = (process.env.MAINTENANCE_EDGE_GATE ?? 'true') !== 'false'
 /**
  * Serve the blackout page from the edge as a static document instead of rewriting into the app.
@@ -71,6 +84,7 @@ const RATE_LIMITED: Array<[RegExp, number]> = [
   [/^\/api\/paystack\//, 25],
   [/^\/api\/applications/, 30],
   [/^\/api\/wallet/, 60],
+  [/^\/api\/notifications/, 30],
 ]
 
 const LOCAL_HOST = /^(localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0)(:\d+)?$/i
@@ -97,7 +111,15 @@ function isNoisePath(pathname: string): boolean {
   if (pathname.length > 1024) return true
   if (/\.\.;|\/\.\/|\/%2e|%00|\.env(\.|$)|wp-admin|phpmyadmin|\/\.git\/|\/\.aws\/|\/\.well-known\/(?!security)/i.test(pathname)) return true
   if (/(shell|cmd=|eval\(|union\+select|onerror=)/i.test(pathname)) return true
-  return /\.(?:php|asp|aspx|jsp|cgi|bak|old|sql|conf)(?:$|[?/])/i.test(pathname)
+  // Common scanner / LFI / framework probes — none of these are real routes here, so a flat 404.
+  if (
+    /etc\/passwd|etc\/shadow|proc\/self|cgi-bin|xmlrpc\.php|wp-login|wp-json|wp-content|wp-includes|actuator|admin\.php|phpinfo|\.DS_Store|server-status|server-info|\.htaccess/i.test(
+      pathname,
+    )
+  ) {
+    return true
+  }
+  return /\.(?:php|asp|aspx|jsp|cgi|bak|old|sql|conf|asa|cer)(?:$|[?/])/i.test(pathname)
 }
 
 /** Best-effort originating IP — used for limiting and log keys only, never for authorization. */
@@ -170,6 +192,9 @@ function applySecurityHeaders(res: NextResponse): void {
   }
 }
 
+// Methods the platform understands. Anything else is answered at the edge before the app runs.
+const ALLOWED_METHODS = new Set(['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'])
+
 // ─── Middleware ──────────────────────────────────────────────────────────────
 
 export async function middleware(request: NextRequest) {
@@ -184,6 +209,13 @@ export async function middleware(request: NextRequest) {
       { status, headers: { ...NO_STORE_HEADERS, 'X-Content-Type-Options': 'nosniff', ...extra } },
     )
     return res
+  }
+
+  // 0. Unknown HTTP methods (TRACE, CONNECT, custom verbs from probes) — 405 at the edge.
+  if (!ALLOWED_METHODS.has(method)) {
+    return reject(405, 'Method not allowed.', 'method_not_allowed', {
+      Allow: 'GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS',
+    })
   }
 
   // 1. Scanner noise / traversal attempts.
@@ -201,11 +233,35 @@ export async function middleware(request: NextRequest) {
     return reject(403, 'Cross-site request rejected.', 'csrf_rejected')
   }
 
-  // 4. Per-IP token buckets on sensitive routes (authoritative limits still live in the routes).
+  // 3b. Body-size ceiling. No route in this app legitimately needs more than a small JSON body,
+  //     so an oversized Content-Length is refused at the edge — the app and its handlers never
+  //     spend a byte of memory on it. (Chunked bodies without the header are still capped by the
+  //     per-route parsers, which read with their own limits.)
+  if (MUTATING_METHODS.has(method)) {
+    const lengthHeader = request.headers.get('content-length')
+    const declared = lengthHeader === null ? 0 : Number(lengthHeader)
+    if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
+      return reject(413, 'Request body is too large.', 'body_too_large', {
+        'X-Content-Length-Limit': String(MAX_BODY_BYTES),
+      })
+    }
+  }
+
+  // 4. Per-IP token buckets on sensitive routes (authoritative limits still live in the routes),
+  //    plus a catch-all flood ceiling for every other /api/ route.
   if (EDGE_RATE_LIMIT_ON && pathname.startsWith('/api/')) {
     const rule = RATE_LIMITED.find(([re]) => re.test(pathname))
     if (rule) {
       const verdict = consumeEdgeBucket(`${pathname}:${ipHash}`, Math.max(2, RATE_CAPACITY * rule[1] / 40), 60_000)
+      if (!verdict.ok) {
+        return reject(429, 'Too many requests from this address. Please wait a moment.', 'rate_limited', {
+          'Retry-After': String(verdict.retryAfterSec),
+        })
+      }
+    } else if (API_FLOOD_PER_MINUTE > 0) {
+      // Backstop for floods against any API path (including ones that are read-only): one shared
+      // per-IP bucket so an attacker cannot pick the slowest route and hammer it forever.
+      const verdict = consumeEdgeBucket(`__api_flood:${ipHash}`, Math.max(2, API_FLOOD_PER_MINUTE), 60_000)
       if (!verdict.ok) {
         return reject(429, 'Too many requests from this address. Please wait a moment.', 'rate_limited', {
           'Retry-After': String(verdict.retryAfterSec),

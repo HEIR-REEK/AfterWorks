@@ -43,6 +43,11 @@ export async function GET(req: NextRequest) {
     }
 
     const uid = guard.value.uid
+    // Lazy clearing: earnings whose window has closed move from pending → available *before* the
+    // read, so the number the dashboard shows is the one the ledger supports. Idempotent and
+    // best-effort — a failure here degrades to the (still honest) unsettled balances.
+    await firestore.settleClearedEarnings(uid)
+
     const [userSnap, ledgerSnap] = await Promise.all([
       db.collection('users').doc(uid).get(),
       db

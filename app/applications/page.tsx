@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   Circle,
   Clock,
+  PenLine,
   Upload,
 } from 'lucide-react'
 import { useAfterWorks } from '@/components/afterworks-provider'
@@ -33,7 +34,13 @@ function pipelineIndex(status: ApplicationStatus): number {
   if (status === 'rejected') return 0
   if (status === 'revision_requested') return 2
   if (status === 'failed_qa') return 3
+  if (status === 'withdrawn') return 0
   return PIPELINE.indexOf(status)
+}
+
+/** Defensive label: the server may write statuses the client union hasn't caught up with. */
+function statusLabel(status: ApplicationStatus): string {
+  return APPLICATION_LABELS[status] ?? status.replace(/_/g, ' ')
 }
 
 function reviewCountdown(iso: string): string {
@@ -65,8 +72,8 @@ function ApplicationRow({ app }: { app: Application }) {
             {job.category} · <span className="font-mono">{formatUsd(job.payAmountUsd)}</span>
           </p>
         </div>
-        <StatusBadge tone={APPLICATION_TONE[app.status]}>
-          {APPLICATION_LABELS[app.status]}
+        <StatusBadge tone={APPLICATION_TONE[app.status] ?? 'neutral'}>
+          {statusLabel(app.status)}
         </StatusBadge>
       </div>
 
@@ -118,7 +125,7 @@ function ApplicationRow({ app }: { app: Application }) {
               Reviewing — {reviewCountdown(app.reviewExpiresAt)}
             </>
           )}
-          {app.status === 'approved' && 'Slot reserved. Start the work when ready.'}
+          {app.status === 'approved' && 'Slot reserved — open your workspace to start the work.'}
           {app.status === 'in_progress' && 'Submit your completed work for QA review.'}
           {app.status === 'submitted_for_review' && 'In QA review. Payment queues on approval.'}
           {app.status === 'revision_requested' &&
@@ -134,10 +141,16 @@ function ApplicationRow({ app }: { app: Application }) {
         </p>
 
         <div className="flex items-center gap-2">
+          {(app.status === 'approved' || app.status === 'in_progress' || app.status === 'revision_requested' || app.status === 'submitted_for_review') && (
+            <Button size="sm" render={<Link href={`/work/${app.id}`} />}>
+              <PenLine className="size-3.5" />
+              Open workspace
+            </Button>
+          )}
           {(app.status === 'in_progress' || app.status === 'revision_requested') && (
-            <Button size="sm" onClick={() => submitWork(app.id)}>
+            <Button size="sm" variant="outline" onClick={() => submitWork(app.id)}>
               <Upload className="size-3.5" />
-              Submit work
+              Quick submit
             </Button>
           )}
 
@@ -150,12 +163,9 @@ function ApplicationRow({ app }: { app: Application }) {
 export default function ApplicationsPage() {
   const { applications } = useAfterWorks()
 
-  const active = applications.filter(
-    (a) => !['completed', 'rejected', 'failed_qa'].includes(a.status),
-  )
-  const past = applications.filter((a) =>
-    ['completed', 'rejected', 'failed_qa'].includes(a.status),
-  )
+  const terminal = ['completed', 'rejected', 'failed_qa', 'withdrawn']
+  const active = applications.filter((a) => !terminal.includes(a.status))
+  const past = applications.filter((a) => terminal.includes(a.status))
 
   return (
     <div className="flex flex-col gap-6">

@@ -53,6 +53,14 @@ export async function GET(req: NextRequest) {
           rejectionReason: (data.rejectionReason as string) ?? undefined,
           revisionNote: (data.revisionNote as string) ?? undefined,
           payAmountUsd: Number(data.payAmountUsd ?? 0) || 0,
+          workStartedAt: (data.workStartedAt as string) ?? undefined,
+          workSubmittedAt: (data.workSubmittedAt as string) ?? undefined,
+          workerNote: (data.workerNote as string) ?? undefined,
+          workLinks: Array.isArray(data.workLinks)
+            ? (data.workLinks as { label: string; url: string }[]).filter(
+                (l) => l && typeof l.url === 'string' && /^https?:\/\//i.test(l.url),
+              )
+            : undefined,
           history: Array.isArray(data.history) ? (data.history as { status: string; at: string }[]) : [],
         }
       })
@@ -137,14 +145,25 @@ export async function PATCH(req: NextRequest) {
       return json({ ok: true, status: 'withdrawn' })
     }
 
+    if (action === 'start_work') {
+      const { started } = await firestore.startWorkServer(guard.value.uid, applicationId)
+      return json({ ok: true, status: 'in_progress', started })
+    }
+
     if (action === 'submit_work') {
-      const note = typeof body.note === 'string' ? body.note.slice(0, 1000) : ''
-      await firestore.submitWorkServer(guard.value.uid, applicationId, note)
+      const note = typeof body.note === 'string' ? body.note : ''
+      const rawLinks = Array.isArray(body.links) ? body.links : []
+      const links = firestore.sanitizeWorkLinks(
+        rawLinks
+          .filter((l): l is { label?: unknown; url?: unknown } => Boolean(l) && typeof l === 'object')
+          .map((l) => ({ label: l.label, url: l.url })),
+      )
+      await firestore.submitWorkServer(guard.value.uid, applicationId, { note, links })
       await firestore.notifyUser(guard.value.uid, {
         title: 'Submission received',
         body: 'Your work is in the review queue. QA usually responds within 48 hours.',
         tone: 'info',
-        link: '/applications',
+        link: `/work/${applicationId}`,
       })
       return json({ ok: true, status: 'submitted_for_review' })
     }

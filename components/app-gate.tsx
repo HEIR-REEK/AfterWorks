@@ -2,7 +2,9 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
-import { Loader2 } from 'lucide-react'
+import Link from 'next/link'
+import { Loader2, Lock, WifiOff } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import { useAuth } from '@/components/firebase-auth-provider'
 import { AfterWorksProvider } from '@/components/afterworks-provider'
 import { AppShell } from '@/components/app-shell'
@@ -34,10 +36,30 @@ export function AppGate({ children }: { children: React.ReactNode }) {
   )
 }
 
+/**
+ * Shown after the platform itself ended the session (idle timeout / server 401). The workspace is
+ * never rendered in this state — the previous behaviour of "the tab has been open a while, so the
+ * dashboard is still there" is exactly the hole this screen closes.
+ */
+function SessionExpiredScreen({ message }: { message: string }) {
+  return (
+    <div className="flex min-h-dvh flex-col items-center justify-center gap-4 px-6 text-center" role="status" aria-live="polite">
+      <div className="flex size-12 items-center justify-center rounded-full bg-secondary">
+        <Lock className="size-5 text-primary" />
+      </div>
+      <h1 className="text-xl font-semibold tracking-tight">You are signed out</h1>
+      <p className="max-w-sm text-sm leading-relaxed text-muted-foreground">{message}</p>
+      <Button render={<Link href="/sign-in" />} size="lg">
+        Sign in again
+      </Button>
+    </div>
+  )
+}
+
 function Gate({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
   const router = useRouter()
-  const { user, loading, configured } = useAuth()
+  const { user, loading, configured, sessionExpired } = useAuth()
   const { view, bypassed } = useMaintenance()
   const admin = useAdminSession()
   const [redirectArmed, setRedirectArmed] = useState(false)
@@ -59,11 +81,13 @@ function Gate({ children }: { children: React.ReactNode }) {
     if (loading || configured === false) return
     if (isPublic || isAdminRoute || blackout) return
     if (!user) {
-      router.replace('/sign-in')
+      // A platform-initiated sign-out (idle timeout / 401) shows its own screen with the reason;
+      // an ordinary "no session" state just goes to the sign-in page.
+      if (!sessionExpired) router.replace('/sign-in')
       return
     }
     if (!user.emailVerified) router.replace('/verify-email')
-  }, [loading, user, isPublic, isAdminRoute, blackout, router, configured])
+  }, [loading, user, isPublic, isAdminRoute, blackout, router, configured, sessionExpired])
 
   // Flip the "loading" screen off only once we know what we are rendering.
   useEffect(() => {
@@ -78,6 +102,10 @@ function Gate({ children }: { children: React.ReactNode }) {
   }
 
   if (isPublic) return <>{children}</>
+
+  // The session was ended by the platform (idle timeout or a server 401). The dashboard is
+  // deliberately not rendered here — sign-in is the only way back in.
+  if (sessionExpired && !loading) return <SessionExpiredScreen message={sessionExpired} />
 
   if (loading || (admin.status === 'checking' && view.unknown && !redirectArmed)) {
     return (
@@ -114,7 +142,23 @@ function Gate({ children }: { children: React.ReactNode }) {
 
   return (
     <AfterWorksProvider>
-      <AppShell>{children}</AppShell>
+      <AppShell>
+        {configured === false && (
+          <div
+            role="status"
+            className="border-b border-amber-500/40 bg-amber-500/10 px-4 py-2.5 text-center text-xs font-medium text-amber-900 sm:text-sm dark:text-amber-200"
+          >
+            <span className="inline-flex flex-wrap items-center justify-center gap-x-2 gap-y-1">
+              <WifiOff className="size-3.5 shrink-0" />
+              <span>
+                You are <strong>not signed in</strong> — Firebase is not configured on this deployment, so the
+                workspace below shows sample data and no account is active.
+              </span>
+            </span>
+          </div>
+        )}
+        {children}
+      </AppShell>
     </AfterWorksProvider>
   )
 }

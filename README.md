@@ -61,7 +61,7 @@ still require a deployed check using a test account you control.
 
 | Path | What lives there |
 | --- | --- |
-| `middleware.ts` | Edge security: CSRF/host checks, maintenance gate, header policy |
+| `middleware.ts` | Edge security: CSRF/host checks, method + body-size guards, per-IP rate/flood buckets, maintenance gate, header policy |
 | `lib/session-token.ts` | one sign/verify path shared by Edge and Node (admin + maintenance-bypass cookies) |
 | `lib/security.ts`, `lib/security-core.ts` | passcode hashing, attempt budgets, redaction, env parsing |
 | `lib/maintenance-shared.ts` | canonical maintenance config + resolution, edge-safe |

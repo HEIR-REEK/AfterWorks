@@ -113,6 +113,33 @@ function AdminLedgerPageInner() {
 
   const pendingCount = useMemo(() => rows.filter((row) => row.status === 'pending').length, [rows])
 
+  // Settle a worker's withdrawal. This is the only supported write into a withdrawal row:
+  // `sent` closes a transfer that has gone out, `failed` returns the amount to the member.
+  const [settleBusy, setSettleBusy] = useState(false)
+  async function settleWithdrawal(id: string, action: 'sent' | 'failed') {
+    if (
+      action === 'failed' &&
+      !window.confirm('Mark this withdrawal as failed? The amount is returned to the member\'s available balance and they are notified.')
+    ) {
+      return
+    }
+    setSettleBusy(true)
+    try {
+      await adminApi.settleWithdrawal({ withdrawalId: id, action })
+      push(
+        'success',
+        action === 'sent'
+          ? 'Withdrawal marked as sent. The worker has been notified.'
+          : 'Withdrawal marked as failed; the amount was returned to the balance.',
+      )
+      await load()
+    } catch (err) {
+      push('error', err instanceof Error ? err.message : 'The withdrawal could not be settled.')
+    } finally {
+      setSettleBusy(false)
+    }
+  }
+
   const exportCsv = () => {
     if (rows.length === 0) {
       push('info', 'Nothing to export on this page.')
@@ -318,6 +345,16 @@ function AdminLedgerPageInner() {
                       <StatusBadge tone={statusTone(row.status)}>{row.status.replace(/_/g, ' ')}</StatusBadge>
                       {row.clearedAt ? (
                         <span className="mt-1 block text-[10px] text-muted-foreground">cleared {new Date(row.clearedAt).toLocaleDateString()}</span>
+                      ) : null}
+                      {row.source === 'wallet' && row.kind === 'withdrawal' && row.status === 'processing' ? (
+                        <div className="mt-1.5 flex justify-end gap-1.5">
+                          <Button type="button" size="sm" variant="outline" className="h-6 px-2 text-[11px]" disabled={settleBusy} onClick={() => void settleWithdrawal(row.id, 'sent')}>
+                            Mark sent
+                          </Button>
+                          <Button type="button" size="sm" variant="outline" className="h-6 px-2 text-[11px] text-destructive hover:bg-destructive/10" disabled={settleBusy} onClick={() => void settleWithdrawal(row.id, 'failed')}>
+                            Failed
+                          </Button>
+                        </div>
                       ) : null}
                     </td>
                   </tr>

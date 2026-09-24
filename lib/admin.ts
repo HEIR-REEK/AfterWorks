@@ -255,6 +255,9 @@ export const adminApi = {
     }>('/api/admin/users', { method: 'PATCH', body }),
   ledger: (query: { source?: string; kind?: string; status?: string; search?: string; pageSize?: number; cursor?: string | null }) =>
     apiFetch<AdminLedgerPage>('/api/admin/ledger', { query }),
+  /** Settle a worker's withdrawal: `sent` closes the transfer, `failed` returns the amount. */
+  settleWithdrawal: (body: { withdrawalId: string; action: 'sent' | 'failed' }) =>
+    apiFetch<{ ok: boolean; id: string; status: 'sent' | 'failed' }>('/api/admin/ledger/withdrawal', { method: 'POST', body }),
   applications: (query: { pageSize?: number; cursor?: string | null; status?: string; search?: string }) =>
     apiFetch<{ ok: boolean; rows: AdminApplicationRow[]; nextCursor: string | null; hasMore: boolean; degraded?: string }>('/api/admin/applications', { query }),
   applicationAction: (body: Record<string, unknown>) => apiFetch<{ ok: boolean; message?: string; status?: string }>('/api/admin/applications', { method: 'PATCH', body }),

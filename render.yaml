@@ -83,6 +83,17 @@ services:
         value: "true"
       - key: API_RATE_LIMIT_PER_MINUTE
         value: "120"
+      # Edge flood ceiling + body-size guard (blunt instruments behind the per-route buckets).
+      - key: EDGE_API_FLOOD_LIMIT_PER_MINUTE
+        value: "120"
+      - key: EDGE_MAX_BODY_BYTES
+        value: "262144"
+      # Idle worker sessions are signed out after this many quiet minutes (shared-device safety).
+      - key: NEXT_PUBLIC_WORKER_IDLE_TIMEOUT_MINUTES
+        value: "30"
+      # Shared secret for the wallet clearing sweep (see crons below). Leave empty to disable.
+      - key: CRON_SECRET
+        sync: false # e.g. openssl rand -base64 32
 
       # ── Payments ───────────────────────────────────────────────────────────
       - key: PAYSTACK_SECRET_KEY
@@ -129,3 +140,17 @@ services:
         sync: false
       - key: NEXT_PUBLIC_OPS_EMAIL
         sync: false
+
+# ─── Cron: wallet clearing sweep ─────────────────────────────────────────────
+# Render cron jobs send a plain GET, so the secret rides in the query string (the route also
+# accepts POST with the `x-cron-secret` header for schedulers that can set headers). The endpoint
+# is fail-closed without CRON_SECRET and is rate-limited to 12 sweeps/hour even with the secret.
+# It settles only earnings whose clearing window has already closed — it cannot move money early.
+#
+# Blueprints cannot interpolate env vars into the cron path, so append your actual secret when
+# creating/updating the service (Render dashboard → Crons, or the path below):
+#   /api/admin/cron/wallet-sweep?secret=<your CRON_SECRET>
+crons:
+  - name: wallet-clearing-sweep
+    schedule: "*/15 * * * *"
+    path: /api/admin/cron/wallet-sweep?secret=REPLACE_WITH_YOUR_CRON_SECRET

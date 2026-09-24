@@ -24,6 +24,7 @@ import {
   type User,
 } from 'firebase/auth'
 import { createUserDocument } from '@/lib/firestore'
+import { UNAUTHORIZED_EVENT } from '@/lib/client-api'
 
 export type FirebaseConfig = {
   apiKey: string
@@ -43,6 +44,12 @@ type AuthContextValue = {
   loading: boolean
   configured: boolean
   /**
+   * Set when the session was ended *by the platform* (idle timeout or a 401 from the server)
+   * rather than by the worker clicking sign out. The gate renders a "sign in again" screen with
+   * this message instead of the dashboard, so an abandoned tab can never show a stale workspace.
+   */
+  sessionExpired: string | null
+  /**
    * Claims from the current ID token. `admin` here is minted server-side by the Admin SDK — the
    * client cannot write it, which is what makes it usable as a UI hint (nav badge) without being a
    * security boundary.
@@ -57,6 +64,18 @@ type AuthContextValue = {
   signOut: () => Promise<void>
   /** Re-sends a Resend verification email to the currently signed-in (but unverified) user. */
   resendVerification: () => Promise<{ ok: boolean; error?: string; alreadyVerified?: boolean }>
+}
+
+/**
+ * Idle sign-out window. Firebase's own refresh token keeps a signed-in tab valid essentially
+ * forever, so an abandoned open tab would otherwise keep "working" for weeks. Any worker activity
+ * (pointer, key, touch, scroll) resets the clock; when it elapses the provider signs out and the
+ * gate demands a fresh sign-in. 0 disables (local development); minimum enforced is 5 minutes.
+ */
+function idleTimeoutMs(): number {
+  const raw = Number(process.env.NEXT_PUBLIC_WORKER_IDLE_TIMEOUT_MINUTES ?? 30)
+  if (!Number.isFinite(raw) || raw <= 0) return 0
+  return Math.max(5, raw) * 60_000
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
@@ -137,6 +156,13 @@ export function FirebaseAuthProvider({
   const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(configured)
   const [claims, setClaims] = useState<{ admin?: boolean } | null>(null)
+  const [sessionExpired, setSessionExpired] = useState<string | null>(null)
+  const lastActivityRef = useRef<number>(Date.now())
+
+  // Clear the "expired" flag the moment a real session exists again (fresh sign-in after timeout).
+  useEffect(() => {
+    if (user) setSessionExpired(null)
+  }, [user])
 
   useEffect(() => {
     if (!configured) {
@@ -175,6 +201,67 @@ export function FirebaseAuthProvider({
       if (typeof window !== 'undefined') window.removeEventListener('focus', onFocus)
     }
   }, [configured, config])
+
+  // ── Idle session timeout ──────────────────────────────────────────────────────
+  //
+  // "Stays logged in for a very long time" is a real exposure on a shared or unattended device,
+  // and it is what makes an abandoned tab look like a live, authorised dashboard. The clock
+  // resets on any real input; when it runs out the session is signed out and the gate shows the
+  // sign-in screen with an explicit reason. The 30s poll also re-checks after the tab wakes from
+  // sleep, where timers do not fire.
+  useEffect(() => {
+    if (!configured || !user || typeof window === 'undefined') return
+    const limit = idleTimeoutMs()
+    if (limit <= 0) return
+
+    const activity = () => {
+      lastActivityRef.current = Date.now()
+    }
+    const events: Array<keyof WindowEventMap> = ['pointerdown', 'keydown', 'touchstart']
+    events.forEach((name) => window.addEventListener(name, activity, { passive: true }))
+    window.addEventListener('scroll', activity, { passive: true })
+
+    const check = () => {
+      if (!authRef.current?.currentUser) return
+      if (Date.now() - lastActivityRef.current > limit) {
+        void fbSignOut(authRef.current).then(() => {
+          setSessionExpired(
+            'For your security, you were signed out after a period of inactivity. Sign in again to continue.',
+          )
+        })
+      }
+    }
+    const poll = setInterval(check, 30_000)
+    const onVisible = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        lastActivityRef.current = Date.now() // waking the tab is activity
+        check()
+      }
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      events.forEach((name) => window.removeEventListener(name, activity))
+      window.removeEventListener('scroll', activity)
+      clearInterval(poll)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  }, [configured, user])
+
+  // A 401 from any API call means the server no longer recognises the session (token revoked,
+  // account disabled, or it has simply lapsed). Drop the local session instead of letting the UI
+  // keep rendering a workspace the backend will no longer serve.
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const onUnauthorized = () => {
+      const auth = authRef.current
+      if (!auth?.currentUser) return
+      void fbSignOut(auth).then(() =>
+        setSessionExpired('Your session expired. Please sign in again to continue.'),
+      )
+    }
+    window.addEventListener(UNAUTHORIZED_EVENT, onUnauthorized)
+    return () => window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized)
+  }, [])
 
   const value = useMemo<AuthContextValue>(() => {
     async function getIdToken(forceRefresh = false): Promise<string | null> {
@@ -308,8 +395,8 @@ export function FirebaseAuthProvider({
       }
     }
 
-    return { user, loading, configured, claims, getIdToken, reloadUser, signIn, signUp, signInWithGoogle, signOut, resendVerification }
-  }, [user, loading, configured, claims])
+    return { user, loading, configured, sessionExpired, claims, getIdToken, reloadUser, signIn, signUp, signInWithGoogle, signOut, resendVerification }
+  }, [user, loading, configured, sessionExpired, claims])
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }

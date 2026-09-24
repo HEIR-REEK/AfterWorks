@@ -29,6 +29,14 @@ export type ApiOptions = {
   token?: string
 }
 
+/**
+ * Fired on `window` whenever the server answers 401 to an API call: the session the UI is
+ * rendering with is no longer valid, so the auth provider signs out and the gate demands a fresh
+ * sign-in. Declared here (not in the provider) because this module must stay import-free of the
+ * React layer.
+ */
+export const UNAUTHORIZED_EVENT = 'afterworks:unauthorized'
+
 const GENERIC_BY_STATUS: Record<number, string> = {
   400: 'That did not look right. Check the fields and try again.',
   401: 'Your session has expired. Please sign in again.',
@@ -85,6 +93,9 @@ export async function apiFetch<T = Record<string, unknown>>(path: string, opts: 
     }
 
     if (!res.ok) {
+      if (res.status === 401 && typeof window !== 'undefined' && path.startsWith('/api/')) {
+        window.dispatchEvent(new Event(UNAUTHORIZED_EVENT))
+      }
       const retryAfter = Number(res.headers.get('retry-after') ?? '0')
       const serverMessage = typeof data.error === 'string' ? data.error : ''
       const code = typeof data.code === 'string' ? data.code : undefined

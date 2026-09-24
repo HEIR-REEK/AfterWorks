@@ -194,6 +194,56 @@ action is still reason-gated and audited under the staff member's own email.
 * The webhook compares the HMAC with `timingSafeEqual`, re-verifies the charge upstream, and is
   idempotent, so Paystack retries cannot double-credit.
 * `/api/wallet` derives balances from `wallet_ledger` server-side; the client renders, it does not add.
+* **Clearing is idempotent.** When a QA-approved earning's clearing window closes, `settleClearedEarnings`
+  moves it from `pending` to `available` inside one transaction that marks the ledger row `cleared`
+  *before* money moves, so a crash or replay can never credit the same job twice. It runs lazily on
+  every wallet read, plus an optional cron sweep (`/api/admin/cron/wallet-sweep`, secret-gated,
+  `CRON_SECRET`, 12/hour budget) for offline workers.
+* **Withdrawals have one audited path.** A worker's `POST /api/wallet/withdraw` moves the amount out of
+  the available balance and into a `processing` withdrawal row in a single transaction (min
+  `MIN_WITHDRAWAL_USD`, capped at the real balance, mobile money number required). Operators settle the
+  row — `sent` closes it, `failed` returns the amount — via `POST /api/admin/ledger/withdrawal`
+  (owner-only, audited, worker notified). There is no generic balance edit on the ledger page.
+
+## Sessions: idle timeout and forced re-login
+
+Firebase's refresh token keeps a signed-in tab valid essentially forever, so an abandoned open tab
+would otherwise keep rendering an authorised dashboard on a shared device. The client now enforces
+both directions of the boundary:
+
+* **Idle sign-out.** Any pointer/key/touch/scroll activity resets a clock
+  (`NEXT_PUBLIC_WORKER_IDLE_TIMEOUT_MINUTES`, default 30, floor 5, 0 disables). When it runs out the
+  provider signs the worker out and the gate shows an explicit "you were signed out after inactivity —
+  sign in again" screen instead of the dashboard. The check also runs when a sleeping tab wakes.
+* **Server-vetoed sessions.** Every member API call presents a fresh ID token verified with the Admin
+  SDK. If the server answers 401 to any `/api/*` call (token revoked, account disabled, lapsed), the
+  client signs out immediately and the gate demands a fresh sign-in — a workspace the backend no
+  longer serves is never kept on screen.
+* **Demo mode is labelled, not silent.** With Firebase unconfigured the app still renders sample data,
+  but a banner states plainly that *no one is signed in* and nothing on screen is a real account.
+
+## DoS / DDoS posture
+
+Layers, outermost first (anything a platform can do for us — Cloudflare/Render firewall, WAF, bot
+management, upstream rate limiting — beats anything we can do in-app, and should be used):
+
+1. **Edge method whitelist** — unknown HTTP verbs get a 405 before the app runs.
+2. **Edge body ceiling** — mutating requests declaring more than `EDGE_MAX_BODY_BYTES` (default 256 KB)
+   via `Content-Length` get a 413 at the edge; route handlers keep their own smaller caps.
+3. **Per-route token buckets** — auth (8/min), KYC (20), Paystack (25), applications (30), wallet (60),
+   notifications (30), admin auth (8), keyed by client IP.
+4. **Catch-all flood ceiling** — every other `/api/` route shares a per-IP bucket of
+   `EDGE_API_FLOOD_LIMIT_PER_MINUTE` (default 120/min), so a flood cannot be aimed at the slowest route.
+5. **Noise answering** — scanner/traversal paths (`.env`, `wp-*`, `cgi-bin`, `actuator`,
+   `etc/passwd`, php/jsp/… suffixes, over-long paths) get a flat 404 before any handler or database
+   is touched.
+6. **In-app budgets** — every route re-checks its own `consumeBucket` (per-uid where scoped), and
+   destructive/monetary routes require a reason, an audit entry, and idempotency where money moves.
+
+The middleware buckets are in-process per edge isolate: they blunt scripted abuse, while the
+authoritative lockouts (per-uid attempt budgets, admin lockout) live in the routes where they can be
+audited and unlocked by staff. For a sustained volumetric attack the answer is upstream (the platform
+'s firewall/WAF), not this code.
 
 ## Efficiency
 
@@ -224,6 +274,18 @@ curl -si -X POST https://<host>/api/admin/auth -H 'content-type: application/jso
 
 # cross-site mutation must be refused
 curl -si -X POST https://<host>/api/wallet/withdraw -H 'Origin: https://evil.example' | head -1
+
+# oversized body must be refused at the edge (413) before any handler runs
+head -c 300000 /dev/zero | curl -si -X POST https://<host>/api/wallet/withdraw \
+  -H 'content-type: application/json' --data-binary @- | head -1
+
+# unknown method must be 405 at the edge
+curl -si -X TRACE https://<host>/api/health | head -1
+
+# cron sweep is fail-closed without the secret and refuses a wrong one
+curl -si "https://<host>/api/admin/cron/wallet-sweep?secret=wrong" | head -1
+curl -si -X POST https://<host>/api/admin/cron/wallet-sweep \
+  -H "x-cron-secret: $CRON_SECRET" | head -1
 
 # during a blackout: 503 + Retry-After for pages and APIs, 200 for the console
 curl -si https://<host>/jobs | grep -iE 'HTTP/|retry-after|maintenance'

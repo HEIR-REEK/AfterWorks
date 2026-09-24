@@ -2415,12 +2415,12 @@ export async function transitionApplicationAdmin(input: {
 
   if (uid) {
     const copy: Record<string, { title: string; body: string; tone: 'success' | 'info' | 'warning' | 'danger'; link: string }> = {
-      approved: { title: 'Application approved', body: 'You have been accepted for this job. Start the work whenever you are ready — your slot is reserved.', tone: 'success', link: '/applications' },
+      approved: { title: 'Application approved', body: 'You have been accepted for this job. Your slot is reserved — open your workspace to start the work.', tone: 'success', link: `/work/${input.applicationId}` },
       rejected: { title: 'Application not selected', body: `This time we went with other workers.${input.reason ? ` Note: ${String(input.reason).slice(0, 180)}` : ''}`, tone: 'warning', link: '/jobs' },
       completed: { title: 'Work approved — payment issued', body: `${payUsd.toFixed(2)} USD is now in your pending balance and clears within 72 hours.`, tone: 'success', link: '/profile' },
       revision_requested: { title: 'Revision requested', body: `${input.note ? String(input.note).slice(0, 180) : 'A few items need fixing.'} Resubmit from the Applications page.`, tone: 'warning', link: '/applications' },
       failed_qa: { title: 'Submission failed QA', body: input.reason ? String(input.reason).slice(0, 180) : 'The submission did not meet the quality bar.', tone: 'danger', link: '/applications' },
-      in_progress: { title: 'Work window opened', body: 'Your submission window is open. Upload your work before the deadline.', tone: 'info', link: '/applications' },
+      in_progress: { title: 'Work window opened', body: 'Your submission window is open. Do the task and submit it from your workspace.', tone: 'info', link: `/work/${input.applicationId}` },
     }
     const message = copy[to]
     if (message) await notifyUser(uid, message)
@@ -2692,7 +2692,38 @@ export async function recentActivity(limit = 12): Promise<{ id: string; label: s
  * the client cannot move its own application into `submitted_for_review` from a state where that
  * is not allowed, and cannot submit against someone else's application.
  */
-export async function submitWorkServer(uid: string, applicationId: string, note: string): Promise<{ status: 'submitted_for_review' }> {
+export type WorkDeliverableLink = { label: string; url: string }
+
+/** Validate + normalise the deliverable links a worker attaches to a submission. */
+export function sanitizeWorkLinks(raw: unknown): WorkDeliverableLink[] {
+  if (!Array.isArray(raw)) return []
+  const seen = new Set<string>()
+  const links: WorkDeliverableLink[] = []
+  for (const entry of raw.slice(0, 5)) {
+    if (!entry || typeof entry !== 'object') continue
+    const source = entry as Record<string, unknown>
+    const url = String(source.url ?? '').trim().slice(0, 500)
+    let parsed: URL | null = null
+    try {
+      parsed = new URL(url)
+    } catch {
+      continue
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') continue
+    if (seen.has(parsed.href)) continue
+    seen.add(parsed.href)
+    const label = String(source.label ?? '').trim().slice(0, 60)
+    links.push({ label: label || parsed.host, url: parsed.href })
+  }
+  return links
+}
+
+/**
+ * Worker-initiated start: `approved` → `in_progress`. The slot is already reserved at approval,
+ * so only ownership and the current state are checked. Idempotent: starting work that is already
+ * started is a no-op, which keeps double-clicked buttons harmless.
+ */
+export async function startWorkServer(uid: string, applicationId: string): Promise<{ status: 'in_progress'; started: boolean }> {
   const db = adminDb()
   const ref = db.collection('applications').doc(applicationId)
 
@@ -2700,25 +2731,286 @@ export async function submitWorkServer(uid: string, applicationId: string, note:
     const snap = await tx.get(ref)
     if (!snap.exists) throw new TransitionError('Application not found.', 404)
     const data = (snap.data() ?? {}) as Record<string, unknown>
-    if (data.workerUid !== uid) throw new TransitionError('You can only submit work for your own applications.', 403)
+    if (data.workerUid !== uid) throw new TransitionError('You can only start work on your own applications.', 403)
     const status = String(data.status)
-    if (status !== 'in_progress' && status !== 'revision_requested') {
-      throw new TransitionError(`Work cannot be submitted from a "${status.replace(/_/g, ' ')}" application.`, 409)
+    if (status === 'in_progress') return { status: 'in_progress' as const, started: false }
+    if (status !== 'approved') {
+      throw new TransitionError(`Work can only be started from an "approved" application (currently "${status.replace(/_/g, ' ')}").`, 409)
     }
     const now = new Date().toISOString()
     tx.set(
       ref,
       {
-        status: 'submitted_for_review',
-        workSubmittedAt: now,
-        workerNote: String(note ?? '').slice(0, 1000),
+        status: 'in_progress',
+        workStartedAt: now,
         updatedAt: now,
-        history: FieldValue.arrayUnion({ status: 'submitted_for_review', at: now, by: 'worker' }),
+        history: FieldValue.arrayUnion({ status: 'in_progress', at: now, by: 'worker' }),
       },
       { merge: true },
     )
+    return { status: 'in_progress' as const, started: true }
+  })
+}
+
+export async function submitWorkServer(
+  uid: string,
+  applicationId: string,
+  input: { note: string; links?: WorkDeliverableLink[] },
+): Promise<{ status: 'submitted_for_review' }> {
+  const db = adminDb()
+  const ref = db.collection('applications').doc(applicationId)
+  const note = String(input.note ?? '').slice(0, 2000)
+  const links = sanitizeWorkLinks(input.links)
+
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref)
+    if (!snap.exists) throw new TransitionError('Application not found.', 404)
+    const data = (snap.data() ?? {}) as Record<string, unknown>
+    if (data.workerUid !== uid) throw new TransitionError('You can only submit work for your own applications.', 403)
+    const status = String(data.status)
+    // An "approved" application can be submitted directly — the start is recorded implicitly so a
+    // "finished as soon as approved" flow cannot be dead-ended.
+    if (status !== 'approved' && status !== 'in_progress' && status !== 'revision_requested') {
+      throw new TransitionError(`Work cannot be submitted from a "${status.replace(/_/g, ' ')}" application.`, 409)
+    }
+    const now = new Date().toISOString()
+    const update: Record<string, unknown> = {
+      status: 'submitted_for_review',
+      workSubmittedAt: now,
+      workerNote: note,
+      workLinks: links,
+      updatedAt: now,
+      history: FieldValue.arrayUnion({ status: 'submitted_for_review', at: now, by: 'worker' }),
+    }
+    if (status === 'approved') {
+      update.workStartedAt = now
+      update.history = FieldValue.arrayUnion(
+        { status: 'in_progress', at: now, by: 'worker (auto-started on submission)' },
+        { status: 'submitted_for_review', at: now, by: 'worker' },
+      )
+    }
+    tx.set(ref, update, { merge: true })
     return { status: 'submitted_for_review' } as const
   })
+}
+
+// ─── Wallet clearing & withdrawals ───────────────────────────────────────────
+
+/**
+ * Move this member's overdue pending earnings into the available balance.
+ *
+ * The platform has no cron worker by default, so clearing is *lazy*: it runs whenever the member
+ * reads their wallet (the dashboard polls it), and optionally from the cron sweep route. The
+ * transaction marks each ledger row `cleared` before money moves, so a crash mid-write can never
+ * credit the same earnings twice — replaying after a partial write finds nothing pending.
+ *
+ * @returns how many USD moved from pending to available.
+ */
+export async function settleClearedEarnings(uid: string): Promise<number> {
+  const db = dbOrNull()
+  if (!db || !uid) return 0
+  const nowIso = new Date().toISOString()
+  try {
+    const snap = await db
+      .collection('wallet_ledger')
+      .where('uid', '==', uid)
+      .where('kind', '==', 'earning')
+      .where('status', '==', 'pending')
+      .where('clearedAt', '<=', nowIso)
+      .limit(50)
+      .get()
+    if (snap.empty) return 0
+    const total = snap.docs.reduce((sum, d) => sum + (Number((d.data() ?? {}).amountUsd ?? 0) || 0), 0)
+    if (total <= 0) return 0
+
+    await db.runTransaction(async (tx) => {
+      const userRef = db.collection('users').doc(uid)
+      const userSnapTx = await tx.get(userRef)
+      const userData = (userSnapTx.data() ?? {}) as Record<string, unknown>
+      const wallet = (userData.wallet ?? {}) as Record<string, unknown>
+      const pending = Math.round(((Number(wallet.pendingUsd ?? 0) || 0) - total) * 100) / 100
+      const available = Math.round(((Number(wallet.availableUsd ?? 0) || 0) + total) * 100) / 100
+      if (pending < 0) return // guard: ledger and balance drifted — do not go negative
+      tx.set(
+        userRef,
+        { 'wallet.availableUsd': available, 'wallet.pendingUsd': pending, updatedAt: nowIso },
+        { merge: true },
+      )
+      for (const doc of snap.docs) {
+        tx.set(doc.ref, { status: 'cleared', settledAt: nowIso }, { merge: true })
+      }
+    })
+    return total
+  } catch (err) {
+    console.warn('[FirestoreAdmin] settleClearedEarnings failed for uid=%s:', uid, err instanceof Error ? err.message : err)
+    return 0
+  }
+}
+
+/**
+ * Cron-sweep variant: settle every overdue earning row for up to `maxDocs` members in one pass.
+ * Called only from the secret-protected cron route so balances settle even for workers who are
+ * not online when their clearing window closes.
+ */
+export async function settleOverdueEarnings(maxDocs = 100): Promise<{ settledUsd: number; members: number }> {
+  const db = dbOrNull()
+  if (!db) return { settledUsd: 0, members: 0 }
+  const nowIso = new Date().toISOString()
+  const snap = await db
+    .collection('wallet_ledger')
+    .where('kind', '==', 'earning')
+    .where('status', '==', 'pending')
+    .where('clearedAt', '<=', nowIso)
+    .limit(maxDocs)
+    .get()
+  const uids = new Set<string>()
+  snap.docs.forEach((d) => {
+    const uid = String((d.data() ?? {}).uid ?? '')
+    if (uid) uids.add(uid)
+  })
+  let members = 0
+  let settledUsd = 0
+  for (const uid of uids) {
+    const moved = await settleClearedEarnings(uid)
+    if (moved > 0) {
+      members += 1
+      settledUsd = Math.round((settledUsd + moved) * 100) / 100
+    }
+  }
+  return { settledUsd, members }
+}
+
+/**
+ * Worker-initiated payout to the mobile money number on file. The requested amount leaves the
+ * available balance immediately (it is then "in transit") and is tracked as a `withdrawal` ledger
+ * row the operations console settles: mark it `sent` when the M-Pesa transfer has gone out, or
+ * `failed` to return the amount to the available balance.
+ */
+export async function requestWithdrawalServer(
+  uid: string,
+  amountUsd: number,
+  opts: { method?: string; email?: string } = {},
+): Promise<{ id: string; amountUsd: number; status: 'processing' }> {
+  const db = adminDb()
+  const amount = Math.round((Number(amountUsd) || 0) * 100) / 100
+  if (!Number.isFinite(amount) || amount <= 0) throw new TransitionError('Enter an amount greater than zero.', 400)
+  if (!isSafeDocIdLoose(uid)) throw new TransitionError('Unknown member.', 403)
+
+  const id = `wd_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
+
+  const created = await db.runTransaction(async (tx) => {
+    const userRef = db.collection('users').doc(uid)
+    const userSnap = await tx.get(userRef)
+    if (!userSnap.exists) throw new TransitionError('Profile not found. Please sign in again.', 404)
+    const data = (userSnap.data() ?? {}) as Record<string, unknown>
+    const wallet = (data.wallet ?? {}) as Record<string, unknown>
+    const available = Number(wallet.availableUsd ?? 0) || 0
+    const min = Number(process.env.MIN_WITHDRAWAL_USD ?? 10) || 0
+    if (amount < Math.max(1, min)) throw new TransitionError(`The minimum withdrawal is $${Math.max(1, min)}.`, 400)
+    if (amount > available) throw new TransitionError('That is more than your available balance.', 400)
+    const payoutNumber = String(wallet.payoutNumber ?? data.phone ?? '').trim()
+    if (!payoutNumber) throw new TransitionError('Add your mobile money number in Profile before withdrawing.', 400)
+
+    const now = new Date().toISOString()
+    tx.set(
+      userRef,
+      { 'wallet.availableUsd': Math.round((available - amount) * 100) / 100, updatedAt: now },
+      { merge: true },
+    )
+    tx.set(db.collection('wallet_ledger').doc(id), {
+      id,
+      uid,
+      kind: 'withdrawal',
+      amountUsd: amount,
+      currency: 'USD',
+      status: 'processing',
+      method: String(opts.method ?? 'M-Pesa').slice(0, 30),
+      payoutNumber,
+      requestedAt: now,
+      requestedBy: 'worker',
+    })
+    return { id, amountUsd: amount, status: 'processing' as const, payoutNumber }
+  })
+
+  await createAuditEntry(
+    'WITHDRAWAL_REQUESTED',
+    { withdrawalId: created.id, uid, amountUsd: created.amountUsd, payoutNumber: maskPhone(created.payoutNumber) },
+    opts.email || 'worker',
+  )
+  await notifyUser(uid, {
+    title: 'Payout requested',
+    body: `$${created.amountUsd.toFixed(2)} is being sent to ${maskPhone(created.payoutNumber)}. Mobile money transfers go out within 24 hours.`,
+    tone: 'info',
+    link: '/profile',
+  })
+  return { id: created.id, amountUsd: created.amountUsd, status: created.status }
+}
+
+/**
+ * Operator settlement of a withdrawal row. `sent` closes the transfer; `failed` returns the
+ * amount to the member's available balance so they can retry or see the money again. Both paths
+ * are audited and notify the worker.
+ */
+export async function settleWithdrawalServer(
+  withdrawalId: string,
+  to: 'sent' | 'failed',
+  actorEmail: string,
+): Promise<{ id: string; status: 'sent' | 'failed' }> {
+  const db = adminDb()
+  if (!isSafeDocIdLoose(withdrawalId)) throw new TransitionError('Unknown withdrawal.', 404)
+  const ref = db.collection('wallet_ledger').doc(withdrawalId)
+
+  const result = await db.runTransaction<{ uid: string; amountUsd: number; payoutNumber: string } | null>(async (tx) => {
+    const snap = await tx.get(ref)
+    if (!snap.exists) throw new TransitionError('Withdrawal not found.', 404)
+    const data = (snap.data() ?? {}) as Record<string, unknown>
+    if (String(data.kind) !== 'withdrawal') throw new TransitionError('This ledger row is not a withdrawal.', 409)
+    const status = String(data.status)
+    if (status === to) return null // idempotent replay — nothing to do
+    if (status !== 'processing') throw new TransitionError(`A ${status.replace(/_/g, ' ')} withdrawal cannot be re-settled.`, 409)
+
+    const now = new Date().toISOString()
+    const uid = String(data.uid ?? '')
+    const amount = Number(data.amountUsd ?? 0) || 0
+    const payoutNumber = String(data.payoutNumber ?? '')
+    tx.set(ref, { status: to, settledAt: now, settledBy: actorEmail }, { merge: true })
+    if (to === 'failed' && uid && amount > 0) {
+      const userRef = db.collection('users').doc(uid)
+      const userSnap = await tx.get(userRef)
+      const wallet = (((userSnap.data() ?? {}) as Record<string, unknown>).wallet ?? {}) as Record<string, unknown>
+      tx.set(
+        userRef,
+        { 'wallet.availableUsd': Math.round(((Number(wallet.availableUsd ?? 0) || 0) + amount) * 100) / 100, updatedAt: now },
+        { merge: true },
+      )
+    }
+    return { uid, amountUsd: amount, payoutNumber }
+  })
+
+  if (!result) return { id: withdrawalId, status: to } // no-op replay
+
+  await createAuditEntry(
+    to === 'sent' ? 'WITHDRAWAL_SENT' : 'WITHDRAWAL_FAILED_REFUNDED',
+    { withdrawalId, uid: result.uid, amountUsd: result.amountUsd, payoutNumber: maskPhone(result.payoutNumber) },
+    actorEmail,
+  )
+  if (result.uid) {
+    await notifyUser(result.uid, {
+      title: to === 'sent' ? 'Payout sent' : 'Payout could not be sent',
+      body:
+        to === 'sent'
+          ? `$${result.amountUsd.toFixed(2)} was sent to ${maskPhone(result.payoutNumber)}.`
+          : `$${result.amountUsd.toFixed(2)} could not be delivered to ${maskPhone(result.payoutNumber)} and has been returned to your available balance.`,
+      tone: to === 'sent' ? 'success' : 'warning',
+      link: '/profile',
+    })
+  }
+  return { id: withdrawalId, status: to }
+}
+
+/** Lenient id check for ids we mint ourselves (`wd_…`, Firebase uids). */
+function isSafeDocIdLoose(input: string): boolean {
+  return /^[a-zA-Z0-9_-]{1,128}$/.test(input)
 }
 
 /** Clears the "read" flag storm: mark one or all notifications read for their owner. */

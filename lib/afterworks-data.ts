@@ -151,6 +151,8 @@ export function formatUsd(amount: number): string {
     style: 'currency',
     currency: 'USD',
     minimumFractionDigits: 2,
+    // Up to 4 places so sub-dollar training fees (e.g. 0.0077) display as set.
+    maximumFractionDigits: 4,
   }).format(amount)
 }
 
@@ -227,10 +229,11 @@ export function getTrainingFeeCents(overrideAmount?: number | string | null): nu
  * The USD price of training for one job card. Admins set this per job; when the job carries no
  * fee of its own (older documents, seeded demo cards) the globally configured fee applies.
  * Unlike `getTrainingFeeUsd`, a per-job fee is taken at face value — no cents heuristic.
+ * Kept to 4 decimal places so sub-dollar fees (e.g. 0.0077) survive the round trip.
  */
 export function trainingFeeUsdFor(jobFeeUsd?: number | string | null): number {
   const num = Number(jobFeeUsd)
-  if (Number.isFinite(num) && num > 0) return Math.round(num * 100) / 100
+  if (Number.isFinite(num) && num > 0) return Math.round(num * 10000) / 10000
   return getTrainingFeeUsd()
 }
 
@@ -238,7 +241,7 @@ export function trainingFeeUsdFor(jobFeeUsd?: number | string | null): number {
 export function trainingFeeKesFor(jobFeeUsd?: number | string | null): number {
   const num = Number(jobFeeUsd)
   if (Number.isFinite(num) && num > 0) {
-    return Math.round((Math.round(num * 100) / 100) * getExchangeRateUsdToKes())
+    return Math.round((Math.round(num * 10000) / 10000) * getExchangeRateUsdToKes())
   }
   return getTrainingFeeKes()
 }

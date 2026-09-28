@@ -18,7 +18,7 @@
  *     no longer possible.
  */
 
-import { FieldValue, type Query } from 'firebase-admin/firestore'
+import { FieldValue, type Firestore, type Query } from 'firebase-admin/firestore'
 import { adminDb, dbOrNull, createAuditEntry, notifyUser } from '@/lib/firestore-admin'
 import { getExchangeRateUsdToKes, formatUsd } from '@/lib/afterworks-data'
 import { site } from '@/lib/site'
@@ -31,7 +31,12 @@ import {
   type ProfileCompletion,
 } from '@/lib/profile-completion'
 import { PHONE_CLAIMS_COLLECTION, assertPhoneAvailable, phoneTakenError } from '@/lib/account-uniqueness'
-import { REFERRAL_BONUS_USD, stageReferralBonusForCompletedProfile, notifyReferralQualified } from '@/lib/referral-server'
+import {
+  REFERRAL_BONUS_USD,
+  applyStagedWrites,
+  notifyReferralQualified,
+  stageReferralBonusForCompletedProfile,
+} from '@/lib/referral-server'
 import {
   describeDestination,
   isCancellablePayoutStatus,
@@ -416,9 +421,19 @@ export type SaveProfileResult = {
 export async function saveMemberProfile(
   uid: string,
   input: Record<string, unknown>,
-  { actorEmail }: { actorEmail?: string } = {},
+  {
+    actorEmail,
+    /**
+     * Test seam. The transaction this function opens is bound by Firestore's read-before-write
+     * rule, and the rule is only observable against something that enforces it — the tests drive
+     * this path with an in-memory Firestore that does (see
+     * `tests/profile-save-transaction.test.ts`). Passed as a parameter rather than read from a
+     * module global so production always gets `adminDb()`.
+     */
+    db: injectedDb,
+  }: { actorEmail?: string; db?: Firestore } = {},
 ): Promise<SaveProfileResult> {
-  const db = adminDb()
+  const db = injectedDb ?? adminDb()
   const { patch, dropped } = sanitiseProfilePatch(input, { method: input.preferredPayoutMethod })
   if (Object.keys(patch).length === 0) {
     const existing = await db.collection('users').doc(uid).get()
@@ -447,6 +462,13 @@ export async function saveMemberProfile(
   const claimRef = phoneResolution ? db.collection(PHONE_CLAIMS_COLLECTION).doc(phoneResolution.key) : null
 
   const result = await db.runTransaction(async (tx) => {
+    // ─── Phase 1: every read this transaction will ever make ───────────────────
+    //
+    // Firestore rejects a transaction that reads after it has written ("Firestore transactions
+    // require all reads to be executed before all writes"), and the rejection is a FAILED_PRECONDITION
+    // that reaches the member as a 500 — which is exactly what a profile save with a phone number
+    // used to do. So the two halves are explicit, and anything that decides *and* writes (the
+    // referral bonus) returns writes to be applied in phase 2 rather than applying them itself.
     const [userSnap, ledgerSnap] = await Promise.all([tx.get(userRef), tx.get(ledgerRef)])
     const current = (userSnap.exists ? userSnap.data() : {}) as Record<string, unknown>
     const wallet = asRecord(current.wallet)
@@ -465,6 +487,17 @@ export async function saveMemberProfile(
       previousClaimKey = heldKey && heldKey !== phoneResolution!.key ? heldKey : ''
     }
 
+    // The referral bonus is *staged* here — read now, written below — because the phone claim
+    // above may have to be written before the profile document is, and a read issued after that
+    // write would fail the whole transaction. It credits the *referrer's* pending balance and
+    // writes their statement line; this member's own balance is untouched by it.
+    const staged = completion.complete ? await stageReferralBonusForCompletedProfile(tx, uid) : null
+    const releasedReferral =
+      staged?.applied && staged.referrerUid
+        ? { referrerName: staged.referrerName || 'the person who referred you', bonusUsd: REFERRAL_BONUS_USD }
+        : null
+
+    // ─── Phase 2: every write ─────────────────────────────────────────────────
     const now = new Date().toISOString()
     // Defaults first, patch second, derived values third — see `buildProfileUpdate`. This used to be
     // `{ ...patch }` followed by `Object.assign(updates, blankProfileDocument(...))` for a document
@@ -483,23 +516,13 @@ export async function saveMemberProfile(
       if (previousClaimKey) tx.delete(db.collection(PHONE_CLAIMS_COLLECTION).doc(previousClaimKey))
     }
 
+    // The referrer's balance, statement line and the attribution flip, decided during the reads
+    // above. Applying them here keeps "the profile is complete" and "the referral is paid" atomic.
+    if (staged?.writes.length) applyStagedWrites(tx, staged.writes)
+
     const alreadyGranted = current.signupBonusGranted === true || ledgerSnap.exists
     let grantedBonus: { amountUsd: number } | null = null
     let availableUsd = Number(wallet.availableUsd ?? 0) || 0
-
-    // The referral bonus is staged here — still *before* any write in this transaction, because
-    // Firestore rejects a read issued after the first write. It credits the *referrer's* pending
-    // balance and writes their statement line; this member's own balance is untouched by it.
-    let releasedReferral: { referrerName: string; bonusUsd: number } | null = null
-    if (completion.complete) {
-      const staged = await stageReferralBonusForCompletedProfile(tx, uid)
-      if (staged.applied && staged.referrerUid) {
-        releasedReferral = {
-          referrerName: staged.referrerName || 'the person who referred you',
-          bonusUsd: REFERRAL_BONUS_USD,
-        }
-      }
-    }
 
     if (completion.complete && !alreadyGranted) {
       grantedBonus = { amountUsd: WELCOME_BONUS_USD }

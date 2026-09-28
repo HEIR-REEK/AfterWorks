@@ -32,7 +32,7 @@
  */
 
 import { adminDb, createAuditEntry, dbOrNull, notifyUser } from '@/lib/firestore-admin'
-import type { Transaction } from 'firebase-admin/firestore'
+import type { DocumentReference, Transaction } from 'firebase-admin/firestore'
 import { formatUsd } from '@/lib/afterworks-data'
 import { site } from '@/lib/site'
 import { sanitizeLine } from '@/lib/security-core'
@@ -243,17 +243,49 @@ export async function claimReferralForSignup(input: {
 // ─── Releasing the bonus ─────────────────────────────────────────────────────
 
 /**
+ * A write decided inside a transaction, held back until every read in that transaction is done.
+ *
+ * Firestore's rule is absolute: *"Firestore transactions require all reads to be executed before
+ * all writes."* A transaction body that writes and then reads is rejected as a whole with
+ * `FAILED_PRECONDITION`, which the route layer can only report as a 500. Splitting "decide" from
+ * "write" is what lets the profile save both serialise the phone claim (a write, and it has to be
+ * one, because the claim *is* the lock) and release the referral bonus (which needs reads).
+ */
+export type StagedWrite = {
+  ref: DocumentReference
+  data: Record<string, unknown>
+  options?: { merge?: boolean }
+}
+
+/** Applies staged writes. Call this only after the transaction has finished reading. */
+export function applyStagedWrites(tx: Transaction, writes: readonly StagedWrite[]): void {
+  for (const write of writes) tx.set(write.ref, write.data, write.options ?? {})
+}
+
+export type StagedReferralBonus = {
+  applied: boolean
+  referrerUid: string | null
+  referrerName: string
+  /** Empty unless the bonus is being released by this call. */
+  writes: StagedWrite[]
+}
+
+/**
  * Credits the referrer when the referred person's profile reaches 100%.
  *
  * **Called from inside the `saveMemberProfile` transaction.** It takes a transaction handle and
  * returns writes to be applied, rather than doing its own reads and writes, for two reasons:
  *
- *  1. Firestore requires every read in a transaction to happen before its first write, and
- *     `saveMemberProfile` has already read the user and the bonus ledger. Taking a plain `uid`
- *     and opening a fresh transaction here would deadlock the caller.
- *  2. The whole point is atomicity: "the profile is complete" and "the referral is credited" must
+ *  1. The whole point is atomicity: "the profile is complete" and "the referral is credited" must
  *     become true together, or not at all. A member who closes the tab mid-save must not end up
- *     with a completed profile and an unpaid referral.
+ *     with a completed profile and an unpaid referral. A second transaction here could not
+ *     promise that.
+ *  2. Firestore's read-before-write rule means the reads this function needs (`referrals/{uid}`,
+ *     the referrer's document) must be issued *before* the caller writes anything — and
+ *     `saveMemberProfile` writes the phone claim earlier than this. So the reads happen here and
+ *     the writes are returned to the caller, which applies them once the reading is over. This
+ *     function therefore performs **no writes at all**; the previous version called `tx.set` three
+ *     times, which is what made a profile save with a phone number fail with a 500.
  *
  * Writes the referrer's ledger row under a deterministic id, so the credit is idempotent by
  * construction rather than by a checked flag.
@@ -261,7 +293,7 @@ export async function claimReferralForSignup(input: {
 export async function stageReferralBonusForCompletedProfile(
   tx: Transaction,
   referredUid: string,
-): Promise<{ applied: boolean; referrerUid: string | null; referrerName: string }> {
+): Promise<StagedReferralBonus> {
   const db = adminDb()
 
   // A transactional read: the referral document is keyed by the referred uid, so this is a point
@@ -269,75 +301,80 @@ export async function stageReferralBonusForCompletedProfile(
   // transaction instead of needing a second one.
   const referralRef = db.collection('referrals').doc(referredUid)
   const referralSnap = await tx.get(referralRef)
-  if (!referralSnap.exists) return { applied: false, referrerUid: null, referrerName: '' }
+  if (!referralSnap.exists) return { applied: false, referrerUid: null, referrerName: '', writes: [] }
 
   const referral = (referralSnap.data() ?? {}) as Record<string, unknown>
   const referrerName = String(referral.referrerName ?? '')
   // Already qualified. Re-running the save must not pay twice.
-  if (referral.status === 'qualified') return { applied: false, referrerUid: String(referral.referrerUid ?? ''), referrerName }
+  if (referral.status === 'qualified') {
+    return { applied: false, referrerUid: String(referral.referrerUid ?? ''), referrerName, writes: [] }
+  }
 
   const referrerUid = String(referral.referrerUid ?? '')
-  if (!referrerUid || referrerUid === referredUid) return { applied: false, referrerUid: null, referrerName }
+  if (!referrerUid || referrerUid === referredUid) return { applied: false, referrerUid: null, referrerName, writes: [] }
 
   // The referrer must still exist and still be in good standing at the moment of release. A
   // referrer suspended after the signup does not get paid for it.
   const referrerRef = db.collection('users').doc(referrerUid)
   const referrerSnap = await tx.get(referrerRef)
-  if (!referrerSnap.exists) return { applied: false, referrerUid: null, referrerName }
+  if (!referrerSnap.exists) return { applied: false, referrerUid: null, referrerName, writes: [] }
   const referrer = (referrerSnap.data() ?? {}) as Record<string, unknown>
-  if (String(referrer.accountState ?? 'active') !== 'active') return { applied: false, referrerUid: null, referrerName }
-  if (referrer.kycVerified !== true) return { applied: false, referrerUid: null, referrerName }
+  if (String(referrer.accountState ?? 'active') !== 'active') return { applied: false, referrerUid: null, referrerName, writes: [] }
+  if (referrer.kycVerified !== true) return { applied: false, referrerUid: null, referrerName, writes: [] }
 
   const wallet = asRecord(referrer.wallet)
   const now = new Date().toISOString()
   const clearedAt = new Date(Date.now() + site.clearingWindowHours * 3600_000).toISOString()
   const bonus = REFERRAL_BONUS_USD
-
-  // 1. The referrer's pending balance.
-  tx.set(
-    referrerRef,
-    {
-      'wallet.pendingUsd': round2((Number(wallet.pendingUsd ?? 0) || 0) + bonus),
-      updatedAt: now,
-    },
-    { merge: true },
-  )
-
-  // 2. The referrer's statement line. Pending, with a clearing date — identical in shape to a
-  //    completed job, so the wallet panel and the settlement pass need to know nothing new.
   const ledgerId = REFERRAL_LEDGER_ID(referredUid)
-  tx.set(
-    db.collection('wallet_ledger').doc(ledgerId),
-    {
-      id: ledgerId,
-      uid: referrerUid,
-      kind: 'referral_bonus',
-      status: 'pending',
-      amountUsd: bonus,
-      currency: 'USD',
-      description: `Referral bonus — ${referral.referredName || 'a member you referred'} completed their profile`,
-      referralId: referredUid,
-      createdAt: now,
-      clearedAt,
-      createdBy: 'system:referral',
-    },
-    { merge: true },
-  )
 
-  // 3. Flip the attribution. The `status !== 'qualified'` read above plus this write is what makes
-  //    a replay a no-op, even if two profile saves for the same referred account race.
-  tx.set(
-    referralRef,
-    {
-      status: 'qualified' as ReferralStatus,
-      bonusUsd: bonus,
-      qualifiedAt: now,
-      ledgerId,
-    },
-    { merge: true },
-  )
-
-  return { applied: true, referrerUid, referrerName }
+  return {
+    applied: true,
+    referrerUid,
+    referrerName,
+    writes: [
+      // 1. The referrer's pending balance.
+      {
+        ref: referrerRef,
+        data: {
+          'wallet.pendingUsd': round2((Number(wallet.pendingUsd ?? 0) || 0) + bonus),
+          updatedAt: now,
+        },
+        options: { merge: true },
+      },
+      // 2. The referrer's statement line. Pending, with a clearing date — identical in shape to a
+      //    completed job, so the wallet panel and the settlement pass need to know nothing new.
+      {
+        ref: db.collection('wallet_ledger').doc(ledgerId),
+        data: {
+          id: ledgerId,
+          uid: referrerUid,
+          kind: 'referral_bonus',
+          status: 'pending',
+          amountUsd: bonus,
+          currency: 'USD',
+          description: `Referral bonus — ${referral.referredName || 'a member you referred'} completed their profile`,
+          referralId: referredUid,
+          createdAt: now,
+          clearedAt,
+          createdBy: 'system:referral',
+        },
+        options: { merge: true },
+      },
+      // 3. Flip the attribution. The `status !== 'qualified'` read above plus this write is what
+      //    makes a replay a no-op, even if two profile saves for the same referred account race.
+      {
+        ref: referralRef,
+        data: {
+          status: 'qualified' as ReferralStatus,
+          bonusUsd: bonus,
+          qualifiedAt: now,
+          ledgerId,
+        },
+        options: { merge: true },
+      },
+    ],
+  }
 }
 
 function round2(value: number): number {

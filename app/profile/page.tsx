@@ -251,6 +251,14 @@ function ProfilePageContent() {
       languages: languages.length > 0 ? languages : worker.languages,
     })
 
+    // Server validates all required fields and performs the one-time credit transaction.
+    try {
+      const token = await user?.getIdToken()
+      if (token) {
+        await fetch('/api/wallet/welcome-bonus', { method: 'POST', headers: { Authorization: `Bearer ${token}` } })
+      }
+    } catch { /* The dashboard can retry after a profile save. */ }
+
     setSaving(false)
     setIsEditing(false)
 

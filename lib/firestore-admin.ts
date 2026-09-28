@@ -129,6 +129,10 @@ export function resetAdminUsabilityProbe(): void {
 }
 
 /** Admin Firestore handle, or null when the SDK is unavailable (callers must degrade). */
+export function getAuthAdmin(): Auth {
+  return getAuth(getAdminApp())
+}
+
 export function dbOrNull(): Firestore | null {
   try {
     return getFirestore(getAdminApp())

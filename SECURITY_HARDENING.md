@@ -122,10 +122,47 @@ from-address, the copy and the link are ours; Firebase is only the place we reco
 | Consume | `POST /api/auth/verify-email` | Public (the click often happens on another device); Admin SDK sets `emailVerified: true` |
 | Gate | `components/app-gate.tsx`, `requireVerifiedUser` | Unverified members are held on `/verify-email`. Apply, KYC and Paystack init return `403 email_not_verified` |
 
-Disposable domains are still rejected up front by `lib/email-validation.ts`. Google sign-in that
-Firebase already marks `email_verified` skips the hold. `EMAIL_FROM` must be a domain verified in
-Resend; until then only `beth.t@example.com` delivers, and `/api/health` reports the mail check as
-degraded.
+Disposable domains are still rejected up front by `lib/email-validation.ts`. `EMAIL_FROM` must be
+a domain verified in Resend; until then only `beth.t@example.com` delivers, and `/api/health`
+reports the mail check as degraded.
+
+### Verification never speaks for the wrong account
+
+The link is opened on a phone, in a browser that may still hold *another* member's session — a
+shared device, a second profile, a colleague's tablet. The rule is that a verification may only
+ever be reported for the address in the link:
+
+| Rule | Where |
+| --- | --- |
+| The consume response names the **token's** address, never the session's | `POST /api/auth/verify-email` returns `email` from the claims, plus `sessionMatches` / `signedInEmail` from an *optional* bearer read |
+| The page renders that address, and only falls back to the session's when there is no link | `app/verify-email/page.tsx` — `subjectEmail` |
+| "Continue to profile" is unreachable when the session is a different account | same page — the crossed-account branch signs the person out and offers "Sign in as &lt;the verified address&gt;" instead |
+| The 5 s "verified elsewhere?" poll only runs with no token in the URL | same page — with a link, the consume is the source of truth, so the page stops re-refreshing an ID token |
+
+Google sign-in is judged on the **refreshed** `email_verified` claim, not on the snapshot attached
+to the credential `signInWithPopup` returned (`isEmailVerifiedNow` in
+`components/firebase-auth-provider.tsx`). The snapshot is what used to send a brand-new Google
+member to a verification screen for an inbox Google had already proven, and the same stale read
+was bouncing returning members who had verified on another device. The profile document is written
+with the state that is actually true rather than a blanket `emailVerified: false`.
+
+## Idle session timeout
+
+A signed-in tab is a wallet, a KYC record and a payout destination, and the Firebase ID token it
+carries is replayable for a month — so an unattended tab is an exposure a cookie's Max-Age does not
+cover.
+
+`components/idle-session-guard.tsx`, mounted once in `components/app-gate.tsx`:
+
+* **10 minutes** with no `pointerdown` / `keydown` / `wheel` / `touchstart` / `mousemove` ends the
+  session: `signOut()`, then `window.location.replace('/sign-in?reason=idle')` — a full navigation,
+  not `router.refresh()`, so no in-memory copy of the account is left on the screen.
+* The **last 60 seconds** are a visible countdown with "Stay signed in" (also bound to `Escape`,
+  and focused on appearance) so a member who is present is never logged out mid-task.
+* **Visibility is not activity.** A tab left in the background still times out — that is the whole
+  scenario — but any real interaction brings it straight back.
+* No session, no timer: the guard is inert on public pages and while signed out.
+* `NEXT_PUBLIC_IDLE_TIMEOUT_MINUTES` (1–120, `0` disables) in `.env.example`.
 
 ## Email logo and sender icon
 

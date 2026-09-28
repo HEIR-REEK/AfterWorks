@@ -257,6 +257,269 @@ export function isKnownCountry(code: unknown): boolean {
   return getCountry(code) !== null
 }
 
+// ─── Detection ───────────────────────────────────────────────────────────────
+
+/**
+ * "Where is this person?" — answered from the browser, before they type anything.
+ *
+ * A member who has never told us their country should not have to scroll a 190-row list to pick
+ * it: an operator opening a profile on a phone in Kampala should land on Uganda, and the same
+ * member in Nairobi on Kenya. The picker stays authoritative — this only preselects it.
+ *
+ * Two independent signals, and the order between them is the whole design:
+ *
+ *  1. **IANA time zone** (`Intl.DateTimeFormat().resolvedOptions().timeZone`). This is the
+ *     honest one. A phone in Kenya reports `Africa/Nairobi` no matter what language pack, region
+ *     setting or VPN the handset happens to carry.
+ *  2. **Locale region** (`navigator.language` → `en-KE`, `sw-KE`). A weak fallback, and last on
+ *     purpose: a large share of handsets ship with `en-US` regardless of where they are, so
+ *     trusting it first would confidently label Nairobi as United States.
+ *
+ * Returns `null` — never a guess — when neither signal names a country we can format a number
+ * for. Callers keep their own default, so an unknown device degrades to today's behaviour rather
+ * than to a wrong country pre-selected in a form a member then submits.
+ */
+const TIMEZONE_COUNTRIES: Readonly<Record<string, string>> = {
+  'Africa/Nairobi': 'KE',
+  'Africa/Mombasa': 'KE',
+  'Africa/Kampala': 'UG',
+  'Africa/Dar_es_Salaam': 'TZ',
+  'Africa/Dodoma': 'TZ',
+  'Africa/Kigali': 'RW',
+  'Africa/Bujumbura': 'BI',
+  'Africa/Juba': 'SS',
+  'Africa/Addis_Ababa': 'ET',
+  'Africa/Asmara': 'ER',
+  'Africa/Djibouti': 'DJ',
+  'Africa/Khartoum': 'SD',
+  'Africa/Mogadishu': 'SO',
+  'Africa/Johannesburg': 'ZA',
+  'Africa/Cape_Town': 'ZA',
+  'Africa/Maseru': 'LS',
+  'Africa/Mbabane': 'SZ',
+  'Africa/Windhoek': 'NA',
+  'Africa/Gaborone': 'BW',
+  'Africa/Harare': 'ZW',
+  'Africa/Lusaka': 'ZM',
+  'Africa/Maputo': 'MZ',
+  'Africa/Blantyre': 'MW',
+  'Africa/Lilongwe': 'MW',
+  'Africa/Port_Louis': 'MU',
+  'Africa/Victoria': 'SC',
+  'Africa/Lagos': 'NG',
+  'Africa/Porto-Novo': 'BJ',
+  'Africa/Cotonou': 'BJ',
+  'Africa/Accra': 'GH',
+  'Africa/Abidjan': 'CI',
+  'Africa/Bamako': 'ML',
+  'Africa/Ouagadougou': 'BF',
+  'Africa/Dakar': 'SN',
+  'Africa/Banjul': 'GM',
+  'Africa/Bissau': 'GW',
+  'Africa/Conakry': 'GN',
+  'Africa/Freetown': 'SL',
+  'Africa/Monrovia': 'LR',
+  'Africa/Lome': 'TG',
+  'Africa/Niamey': 'NE',
+  'Africa/Nouakchott': 'MR',
+  'Africa/Douala': 'CM',
+  'Africa/Cairo': 'EG',
+  'Africa/Casablanca': 'MA',
+  'Africa/El_Aaiun': 'EH',
+  'Africa/Algiers': 'DZ',
+  'Africa/Tunis': 'TN',
+  'Africa/Tripoli': 'LY',
+  'Africa/Libreville': 'GA',
+  'Africa/Brazzaville': 'CG',
+  'Africa/Kinshasa': 'CD',
+  'Africa/Luanda': 'AO',
+  'Europe/London': 'GB',
+  'Europe/Dublin': 'IE',
+  'Europe/Lisbon': 'PT',
+  'Europe/Madrid': 'ES',
+  'Europe/Paris': 'FR',
+  'Europe/Brussels': 'BE',
+  'Europe/Amsterdam': 'NL',
+  'Europe/Berlin': 'DE',
+  'Europe/Vienna': 'AT',
+  'Europe/Zurich': 'CH',
+  'Europe/Rome': 'IT',
+  'Europe/Prague': 'CZ',
+  'Europe/Warsaw': 'PL',
+  'Europe/Budapest': 'HU',
+  'Europe/Bucharest': 'RO',
+  'Europe/Sofia': 'BG',
+  'Europe/Athens': 'GR',
+  'Europe/Stockholm': 'SE',
+  'Europe/Oslo': 'NO',
+  'Europe/Copenhagen': 'DK',
+  'Europe/Helsinki': 'FI',
+  'Europe/Kyiv': 'UA',
+  'Europe/Istanbul': 'TR',
+  'Europe/Moscow': 'RU',
+  'America/New_York': 'US',
+  'America/Chicago': 'US',
+  'America/Denver': 'US',
+  'America/Phoenix': 'US',
+  'America/Los_Angeles': 'US',
+  'America/Anchorage': 'US',
+  'America/Detroit': 'US',
+  'America/Toronto': 'CA',
+  'America/Vancouver': 'CA',
+  'America/Winnipeg': 'CA',
+  'America/Halifax': 'CA',
+  'America/Mexico_City': 'MX',
+  'America/Bogota': 'CO',
+  'America/Lima': 'PE',
+  'America/Santiago': 'CL',
+  'America/Sao_Paulo': 'BR',
+  'America/Manaus': 'BR',
+  'America/Argentina/Buenos_Aires': 'AR',
+  'America/Santo_Domingo': 'DO',
+  'America/Panama': 'PA',
+  'America/Guatemala': 'GT',
+  'America/Costa_Rica': 'CR',
+  'America/Jamaica': 'JM',
+  'America/Puerto_Rico': 'PR',
+  'Asia/Jerusalem': 'IL',
+  'Asia/Dubai': 'AE',
+  'Asia/Riyadh': 'SA',
+  'Asia/Doha': 'QA',
+  'Asia/Kuwait': 'KW',
+  'Asia/Bahrain': 'BH',
+  'Asia/Muscat': 'OM',
+  'Asia/Amman': 'JO',
+  'Asia/Beirut': 'LB',
+  'Asia/Damascus': 'SY',
+  'Asia/Baghdad': 'IQ',
+  'Asia/Tehran': 'IR',
+  'Asia/Karachi': 'PK',
+  'Asia/Kolkata': 'IN',
+  'Asia/Colombo': 'LK',
+  'Asia/Dhaka': 'BD',
+  'Asia/Kathmandu': 'NP',
+  'Asia/Kabul': 'AF',
+  'Asia/Almaty': 'KZ',
+  'Asia/Tashkent': 'UZ',
+  'Asia/Bishkek': 'KG',
+  'Asia/Dushanbe': 'TJ',
+  'Asia/Ashgabat': 'TM',
+  'Asia/Baku': 'AZ',
+  'Asia/Tbilisi': 'GE',
+  'Asia/Yerevan': 'AM',
+  'Asia/Hong_Kong': 'HK',
+  'Asia/Shanghai': 'CN',
+  'Asia/Chongqing': 'CN',
+  'Asia/Taipei': 'TW',
+  'Asia/Tokyo': 'JP',
+  'Asia/Seoul': 'KR',
+  'Asia/Singapore': 'SG',
+  'Asia/Kuala_Lumpur': 'MY',
+  'Asia/Jakarta': 'ID',
+  'Asia/Manila': 'PH',
+  'Asia/Bangkok': 'TH',
+  'Asia/Ho_Chi_Minh': 'VN',
+  'Asia/Phnom_Penh': 'KH',
+  'Asia/Yangon': 'MM',
+  'Australia/Sydney': 'AU',
+  'Australia/Melbourne': 'AU',
+  'Australia/Brisbane': 'AU',
+  'Australia/Perth': 'AU',
+  'Australia/Adelaide': 'AU',
+  'Australia/Hobart': 'AU',
+  'Pacific/Auckland': 'NZ',
+  'Pacific/Fiji': 'FJ',
+  'Atlantic/Reykjavik': 'IS',
+}
+
+/**
+ * `Africa/Nairobi` → `KE`, `Asia/Tokyo` → `JP`, `Nowhere/Special` → `null`.
+ *
+ * Exact match only — deliberately no "every unlisted `Africa/*` zone must be Kenya" shortcut. That
+ * shortcut is wrong for a member in Bissau, and the failure mode is a form that opens
+ * pre-labelled with the wrong flag *and* the wrong dialling code, which they then have to notice
+ * and correct. Returning `null` leaves the picker exactly where it was.
+ */
+export function detectCountryFromTimeZone(timeZone: unknown): string | null {
+  const zone = String(timeZone ?? '').trim()
+  if (!zone) return null
+  const exact = TIMEZONE_COUNTRIES[zone]
+  return exact && isKnownCountry(exact) ? exact : null
+}
+
+/** `en-KE` → `KE`, `sw-UG` → `UG`, `en-US` → `US`, `en` → `null`. */
+export function detectCountryFromLocale(locale: unknown): string | null {
+  const tag = String(locale ?? '').trim()
+  if (!tag) return null
+  let region = ''
+  try {
+    // `Intl.Locale` understands `en-KE` and `ke` alike. Read the *explicit* region subtag and
+    // never `maximize()`: maximising would turn a bare `fr` into France on the strength of a
+    // language majority and confidently preselect the wrong country on the form.
+    region = new Intl.Locale(tag).region ?? ''
+  } catch {
+    const match = /[-_]([A-Za-z]{2})\b/.exec(tag)
+    region = match?.[1]?.toUpperCase() ?? ''
+  }
+  return region && isKnownCountry(region) ? region : null
+}
+
+/**
+ * The member's most likely country, or `null`.
+ *
+ * Server-safe: every browser API it touches is behind a `typeof window` guard, so it can be called
+ * during SSR (where it always answers `null`) without the caller needing its own guard.
+ */
+export function detectCountry(): string | null {
+  if (typeof window === 'undefined' || typeof Intl === 'undefined') return null
+  try {
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone
+    const fromZone = detectCountryFromTimeZone(zone)
+    if (fromZone) return fromZone
+  } catch {
+    /* fall through to the locale */
+  }
+  const locales = typeof navigator !== 'undefined' ? navigator.languages ?? [navigator.language] : []
+  for (const locale of locales ?? []) {
+    const fromLocale = detectCountryFromLocale(locale)
+    if (fromLocale) return fromLocale
+  }
+  return null
+}
+
+const DETECTED_COUNTRY_KEY = 'afterworks:detected-country'
+
+/**
+ * The last country we detected on this device.
+ *
+ * Read as well as detected, because a member who is filling the profile form in several sittings
+ * should land on the same country each time even if they travel, and because detection is a
+ * *preselection* — once a person has corrected it, the correction is the better answer.
+ *
+ * Every access is wrapped: storage throws outright in Safari private mode and when a site's cookies
+ * are blocked, and losing this convenience must never take a form down with it.
+ */
+export function recallDetectedCountry(): string | null {
+  if (typeof window === 'undefined') return null
+  try {
+    const stored = window.localStorage.getItem(DETECTED_COUNTRY_KEY)
+    return stored && isKnownCountry(stored) ? stored.toUpperCase() : null
+  } catch {
+    return null
+  }
+}
+
+/** Remembers a country so the next form on this device opens on it. Best effort, never throws. */
+export function rememberDetectedCountry(code: unknown): void {
+  const clean = String(code ?? '').trim().toUpperCase()
+  if (typeof window === 'undefined' || !isKnownCountry(clean)) return
+  try {
+    window.localStorage.setItem(DETECTED_COUNTRY_KEY, clean)
+  } catch {
+    /* storage blocked — detection still works for this page view */
+  }
+}
+
 // ─── Normalisation ───────────────────────────────────────────────────────────
 
 /** Everything except a leading `+` and digits is noise a person pasted in. */

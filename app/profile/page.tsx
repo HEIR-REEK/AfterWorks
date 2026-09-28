@@ -33,10 +33,25 @@ import { cn } from '@/lib/utils'
 import { formatKesValue, formatUsd } from '@/lib/afterworks-data'
 import { KENYAN_BANKS } from '@/lib/banks'
 import { CountrySelect, PhoneInput } from '@/components/phone-input'
-import { DEFAULT_COUNTRY, guessCountryFromE164, normalisePhone } from '@/lib/countries'
+import { DEFAULT_COUNTRY, guessCountryFromE164, isKnownCountry, normalisePhone } from '@/lib/countries'
 import { PAYOUT_STATUS_SHORT, PAYOUT_STATUS_TONE } from '@/lib/payouts'
 import { site } from '@/lib/site'
 import { StatusBadge } from '@/components/status-badge'
+
+/**
+ * The country a phone should open on.
+ *
+ * Three answers, in order of authority: what the profile already stores, then what the stored
+ * number's own dialling prefix says (a saved number is never re-guessed from a picker the member
+ * may since have changed), and finally **empty** — which means "not chosen yet", not "Kenya".
+ * That empty case is the one that lets `PhoneInput` preselect from the device's own time zone, so
+ * a member in Kampala is not handed a Kenyan flag and a +254 prefix before they have typed a digit.
+ */
+function initialPhoneCountry(storedCountry: string | undefined | null, storedPhone: string | undefined | null): string {
+  if (isKnownCountry(storedCountry)) return String(storedCountry).toUpperCase()
+  if (storedPhone && String(storedPhone).trim()) return guessCountryFromE164(storedPhone)
+  return ''
+}
 
 function ProfilePageContent() {
   const { worker, wallet, applications, getJob, saveProfile, claimWelcomeBonus, payouts, onboarding, refreshWallet, pending, mode } = useAfterWorks()
@@ -169,7 +184,7 @@ function ProfilePageContent() {
   const [formData, setFormData] = useState({
     name: worker.name || user?.displayName || user?.email?.split('@')[0] || '',
     phone: worker.phone || wallet.payoutNumber || '',
-    phoneCountry: worker.phoneCountry || guessCountryFromE164(worker.phone || wallet.payoutNumber) || DEFAULT_COUNTRY,
+    phoneCountry: initialPhoneCountry(worker.phoneCountry, worker.phone || wallet.payoutNumber),
     country: worker.country || '',
     zipCode: worker.zipCode || '',
     location: worker.location || '',
@@ -191,7 +206,7 @@ function ProfilePageContent() {
     setFormData({
       name: worker.name || user?.displayName || user?.email?.split('@')[0] || '',
       phone: worker.phone || wallet.payoutNumber || '',
-      phoneCountry: worker.phoneCountry || guessCountryFromE164(worker.phone || wallet.payoutNumber) || DEFAULT_COUNTRY,
+      phoneCountry: initialPhoneCountry(worker.phoneCountry, worker.phone || wallet.payoutNumber),
       country: worker.country || '',
       zipCode: worker.zipCode || '',
       location: worker.location || '',
@@ -214,7 +229,7 @@ function ProfilePageContent() {
     setFormData({
       name: worker.name || user?.displayName || user?.email?.split('@')[0] || '',
       phone: worker.phone || wallet.payoutNumber || '',
-      phoneCountry: worker.phoneCountry || guessCountryFromE164(worker.phone || wallet.payoutNumber) || DEFAULT_COUNTRY,
+      phoneCountry: initialPhoneCountry(worker.phoneCountry, worker.phone || wallet.payoutNumber),
       country: worker.country || '',
       zipCode: worker.zipCode || '',
       location: worker.location || '',
@@ -240,9 +255,14 @@ function ProfilePageContent() {
 
     // Validate the phone locally first: the same normaliser the server uses, so the message the
     // member reads before saving is the message they would have got from the server.
+    //
+    // An unresolved country only reaches here when detection and the member both came up empty —
+    // an unlabelled field on a device we could not place. Falling back to the platform default is
+    // what the form displayed anyway, so the save must agree with what was on screen.
+    const phoneCountry = isKnownCountry(formData.phoneCountry) ? formData.phoneCountry : DEFAULT_COUNTRY
     let phoneForSave = formData.phone.trim()
     if (formData.preferredPayoutMethod === 'M-Pesa' && phoneForSave) {
-      const parsed = normalisePhone(formData.phone, formData.phoneCountry)
+      const parsed = normalisePhone(formData.phone, phoneCountry)
       if (!parsed.ok) {
         setPhoneError(parsed.error)
         return
@@ -269,7 +289,7 @@ function ProfilePageContent() {
     const result = await saveProfile({
       name: formData.name.trim(),
       phone: phoneForSave,
-      phoneCountry: formData.phoneCountry,
+      phoneCountry,
       country: formData.country.trim(),
       zipCode: formData.zipCode.trim(),
       location: formData.location.trim(),
@@ -798,6 +818,9 @@ function ProfilePageContent() {
                   id="country"
                   value={formData.country}
                   onChange={(country) => setFormData({ ...formData, country })}
+                  // A brand-new profile opens on the country this device reports, and the member
+                  // can override it in one tap. Never fires once a country is already set.
+                  autoDetect
                   required
                 />
 
@@ -908,6 +931,7 @@ function ProfilePageContent() {
                       value={formData.phone}
                       country={formData.phoneCountry}
                       onChange={(phone, phoneCountry) => setFormData({ ...formData, phone, phoneCountry })}
+                      autoDetect
                       required
                       error={phoneError}
                       hint="Your M-Pesa number. It must match the name on your verified ID, and it can only be linked to one AfterWorks account."

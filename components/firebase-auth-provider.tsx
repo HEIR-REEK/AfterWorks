@@ -229,14 +229,49 @@ export function FirebaseAuthProvider({
       }
     }
 
+    /**
+     * Is this account's inbox proven — *right now*, according to Auth?
+     *
+     * The `User` object handed back by `signInWith*` carries a snapshot taken when its ID token
+     * was minted, and that snapshot is the reason Google sign-ups were being pushed onto the
+     * verification screen: a Firebase record whose address Google has already confirmed can still
+     * read `emailVerified: false` on a token issued moments earlier (the account was created with
+     * a password first, or the record was updated on another device), and the gate then treats a
+     * verified member as unverified and bounces them.
+     *
+     * The fix is to ask the one source that cannot be stale: refresh the ID token, whose
+     * `email_verified` claim is read from the Auth record at mint time. `reload()` first so the
+     * `User` object agrees, and both calls are allowed to fail — a network blip must not turn a
+     * good sign-in into an error, so the local flag is the fallback.
+     */
+    async function isEmailVerifiedNow(u: User): Promise<boolean> {
+      try {
+        await u.reload()
+        const result = await u.getIdTokenResult(true)
+        const claim = result.claims?.email_verified
+        if (typeof claim === 'boolean') return claim
+        return u.emailVerified === true
+      } catch {
+        return u.emailVerified === true
+      }
+    }
+
     async function signIn(email: string, password: string): Promise<AuthResult> {
       if (!authRef.current) {
         return { ok: false, error: 'Authentication is not configured on this deployment.', code: 'auth/configuration-not-found' }
       }
       try {
         const cred = await signInWithEmailAndPassword(authRef.current, email, password)
-        // Keep the session so they can resend from /verify-email; the app gate blocks profile/KYC.
-        if (!cred.user.emailVerified) {
+        // Publish the session *before* the network round trip below, or the app gate sees a null
+        // user for its duration and bounces a perfectly good sign-in to /sign-in.
+        setUser(cred.user)
+        // A returning member who verified on another device must not be sent back to
+        // /verify-email by a stale flag, and an unverified one must still be held at the gate.
+        const verified = await isEmailVerifiedNow(cred.user)
+        // `reload()` updated the object in place, so re-publish it: this is what the gate reads.
+        setUser(authRef.current?.currentUser ?? cred.user)
+        if (!verified) {
+          // Keep the session so they can resend from /verify-email; the app gate blocks profile/KYC.
           return { ok: true, needsEmailVerification: true }
         }
         return { ok: true }
@@ -391,7 +426,10 @@ export function FirebaseAuthProvider({
         }
 
         const name = cred.user.displayName || cred.user.email?.split('@')[0] || 'Worker'
-        await createUserDocument(cred.user.uid, name, cred.user.email || '')
+        // Ask Auth *before* writing the profile: Google has normally already proven the address,
+        // and the document must record what is true rather than a blanket "not yet".
+        const googleVerified = await isEmailVerifiedNow(cred.user)
+        await createUserDocument(cred.user.uid, name, cred.user.email || '', { emailVerified: googleVerified })
         setUser(cred.user)
         // Only for an account that did not exist a moment ago. `additionalInfo.isNewUser` is
         // Firebase's own answer to "was this a sign-up or a sign-in", and it matters here in a way
@@ -405,15 +443,21 @@ export function FirebaseAuthProvider({
           await attachReferral(cred.user)
           await recordTermsAcceptance(cred.user)
         }
-        if (!cred.user.emailVerified) {
+        // Google has already proven the address it vouched for, so the *record* almost always
+        // says verified. Ask the record rather than the snapshot on the credential we were handed
+        // — reading the snapshot is what used to send a brand-new Google member to the
+        // verification screen for an inbox Google had already confirmed.
+        if (!googleVerified) {
           try {
             const token = await cred.user.getIdToken()
             await requestVerificationEmail(token)
           } catch {
             /* resend is available on /verify-email */
           }
+          setUser(authRef.current?.currentUser ?? cred.user)
           return { ok: true, isNewUser: additionalInfo?.isNewUser ?? false, needsEmailVerification: true }
         }
+        setUser(authRef.current?.currentUser ?? cred.user)
         return { ok: true, isNewUser: additionalInfo?.isNewUser ?? false }
       } catch (err) {
         const code = firebaseErrorCode(err)

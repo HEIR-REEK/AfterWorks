@@ -169,14 +169,27 @@ function currentMonthYear(): string {
 /**
  * Called once on sign-up. Creates the member document in its inert initial state; privileges are
  * deliberately absent (see firestore.rules `create` clause, which rejects otherwise).
+ *
+ * `emailVerified` is the caller's answer, not a hard-coded `false`. A Google sign-up lands here
+ * with an address Google has *already* proven, and writing `false` for it left the profile
+ * document permanently disagreeing with the Auth record: the console showed the member as
+ * unverified, support chased an inbox that was never in doubt, and the "emailVerified" column
+ * could not be trusted as a record of anything.
  */
-export async function createUserDocument(uid: string, name: string, email: string): Promise<void> {
+export async function createUserDocument(
+  uid: string,
+  name: string,
+  email: string,
+  opts: { emailVerified?: boolean } = {},
+): Promise<void> {
   const db = getDB()
   if (!db) return
 
   try {
     const userRef = doc(db, 'users', uid)
     if ((await getDoc(userRef)).exists()) return
+
+    const emailVerified = opts.emailVerified === true
 
     await setDoc(
       userRef,
@@ -188,7 +201,10 @@ export async function createUserDocument(uid: string, name: string, email: strin
         qualityScore: 100,
         jobsCompleted: 0,
         kycVerified: false,
-        emailVerified: false,
+        emailVerified,
+        // Only a verified inbox has a verification *time*; leaving it set on an unverified
+        // account is how "verified since" starts meaning "signed up on".
+        ...(emailVerified ? { emailVerifiedAt: new Date().toISOString() } : {}),
         accountState: 'active',
         role: 'user',
         isAdmin: false,

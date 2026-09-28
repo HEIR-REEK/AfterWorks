@@ -8,6 +8,7 @@ import { AfterWorksProvider } from '@/components/afterworks-provider'
 import { AppShell } from '@/components/app-shell'
 import { MaintenanceScreen } from '@/components/maintenance-screen'
 import { MaintenanceProvider, useMaintenance } from '@/components/maintenance-provider'
+import { IdleSessionGuard } from '@/components/idle-session-guard'
 import { useAdminSession } from '@/lib/admin'
 import { matchesBlockedPath } from '@/lib/maintenance-shared'
 
@@ -30,6 +31,11 @@ export function AppGate({ children }: { children: React.ReactNode }) {
   return (
     <MaintenanceProvider>
       <Gate>{children}</Gate>
+      {/* Ten minutes without input ends the session and reloads the page — see the component for
+          why an idle *signed-in* tab is the thing worth closing. Mounted at the top of the tree
+          rather than inside the shell so it also covers the public routes a signed-in member can
+          wander onto (/verify-email, /kyc/callback), and it is a no-op while signed out. */}
+      <IdleSessionGuard />
     </MaintenanceProvider>
   )
 }

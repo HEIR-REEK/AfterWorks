@@ -40,6 +40,33 @@ Comprehensive documentation of all implemented features in the AfterWorks platfo
 - **Phone Verification:** One account per phone number (prevents duplicate accounts)
 - **Location Tracking:** Used for job recommendations, tax purposes, and time-zone based scheduling
 
+### 1.2b Country auto-detection
+- **What:** The country picker on the profile form opens on the country the device reports
+- **Signals:** IANA time zone first (`Intl.DateTimeFormat().resolvedOptions().timeZone` → ISO-3166),
+  locale region as a fallback; the last choice is remembered on the device
+- **Never guesses:** an unknown zone, or one for a country outside the dial plan, leaves the picker
+  exactly where it was — a wrong flag pre-selected in a payout form is worse than an empty one
+- **Never overwrites:** it fires once, only while the number is empty and no country is set, and
+  says so under the field so the member knows it was inferred, not asked
+- **One flag:** the pickers carry the flag in the option label only — a native `<select>` paints
+  the selected option itself, so an overlaid second flag was rendering twice
+
+### 1.2c Verification identity safety
+- **Rule:** a verification is only ever reported for the address in the link, never for whichever
+  account a browser happens to be signed in as
+- **Cross-account case:** opening a link on a device signed in as somebody else confirms the link's
+  account, names that address, and offers "Sign in as &lt;address&gt;" instead of dropping the
+  member into the other account's profile
+- **Google sign-in:** judged on the refreshed `email_verified` claim, so an account Google already
+  proved is never pushed back onto the verification screen
+
+### 1.2d Idle session timeout
+- **What:** 10 minutes without input signs the member out and reloads the page
+- **Why:** a signed-in tab left on a device is a wallet, a KYC record and a replayable ID token
+- **Grace:** the last minute counts down with a "Stay signed in" button; background tabs still time
+  out, any real interaction resets the clock
+- **Config:** `NEXT_PUBLIC_IDLE_TIMEOUT_MINUTES` (1–120, `0` disables)
+
 ### 1.3 Phone Verification (OTP)
 - **Endpoint:** `POST /auth/verify-phone`
 - **Test Code:** `123456` (for development)

@@ -11,6 +11,7 @@ import { MaintenanceProvider, useMaintenance } from '@/components/maintenance-pr
 import { IdleSessionGuard } from '@/components/idle-session-guard'
 import { useAdminSession } from '@/lib/admin'
 import { matchesBlockedPath } from '@/lib/maintenance-shared'
+import { isPublicRoute } from '@/lib/public-routes'
 import { ConfigurationRequired, DemoModeBanner, demoModeAllowed } from '@/components/app-mode-notices'
 
 /**
@@ -33,9 +34,12 @@ const ALLOW_DEMO_MODE = demoModeAllowed(process.env.NEXT_PUBLIC_ALLOW_DEMO_MODE)
  *  • Admin bypass was decided from `sessionStorage`, so any tab that could set a key could walk
  *    through the outage and into the console. Bypass now comes from a signed HttpOnly cookie
  *    verified by `useAdminSession()`, plus the server-side allow-list check.
+ *  • "Public" was a list written inline here, and it was missing the legal documents — so a
+ *    signed-out visitor who opened `/terms` from the sign-up form was server-rendered the whole
+ *    document and then pulled off it to `/sign-in`, and the same pages were replaced by the
+ *    configuration wall on a deployment that had no Firebase. The list now lives in
+ *    `lib/public-routes.ts` with the reasoning for each entry, and is covered by a test.
  */
-
-const PUBLIC_ROUTES = ['/sign-in', '/sign-up', '/forgot-password', '/verify-email', '/kyc/callback', '/maintenance', '/status']
 
 export function AppGate({ children }: { children: React.ReactNode }) {
   return (
@@ -58,7 +62,7 @@ function Gate({ children }: { children: React.ReactNode }) {
   const admin = useAdminSession()
   const [redirectArmed, setRedirectArmed] = useState(false)
 
-  const isPublic = useMemo(() => PUBLIC_ROUTES.some((route) => pathname === route || pathname.startsWith(`${route}/`)), [pathname])
+  const isPublic = useMemo(() => isPublicRoute(pathname), [pathname])
   const isAdminRoute = pathname.startsWith('/admin') || pathname.startsWith('/api/admin')
   // Nothing below the gate can show a real account when there is no Firebase, and the console brings
   // its own (server-side) session. Public routes still render — they explain the situation themselves.

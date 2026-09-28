@@ -11,19 +11,30 @@ import {
 } from 'react'
 import { initializeApp, getApps, getApp, type FirebaseApp } from 'firebase/app'
 import {
-  getAuth,
-  onAuthStateChanged,
-  signInWithEmailAndPassword,
+  browserLocalPersistence,
+  browserSessionPersistence,
   createUserWithEmailAndPassword,
-  updateProfile,
-  signOut as fbSignOut,
-  GoogleAuthProvider,
-  signInWithPopup,
   getAdditionalUserInfo,
+  getAuth,
+  GoogleAuthProvider,
+  onAuthStateChanged,
+  setPersistence,
+  signInWithEmailAndPassword,
+  signInWithPopup,
+  signOut as fbSignOut,
+  updateProfile,
   type Auth,
   type User,
 } from 'firebase/auth'
 import { createUserDocument } from '@/lib/firestore'
+import {
+  clearAuthSessionMarker,
+  hasAuthSessionMarker,
+  markAuthSession,
+  resolveAuthPersistence,
+  shouldEndRestoredSession,
+  type AuthPersistence,
+} from '@/lib/auth-policy'
 
 export type FirebaseConfig = {
   apiKey: string
@@ -69,6 +80,15 @@ const AuthContext = createContext<AuthContextValue | null>(null)
 
 /** Where a `?ref=` code waits between page loads. Session-scoped: it dies with the tab. */
 const REFERRAL_STORAGE_KEY = 'afterworks:ref'
+
+/**
+ * How long this device remembers a signed-in member.
+ *
+ * `session` (the default) means closing the browser ends the session; `local` restores the old
+ * "stay signed in on this device" behaviour. Read statically so Next inlines it into the client
+ * bundle — see `lib/auth-policy.ts` for why the default is the strict one.
+ */
+const AUTH_PERSISTENCE: AuthPersistence = resolveAuthPersistence(process.env.NEXT_PUBLIC_AUTH_PERSISTENCE)
 
 function isConfigComplete(config: FirebaseConfig) {
   return Boolean(config.apiKey && config.authDomain && config.projectId && config.appId)
@@ -155,16 +175,54 @@ export function FirebaseAuthProvider({
     const app: FirebaseApp = getApps().length ? getApp() : initializeApp(config)
     const auth = getAuth(app)
     authRef.current = auth
-    const unsub = onAuthStateChanged(auth, (u) => {
-      setUser(u)
-      setLoading(false)
-      if (!u) {
-        setClaims(null)
-        return
+
+    /**
+     * Persistence is chosen *before* the first auth event, so a sign-in made from this page lands
+     * in the storage the policy names — and nowhere else.
+     *
+     * It is also the honest place to end a session that was restored from durable storage.
+     * `setPersistence` cannot delete a credential the SDK has already rehydrated, so a restored
+     * session with no browser-session marker behind it — the exact thing that "keeps me signed in
+     * after closing Chrome" — is signed out once, here, and the member is asked to sign in again.
+     * From then on the marker is set on every sign-in and dies with the browser.
+     */
+    let cancelled = false
+    let unsubscribe: (() => void) | null = null
+
+    void (async () => {
+      try {
+        await setPersistence(auth, AUTH_PERSISTENCE === 'local' ? browserLocalPersistence : browserSessionPersistence)
+      } catch (err) {
+        // A browser that refuses the storage still gets a session — it just will not be remembered.
+        console.warn('[auth] persistence not set:', err instanceof Error ? err.message : err)
       }
-      // Read the token claims once per session, and again whenever the tab regains focus.
-      void u.getIdTokenResult().then((result) => setClaims({ admin: result.claims?.admin === true })).catch(() => setClaims(null))
-    })
+      if (cancelled) return
+
+      unsubscribe = onAuthStateChanged(auth, (u) => {
+        if (
+          u &&
+          shouldEndRestoredSession({
+            persistence: AUTH_PERSISTENCE,
+            hasUser: true,
+            hasSessionMarker: hasAuthSessionMarker(),
+          })
+        ) {
+          void fbSignOut(auth)
+          setUser(null)
+          setClaims(null)
+          setLoading(false)
+          return
+        }
+        setUser(u)
+        setLoading(false)
+        if (!u) {
+          setClaims(null)
+          return
+        }
+        // Read the token claims once per session, and again whenever the tab regains focus.
+        void u.getIdTokenResult().then((result) => setClaims({ admin: result.claims?.admin === true })).catch(() => setClaims(null))
+      })
+    })()
     const onFocus = () => {
       const current = authRef.current?.currentUser
       if (!current) return
@@ -180,7 +238,8 @@ export function FirebaseAuthProvider({
     }
     if (typeof window !== 'undefined') window.addEventListener('focus', onFocus)
     return () => {
-      unsub()
+      cancelled = true
+      unsubscribe?.()
       if (typeof window !== 'undefined') window.removeEventListener('focus', onFocus)
     }
   }, [configured, config])
@@ -262,6 +321,9 @@ export function FirebaseAuthProvider({
       }
       try {
         const cred = await signInWithEmailAndPassword(authRef.current, email, password)
+        // This browser session signed in deliberately: mark it, so the policy's "restored from
+        // somewhere durable" check does not end a session the member just started.
+        markAuthSession()
         // Publish the session *before* the network round trip below, or the app gate sees a null
         // user for its duration and bounces a perfectly good sign-in to /sign-in.
         setUser(cred.user)
@@ -291,6 +353,7 @@ export function FirebaseAuthProvider({
       }
       try {
         const cred = await createUserWithEmailAndPassword(authRef.current, email, password)
+        markAuthSession()
         if (name) await updateProfile(cred.user, { displayName: name })
         await createUserDocument(cred.user.uid, name || email.split('@')[0], email)
         setUser(cred.user)
@@ -392,6 +455,7 @@ export function FirebaseAuthProvider({
     }
 
     async function signOut() {
+      clearAuthSessionMarker()
       if (authRef.current) await fbSignOut(authRef.current)
     }
 
@@ -426,6 +490,9 @@ export function FirebaseAuthProvider({
         }
 
         const name = cred.user.displayName || cred.user.email?.split('@')[0] || 'Worker'
+        // Google sign-in succeeded and this visitor is being admitted, so this browser session has
+        // now signed in deliberately: mark it before anything else can observe the session.
+        markAuthSession()
         // Ask Auth *before* writing the profile: Google has normally already proven the address,
         // and the document must record what is true rather than a blanket "not yet".
         const googleVerified = await isEmailVerifiedNow(cred.user)

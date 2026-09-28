@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation'
 import {
   AlertCircle,
   CheckCircle2,
+  Clock3,
   Eye,
   EyeOff,
   KeyRound,
@@ -49,9 +50,12 @@ export default function AdminLoginPage() {
   // Read from the URL rather than `useSearchParams()` so the form works as both a page and the
   // layout's embedded fallback, with no Suspense boundary to keep in sync.
   const [nextPath, setNextPath] = useState<string | null>(null)
+  const [idleNotice, setIdleNotice] = useState(false)
 
   useEffect(() => {
-    setNextPath(safeAdminReturnPath(new URLSearchParams(window.location.search).get('next') ?? ''))
+    const params = new URLSearchParams(window.location.search)
+    setNextPath(safeAdminReturnPath(params.get('next') ?? ''))
+    setIdleNotice(params.get('reason') === 'idle')
   }, [])
 
   useEffect(() => {
@@ -107,6 +111,16 @@ export default function AdminLoginPage() {
             </p>
           )}
         </div>
+
+        {idleNotice && (
+          <div className="mb-4 flex items-start gap-2.5 rounded-xl border border-border bg-muted/40 p-3 text-xs text-muted-foreground" role="status">
+            <Clock3 className="mt-0.5 size-4 shrink-0" />
+            <span>
+              You were signed out after a period of inactivity. Sign in again to carry on — nothing you had saved
+              was lost.
+            </span>
+          </div>
+        )}
 
         {view.blocking && (
           <div className="mb-4 flex items-start gap-2.5 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-800 dark:text-amber-200">

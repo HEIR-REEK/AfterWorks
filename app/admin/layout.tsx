@@ -26,6 +26,7 @@ import { cn } from '@/lib/utils'
 import { useAdminSession } from '@/lib/admin'
 import { useMaintenance } from '@/components/maintenance-provider'
 import { BrandMark } from '@/components/brand'
+import { AdminIdleGuard } from '@/components/admin-idle-guard'
 import AdminLoginPage from './login/page'
 
 // `ownerOnly` sections are hidden from staff sessions — the API guards enforce the same split,
@@ -82,6 +83,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   return (
     <div className="flex min-h-dvh flex-col bg-background text-foreground">
+      {/* Ends an inactive console session — the console is excluded from the member idle guard, so
+          this is its own. See components/admin-idle-guard.tsx. */}
+      <AdminIdleGuard />
       {/* Console header — same visual language as the worker shell, one notch denser. */}
       <header className="sticky top-0 z-40 border-b border-border bg-background/90 backdrop-blur">
         <div className="mx-auto flex h-14 w-full max-w-7xl items-center gap-3 px-4 sm:px-6">

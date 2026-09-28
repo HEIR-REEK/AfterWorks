@@ -311,12 +311,23 @@ export async function getMemberWallet(uid: string): Promise<WalletSnapshot | nul
 
 // ─── Profile save (+ the welcome reward it can release) ──────────────────────
 
-/** The inert profile document shared by public sign-up, console onboarding and first profile save. */
+/**
+ * The inert profile document shared by public sign-up, console onboarding and first profile save.
+ *
+ * One rule governs every key here: **defaults only**. The caller layers the member's patch and the
+ * derived values on top, so anything this function emits can be overwritten but never overwrite.
+ *
+ * The wallet is written as leaf paths rather than a nested `wallet` object on purpose. The same
+ * write also carries `wallet.payoutNumber` and `wallet.availableUsd`, and Firestore refuses a
+ * request that addresses both a field and a path inside it ("Cannot update field 'wallet' and
+ * 'wallet.payoutNumber' in the same write"), so a nested object here made the *first* save of a
+ * member with no document fail outright — or, once the empties landed, take the values with it.
+ */
 function blankProfileDocument(uid: string, patch: Record<string, unknown>): Record<string, unknown> {
   const now = new Date().toISOString()
   return {
     uid,
-    name: typeof patch.name === 'string' ? patch.name : '',
+    name: '',
     email: typeof patch.email === 'string' ? patch.email : '',
     location: '',
     country: 'Kenya',
@@ -332,10 +343,41 @@ function blankProfileDocument(uid: string, patch: Record<string, unknown>): Reco
     languages: [],
     preferredPayoutMethod: 'M-Pesa',
     paidTrainings: [],
-    wallet: { pendingUsd: 0, availableUsd: 0, payoutNumber: '', payoutHoldUsd: 0 },
+    'wallet.pendingUsd': 0,
+    'wallet.availableUsd': 0,
+    'wallet.payoutNumber': '',
+    'wallet.payoutHoldUsd': 0,
     signupBonusGranted: false,
     createdAt: now,
   }
+}
+
+/**
+ * The document one profile save writes — and the ordering rule that makes it correct.
+ *
+ * Exported because the order is the bug that was reported ("I click save and it deletes the
+ * contents of the fields"), and a rule that important deserves a test rather than a comment:
+ *
+ *   1. inert defaults, and only when there is no document yet (an account created by console
+ *      onboarding, a phone claim, or an interrupted sign-up);
+ *   2. the member's patch, on top — never underneath;
+ *   3. the derived values the caller adds afterwards (the payout handle, the welcome reward), which
+ *      must be able to overwrite a default of zero.
+ *
+ * The wallet defaults are leaf paths (`wallet.availableUsd`), never a nested `wallet` object: the
+ * same write addresses `wallet.payoutNumber` and `wallet.availableUsd`, and Firestore refuses a
+ * request that covers both a field and a path inside it.
+ */
+export function buildProfileUpdate(input: {
+  uid: string
+  exists: boolean
+  patch: Record<string, unknown>
+  now?: string
+}): Record<string, unknown> {
+  const updates: Record<string, unknown> = input.exists ? {} : blankProfileDocument(input.uid, input.patch)
+  Object.assign(updates, input.patch)
+  updates.updatedAt = input.now ?? new Date().toISOString()
+  return updates
 }
 
 export type SaveProfileResult = {
@@ -424,7 +466,11 @@ export async function saveMemberProfile(
     }
 
     const now = new Date().toISOString()
-    const updates: Record<string, unknown> = { ...patch, updatedAt: now }
+    // Defaults first, patch second, derived values third — see `buildProfileUpdate`. This used to be
+    // `{ ...patch }` followed by `Object.assign(updates, blankProfileDocument(...))` for a document
+    // that did not exist, so the blanks overwrote the member's own save (location, country, bio,
+    // skills, languages, payout method all written empty) and the page redrew as an empty form.
+    const updates = buildProfileUpdate({ uid, exists: userSnap.exists, patch, now })
     if (actorEmail) updates.lastModifiedBy = actorEmail
     if (phoneResolution) updates.phoneKey = phoneResolution.key
     // The payout handle follows the phone number the member typed, so a first payout does not ask
@@ -476,9 +522,8 @@ export async function saveMemberProfile(
       })
     }
 
-    // First save against a credential that had no document: write the same inert shape public
-    // sign-up writes, then the patch on top.
-    if (!userSnap.exists) Object.assign(updates, blankProfileDocument(uid, patch))
+    // The inert defaults (when there was no document) are already at the bottom of `updates`, with
+    // the patch and every derived value layered on top — see the comment where `updates` is built.
     tx.set(userRef, updates, { merge: true })
     return {
       completion,

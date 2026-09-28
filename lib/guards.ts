@@ -368,13 +368,16 @@ export async function requireUser(req: NextRequest): Promise<GuardResult<UserPri
       return { ok: false, response: fail(401, 'Your session expired. Please sign in again.', { code: 'auth_invalid' }) }
     }
     const email = (decoded.email || '').toLowerCase()
+    // The `admin` claim is deliberately not accepted on its own here either — it is minted onto
+    // member documents (and trusted by firestore.rules), so it is a UI hint, not a credential. Only
+    // the role table answers "is this person staff?". See `bearerAdminPrincipal`.
     return {
       ok: true,
       value: {
         uid: decoded.uid,
         email,
         emailVerified: Boolean(decoded.email_verified),
-        isAdmin: (decoded as unknown as { admin?: boolean }).admin === true || (await isPrivilegedEmail(email)),
+        isAdmin: await isPrivilegedEmail(email),
       },
     }
   } catch (err) {

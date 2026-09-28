@@ -18,7 +18,7 @@ import {
   Wallet,
   X,
 } from 'lucide-react'
-import { adminApi, useAdminSession, type AdminUserRow } from '@/lib/admin'
+import { adminApi, useAdminSession, type AdminUserDetail, type AdminUserRow } from '@/lib/admin'
 import { AdminCard, Field, Pager, ReasonDialog, inputClass, useToasts } from '@/components/admin-ui'
 import { Button } from '@/components/ui/button'
 import { StatusBadge } from '@/components/status-badge'
@@ -34,30 +34,14 @@ import { cn } from '@/lib/utils'
  * escalation path, since the rules let a member write their own document. Now it reads one
  * redacted, cursor-paginated page from the API and every mutation goes through
  * `PATCH /api/admin/users` where it is authorised, reasoned and audited.
+ *
+ * Every field the drawer reads is normalised before it gets here (`adminUserDetailFromDoc`), so a
+ * document that is not really a profile — a `users/{uid}` stub written by a phone claim or a terms
+ * acceptance — draws an empty *labelled* row. It used to throw `Cannot read properties of undefined
+ * (reading 'availableUsd')` and take the whole console down with it.
  */
 
-type UserDetail = AdminUserRow & {
-  phone?: string
-  payoutNumberMasked?: string
-  skills?: string[]
-  languages?: string[]
-  bio?: string
-  rating?: number
-  jobsApplied?: number
-  walletNote?: string
-  moderationReason?: string
-  signupBonusGranted?: boolean
-  welcomeBonusPending?: boolean
-  signupBonusGrantedAt?: string | null
-  kycProvider?: string
-  kycLevel?: string
-  kycRejectedAt?: string | null
-  kycOnHoldAt?: string | null
-  career?: string
-  bank?: Record<string, unknown> | null
-  updatedAt?: string | null
-  deletedAt?: string | null
-}
+type UserDetail = AdminUserDetail
 
 
 
@@ -117,7 +101,8 @@ function UsersPageInner() {
     setLoading(true)
     try {
       const data = await adminApi.users({ cursor: cursor ?? undefined, pageSize: 25, search, state })
-      setRows(data.rows)
+      // A degraded read can answer without a page: render an empty table, never an exception.
+      setRows(Array.isArray(data.rows) ? data.rows : [])
       setNextCursor((data.nextCursor as string | null) ?? null)
       setHasMore(data.hasMore === true)
       setDegraded(data.degraded as string | undefined)
@@ -139,7 +124,8 @@ function UsersPageInner() {
     setBusy(true)
     try {
       const data = await adminApi.userDetail(uid)
-      setSelected(data.user as UserDetail)
+      // `data.user` is already the normalised drawer shape — never the raw document.
+      setSelected(data.user)
       setAccount((data.account as NonNullable<AdminUserRow['auth']> | undefined) ?? { exists: false, disabled: false, emailVerified: false, createdAt: null, lastSignInAt: null, providers: [], orphaned: true })
     } catch (err) {
       push('error', err instanceof Error ? err.message : 'Could not load that profile.')
@@ -306,6 +292,8 @@ function UsersPageInner() {
               </tr>
             </thead>
             <tbody className="divide-y divide-border/60">
+              {/* A document with no name and no email is a stub, not a rendering failure: the row
+                  says so, instead of leaving a blank line the operator has to guess about. */}
               {loading && rows.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="py-10 text-center text-muted-foreground">
@@ -322,14 +310,23 @@ function UsersPageInner() {
                   <tr key={row.uid} className="cursor-pointer transition-colors hover:bg-muted/40" onClick={() => void openDetail(row.uid)}>
                     <td className="py-2.5 pr-2">
                       <div className="flex items-center gap-2">
-                        <div className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-secondary text-[11px] font-semibold">
-                          {row.name ? row.name.slice(0, 2).toUpperCase() : row.email.slice(0, 2).toUpperCase()}
+                        <div className={cn('flex size-7 shrink-0 items-center justify-center rounded-lg bg-secondary text-[11px] font-semibold', row.profileIncomplete && 'text-muted-foreground')}>
+                          {row.name || row.email ? (row.name || row.email).slice(0, 2).toUpperCase() : '··'}
                         </div>
                         <div className="min-w-0">
-                          <p className="truncate font-medium text-foreground">{row.name || row.email}</p>
-                          <p className="truncate text-[11px] text-muted-foreground">{row.email}</p>
+                          <p className={cn('truncate font-medium', row.profileIncomplete ? 'text-muted-foreground italic' : 'text-foreground')}>
+                            {row.name || row.email || 'No profile details'}
+                          </p>
+                          <p className="truncate text-[11px] text-muted-foreground">
+                            {row.email || (row.profileIncomplete ? 'no name or email on file' : '—')}
+                          </p>
                         </div>
                         {row.role === 'admin' && <StatusBadge tone="info"><ShieldCheck className="size-3" />Staff</StatusBadge>}
+                        {row.profileIncomplete && (
+                          <StatusBadge tone="warning" title="This document has no name, email or wallet — a stub record, not a finished profile. Open it to see whether an Auth account exists before erasing it.">
+                            Incomplete
+                          </StatusBadge>
+                        )}
                       </div>
                     </td>
                     <td className="px-2 py-2.5">
@@ -382,8 +379,9 @@ function UsersPageInner() {
                 <div className="flex items-center gap-2">
                   <h2 className="truncate text-base font-semibold tracking-tight">{selected.name || 'Unnamed member'}</h2>
                   {selected.role === 'admin' && <StatusBadge tone="info">Staff</StatusBadge>}
+                  {selected.profileIncomplete && <StatusBadge tone="warning">Incomplete record</StatusBadge>}
                 </div>
-                <p className="truncate text-xs text-muted-foreground">{selected.email}</p>
+                <p className="truncate text-xs text-muted-foreground">{selected.email || 'No email on file'}</p>
                 <p className="mt-1 font-mono text-[10px] text-muted-foreground/80">uid {selected.uid.slice(0, 24)}</p>
               </div>
               <button type="button" onClick={() => setSelected(null)} className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" aria-label="Close">
@@ -434,6 +432,14 @@ function UsersPageInner() {
               )}
             </div>
 
+            {selected.profileIncomplete && (
+              <p className="rounded-xl border border-warning/40 bg-warning/10 px-3 py-2 text-[11px] leading-relaxed text-warning-foreground">
+                <strong className="font-semibold">This is not a finished profile.</strong> The document has no name, no
+                email and no wallet — it was created by something other than sign-up (a phone-number claim, the terms
+                acceptance, or a write that stopped halfway), so every column below reads as empty. Check the Firebase
+                Auth panel: no Auth account here means nobody can sign in to it and it is safe to erase.
+              </p>
+            )}
             {selected.moderationReason && (
               <p className="rounded-xl border border-warning/40 bg-warning/10 px-3 py-2 text-[11px] text-warning-foreground">
                 <strong className="font-semibold">Moderation note:</strong> {selected.moderationReason}

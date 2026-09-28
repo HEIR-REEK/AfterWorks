@@ -25,6 +25,12 @@ import {
   phoneTakenError,
 } from '@/lib/account-uniqueness'
 import { normalisePhone } from '@/lib/countries'
+import {
+  adminUserDetailFromDoc,
+  adminUserRowFromDoc,
+  type AdminUserDetailModel,
+  type AdminUserRowModel,
+} from '@/lib/admin-domain'
 
 // ─── Admin SDK initialisation (singleton) ────────────────────────────────────
 
@@ -1082,23 +1088,13 @@ export async function saveMaintenanceConfigServer(
 
 // ─── Users: paginated, redacted reads + privileged writes ─────────────────────
 
-export type AdminUserRow = {
-  uid: string
-  name: string
-  email: string
-  accountState: string
-  kycVerified: boolean
-  kycStatus?: string
-  role: string
-  qualityScore: number
-  jobsCompleted: number
-  memberSince: string
-  createdAt: string | null
-  lastActiveAt: string | null
-  wallet: { pendingUsd: number; availableUsd: number; payoutNumberMasked: string }
-  country?: string
-  phoneMasked?: string
-  paidTrainingsCount: number
+/**
+ * One directory row. The columns themselves come from `adminUserRowFromDoc` in
+ * `lib/admin-domain.ts` — the same projection the console applies to the detail payload, so a
+ * document that is missing half its fields (a stub, a legacy row) renders as a blank row instead
+ * of throwing `Cannot read properties of undefined` inside the table.
+ */
+export type AdminUserRow = AdminUserRowModel & {
   /**
    * The account as Firebase Auth sees it. A Firestore profile is what the operator edits; Auth is what
    * actually lets somebody sign in, so the two must be compared, not assumed equal. Absent when the
@@ -1106,6 +1102,9 @@ export type AdminUserRow = {
    */
   auth?: AuthAccountState
 }
+
+/** What `getUserDetail` hands the console: the row plus the drawer's extra profile fields. */
+export type AdminUserDetail = AdminUserDetailModel & Record<string, unknown>
 
 /** Everything the console needs from the Auth record; `null` values mean "Auth has no such account". */
 export type AuthAccountState = {
@@ -1119,36 +1118,9 @@ export type AuthAccountState = {
   orphaned?: boolean
 }
 
-function maskPhone(value: unknown): string {
-  const digits = String(value ?? '').replace(/\D/g, '')
-  if (digits.length < 4) return ''
-  return `${'•'.repeat(Math.max(2, digits.length - 6))}${digits.slice(-4)}`
-}
-
+/** Directory rows are projected by the shared helper so the table can never see a partial shape. */
 function toRow(uid: string, data: Record<string, unknown>): AdminUserRow {
-  const wallet = (data.wallet ?? {}) as Record<string, unknown>
-  return {
-    uid,
-    name: String(data.name ?? ''),
-    email: String(data.email ?? ''),
-    accountState: String(data.accountState ?? 'active'),
-    kycVerified: data.kycVerified === true,
-    kycStatus: data.kycStatus ? String(data.kycStatus) : undefined,
-    role: data.isAdmin === true ? 'admin' : String(data.role ?? 'user'),
-    qualityScore: Number(data.qualityScore ?? 100) || 0,
-    jobsCompleted: Number(data.jobsCompleted ?? 0) || 0,
-    memberSince: String(data.memberSince ?? ''),
-    createdAt: (data.createdAt as string) ?? null,
-    lastActiveAt: (data.updatedAt as string) ?? null,
-    wallet: {
-      pendingUsd: Number(wallet.pendingUsd ?? 0) || 0,
-      availableUsd: Number(wallet.availableUsd ?? 0) || 0,
-      payoutNumberMasked: maskPhone(wallet.payoutNumber ?? data.phone),
-    },
-    country: data.country ? String(data.country) : undefined,
-    phoneMasked: maskPhone(data.phone),
-    paidTrainingsCount: Array.isArray(data.paidTrainings) ? (data.paidTrainings as unknown[]).length : 0,
-  }
+  return adminUserRowFromDoc(uid, data)
 }
 
 export type UserPage = {
@@ -1228,13 +1200,24 @@ export async function listUsersPage(opts: {
   }
 }
 
-/** Full (unmasked) profile for the admin detail drawer — still server-gated, never streamed. */
-export async function getUserDetail(uid: string): Promise<Record<string, unknown> | null> {
+/**
+ * Full profile for the admin detail drawer — still server-gated, never streamed.
+ *
+ * Returned through the same projection as the directory page, then merged with the extra profile
+ * fields the drawer shows. Two reasons this matters: the console must be able to open a *stub*
+ * document (a `users/{uid}` created by a phone claim, a terms acceptance or an interrupted write,
+ * with no name, email or `wallet`) without crashing on `user.wallet.availableUsd`, and the browser
+ * must not receive raw document fields we have not described — the stored `wallet.payoutNumber` is
+ * a plaintext handle whose masked form is the only thing the drawer needs.
+ */
+export async function getUserDetail(uid: string): Promise<AdminUserDetail | null> {
   const db = dbOrNull()
   if (!db) return null
   const snap = await db.collection('users').doc(uid).get()
   if (!snap.exists) return null
-  return { uid: snap.id, ...(snap.data() ?? {}) }
+  // The document id is the identity the console acts on: if the body carries a stale `uid` field,
+  // it must not become the uid the drawer's moderation actions are sent with.
+  return adminUserDetailFromDoc({ ...(snap.data() ?? {}), uid: snap.id }) as AdminUserDetail
 }
 
 const ADMIN_MUTABLE_USER_FIELDS = new Set([

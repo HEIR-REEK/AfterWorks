@@ -16,6 +16,11 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { apiFetch, describeError } from '@/lib/client-api'
+import {
+  adminUserDetailFromDoc,
+  type AdminUserDetailModel,
+  type AdminUserRowModel,
+} from '@/lib/admin-domain'
 import type { MaintenanceConfig } from '@/lib/maintenance-shared'
 import type { AssessmentQuestion, TrainingSection } from '@/lib/afterworks-data'
 
@@ -241,8 +246,22 @@ export const adminApi = {
     ),
   users: (query: { pageSize?: number; cursor?: string | null; search?: string; state?: string }) =>
     apiFetch<{ ok: boolean; rows: AdminUserRow[]; nextCursor: string | null; hasMore: boolean; degraded?: string }>('/api/admin/users', { query }),
-  userDetail: (uid: string) =>
-    apiFetch<{ ok: boolean; user: Record<string, unknown>; account?: AdminUserRow['auth'] }>('/api/admin/users', { query: { uid } }),
+  /**
+   * One member's detail payload.
+   *
+   * Normalised at the boundary, and that is the whole point: `users/{uid}` documents are not
+   * guaranteed to be profiles (a phone claim, a terms acceptance or an interrupted write leaves a
+   * stub behind), and the drawer reads `user.wallet.availableUsd`. Returning the raw document here
+   * is what produced "Cannot read properties of undefined (reading 'availableUsd')" across the
+   * whole console. After this call the shape is fixed, so no component has to defend itself.
+   */
+  userDetail: async (uid: string) => {
+    const data = await apiFetch<{ ok: boolean; user?: unknown; account?: AdminUserRow['auth'] }>(
+      '/api/admin/users',
+      { query: { uid } },
+    )
+    return { ...data, user: adminUserDetailFromDoc(data.user) }
+  },
   userAction: (body: Record<string, unknown>) =>
     apiFetch<{
       ok: boolean
@@ -344,24 +363,12 @@ export type ActiveAdminSession = {
   current?: boolean
 }
 
-/** Row shape the users directory renders (mirrors `AdminUserRow` on the server). */
-export type AdminUserRow = {
-  uid: string
-  name: string
-  email: string
-  accountState: string
-  kycVerified: boolean
-  kycStatus?: string
-  role: string
-  qualityScore: number
-  jobsCompleted: number
-  memberSince: string
-  createdAt: string | null
-  lastActiveAt: string | null
-  wallet: { pendingUsd: number; availableUsd: number; payoutNumberMasked: string }
-  country?: string
-  phoneMasked?: string
-  paidTrainingsCount: number
+/**
+ * Row shape the users directory renders. The columns come from `AdminUserRowModel` in
+ * `lib/admin-domain.ts` — one projection, shared with the server, so "the row has a wallet" is a
+ * type-level guarantee rather than something each component re-checks.
+ */
+export type AdminUserRow = AdminUserRowModel & {
   /** What Firebase Auth says about this uid — whether they can sign in at all. */
   auth?: {
     exists: boolean
@@ -372,6 +379,16 @@ export type AdminUserRow = {
     providers: string[]
     orphaned?: boolean
   } | null
+}
+
+/**
+ * The detail drawer's member. Same guarantee as the row above, plus the optional profile fields —
+ * every one of them already coerced to something JSX can print (no objects, no `undefined`
+ * balances), because this is the payload that used to arrive straight from the document.
+ */
+export type AdminUserDetail = AdminUserDetailModel & {
+  /** Firebase Auth state, fetched separately by the route and returned alongside the profile. */
+  auth?: AdminUserRow['auth']
 }
 
 /** One withdrawal request as the console queue renders it. */

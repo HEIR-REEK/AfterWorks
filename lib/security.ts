@@ -15,6 +15,9 @@
 
 import { createHmac, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto'
 import {
+  ADMIN_SESSION_COOKIE,
+  LEGACY_ADMIN_SESSION_COOKIES,
+  MAINTENANCE_BYPASS_COOKIE,
   env,
   envBool,
   envInt,
@@ -198,10 +201,14 @@ export function passcodeStrength(input: string): { score: 0 | 1 | 2 | 3 | 4; iss
 }
 
 // ─── Admin sessions ──────────────────────────────────────────────────────────
+//
+// The cookie names themselves live in `lib/security-core.ts`: the edge reads them too, that module
+// is the only one both runtimes can import, and "which cookie we trust" is a security contract
+// rather than an implementation detail of this file.
 
-export const ADMIN_COOKIE = 'aw_admin_session'
-export const BYPASS_COOKIE = 'aw_ops_bypass'
-export const LEGACY_ADMIN_COOKIES = ['afterworks_admin_session']
+export const ADMIN_COOKIE = ADMIN_SESSION_COOKIE
+export const BYPASS_COOKIE = MAINTENANCE_BYPASS_COOKIE
+export const LEGACY_ADMIN_COOKIES: string[] = [...LEGACY_ADMIN_SESSION_COOKIES]
 
 export type AdminSession = { token: string; jti: string; issuedAt: number; expiresAt: number; email: string }
 

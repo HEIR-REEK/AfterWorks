@@ -17,6 +17,7 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { authenticateAdminSession, useAdminCapabilities, useAdminSession } from '@/lib/admin'
+import { safeAdminReturnPath } from '@/lib/security-core'
 import { useMaintenance } from '@/components/maintenance-provider'
 import { site } from '@/lib/site'
 import { BrandLockup } from '@/components/brand'
@@ -44,6 +45,14 @@ export default function AdminLoginPage() {
   const [remainingAttempts, setRemainingAttempts] = useState<number | null>(null)
   const [lockSeconds, setLockSeconds] = useState(0)
   const [success, setSuccess] = useState(false)
+  // Where the operator was headed before the console sent them here (`/admin/login?next=/admin/users`).
+  // Read from the URL rather than `useSearchParams()` so the form works as both a page and the
+  // layout's embedded fallback, with no Suspense boundary to keep in sync.
+  const [nextPath, setNextPath] = useState<string | null>(null)
+
+  useEffect(() => {
+    setNextPath(safeAdminReturnPath(new URLSearchParams(window.location.search).get('next') ?? ''))
+  }, [])
 
   useEffect(() => {
     if (lockSeconds <= 0) return
@@ -62,7 +71,7 @@ export default function AdminLoginPage() {
       setSuccess(true)
       setPasscode('')
       await refresh()
-      setTimeout(() => router.replace('/admin'), 350)
+      setTimeout(() => router.replace(nextPath ?? '/admin'), 350)
       return
     }
 
@@ -92,6 +101,11 @@ export default function AdminLoginPage() {
             this console — your worker-account password does not open it, and this one does not open
             the worker app.
           </p>
+          {nextPath && (
+            <p className="mt-2 rounded-lg border border-border bg-muted/40 px-3 py-1.5 font-mono text-[11px] text-muted-foreground">
+              Sign in to continue to {nextPath}
+            </p>
+          )}
         </div>
 
         {view.blocking && (

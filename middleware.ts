@@ -6,6 +6,8 @@ import { NextResponse, type NextRequest } from 'next/server'
  * What runs here (and why):
  *  • Host-header validation    → blocks cache poisoning / password-reset poisoning.
  *  • Security headers          → CSP without unsafe-eval in production, HSTS, frame denial.
+ *  • Console sign-in gate      → /admin pages require a signed session cookie, full stop. The
+ *                                console never decides for itself whether to show you its data.
  *  • Maintenance interception  → a blackout really returns 503 + Retry-After at the edge, so
  *                                crawlers, cached HTML and non-JS clients are gated too.
  *  • Cross-site mutation guard → Origin/Referer + Sec-Fetch-Site check on every write.
@@ -19,8 +21,12 @@ import { NextResponse, type NextRequest } from 'next/server'
  */
 
 import {
+  ADMIN_SESSION_COOKIE,
+  MAINTENANCE_BYPASS_COOKIE,
   MUTATING_METHODS,
   NO_STORE_HEADERS,
+  adminConsoleLoginPath,
+  isAdminConsolePath,
   isSameSiteRequest,
 } from '@/lib/security-core'
 import { getCachedMaintenanceStatus, isGatedPath, isSignInExempt } from '@/lib/maintenance-shared'
@@ -220,7 +226,42 @@ export async function middleware(request: NextRequest) {
     }
   }
 
-  // 5. Maintenance blackout. Document requests are rewritten to the maintenance screen; API
+  // 5. The console's door.
+  //
+  //    Every `/api/admin/*` route guards itself (401 without a verified session), but the *pages*
+  //    under /admin used to be served to anyone: which one you saw — console or sign-in form — was
+  //    decided by client JavaScript after an async probe. A bookmark, a crawler, a shared
+  //    screenshot, a browser whose session had expired, or simply a tab whose bundle never
+  //    finished loading could therefore bring up console chrome before, or instead of, the form.
+  //    Signing in is now a requirement of the server: no signed session cookie, no console page —
+  //    the request is answered with a redirect to `/admin/login` that remembers where it was going.
+  //
+  //    `/admin/login` itself is always reachable (it is the way in), and `/api/admin/*` is left to
+  //    the route guards so those keep answering JSON errors rather than redirects.
+  //
+  //    Skipped when the edge holds no usable signing secret: it could not verify a cookie anyway,
+  //    and with no secret no session can exist to verify (`lib/security.ts` fails closed in
+  //    production and falls back to a process-local dev key otherwise, where the in-app gate
+  //    still applies). That keeps local development without ADMIN_SESSION_SECRET working instead
+  //    of bouncing an operator around the login form forever.
+  if (SIGNING_OK && isAdminConsolePath(pathname)) {
+    const session = await readSession(
+      request.cookies.get(ADMIN_SESSION_COOKIE)?.value,
+      SESSION_SECRET,
+      'admin',
+    )
+    if (!session) {
+      const res = NextResponse.redirect(
+        new URL(adminConsoleLoginPath(pathname, request.nextUrl.search), request.url),
+        307,
+      )
+      res.headers.set('Cache-Control', 'no-store')
+      applySecurityHeaders(res)
+      return res
+    }
+  }
+
+  // 6. Maintenance blackout. Document requests are rewritten to the maintenance screen; API
   //    traffic gets a plain 503 so clients surface a retryable error instead of parsing HTML.
   //    The resolved mode is also forwarded as a request header so the root layout can mark the
   //    document (`<html data-maintenance>`) without reading Firestore a second time.
@@ -299,7 +340,7 @@ export async function middleware(request: NextRequest) {
     }
   }
 
-  // 6. Pass through with hardened headers.
+  // 7. Pass through with hardened headers.
   const headers = new Headers(request.headers)
   headers.set('x-request-id', requestId)
   if (maintenanceMode !== 'off') headers.set('x-afterworks-maintenance-mode', maintenanceMode)
@@ -337,8 +378,8 @@ function isDocumentRequest(request: NextRequest): boolean {
  */
 async function hasPrivilegedCookie(request: NextRequest): Promise<boolean> {
   if (!SIGNING_OK) return false
-  if (await readSession(request.cookies.get('aw_admin_session')?.value, SESSION_SECRET, 'admin')) return true
-  return Boolean(await readSession(request.cookies.get('aw_ops_bypass')?.value, SESSION_SECRET, 'bypass'))
+  if (await readSession(request.cookies.get(ADMIN_SESSION_COOKIE)?.value, SESSION_SECRET, 'admin')) return true
+  return Boolean(await readSession(request.cookies.get(MAINTENANCE_BYPASS_COOKIE)?.value, SESSION_SECRET, 'bypass'))
 }
 
 /**

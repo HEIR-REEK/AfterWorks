@@ -370,3 +370,33 @@ export function adminUserDetailFromDoc(raw: unknown): AdminUserDetailModel {
 function asTextList(value: unknown): string[] {
   return Array.isArray(value) ? value.map((entry) => asText(entry)).filter(Boolean) : []
 }
+
+// ─── Bearer sessions: what a verified ID token is allowed to become ──────────
+
+/**
+ * The administrator a *verified* Firebase ID token may act as — or `null` if it may not act as one.
+ *
+ * The decision is deliberately made from the role table (the `ADMIN_EMAILS` roster, an active staff
+ * account, or a legacy `users.isAdmin` grant) and **not** from the token's own `admin` claim.
+ *
+ * Why that matters enough to spell out: the claim is real — `firestore.rules` trusts it for direct
+ * browser reads of every member document, and `ADMIN_SYNC_CUSTOM_CLAIM` mints it onto the *member*
+ * document of whoever signs into the console. So honouring a bare claim here would mean that any
+ * ordinary worker session (the owner's own Gmail account, for instance) is also an administration
+ * credential that never had to pass the sign-in screen — exactly the "how can I get in without
+ * logging in?" question this file is guarding against. A claim without a resolvable role is drift,
+ * and drift is denied.
+ *
+ * Tooling that presents a roster email still works: the roster resolves, so the role comes back.
+ */
+export function bearerAdminPrincipal(
+  decoded: { email?: unknown; uid?: unknown; exp?: unknown; admin?: unknown },
+  resolvedRole: AdminRoleName | null,
+): { email: string; uid: string; expiresAt: number; role: AdminRoleName } | null {
+  if (!resolvedRole) return null
+  const email = typeof decoded?.email === 'string' ? decoded.email.trim().toLowerCase() : ''
+  const uid = typeof decoded?.uid === 'string' ? decoded.uid.trim() : ''
+  if (!email || !uid) return null
+  const exp = typeof decoded?.exp === 'number' && Number.isFinite(decoded.exp) ? decoded.exp : 0
+  return { email, uid, expiresAt: exp * 1000, role: resolvedRole }
+}

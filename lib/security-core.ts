@@ -246,6 +246,68 @@ export function isSameSiteRequest(headers: { get(name: string): string | null })
 
 export const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 
+// ─── Cookie names (one source for the edge, the API and the console) ─────────
+//
+// These lived in `lib/security.ts` (Node-only, because it hashes passcodes) while `middleware.ts`
+// spelled the literals out by hand. The names are part of the security contract — "which cookie do
+// we trust for what" — so they belong in the module every runtime can read.
+
+/** The console session. HttpOnly + SameSite=strict; the only carrier of console privilege. */
+export const ADMIN_SESSION_COOKIE = 'aw_admin_session'
+/** Maintenance passage only. It never unlocks the console (`lib/session-token` types the claim). */
+export const MAINTENANCE_BYPASS_COOKIE = 'aw_ops_bypass'
+/** Cookies written by the pre-hardening client, cleared on sign-in and refused for privilege. */
+export const LEGACY_ADMIN_SESSION_COOKIES = ['afterworks_admin_session'] as const
+
+// ─── The console's door ──────────────────────────────────────────────────────
+
+/**
+ * Is this a page of the operations console — i.e. something only a signed-in operator may render?
+ *
+ * `/api/admin/*` is deliberately *not* included: those routes guard themselves (401 without a
+ * verified session) and must answer JSON errors, not redirects. `/admin/login` is where you go
+ * when the answer is "no", so it is never gated.
+ */
+export function isAdminConsolePath(pathname: string): boolean {
+  const path = String(pathname ?? '').split(/[?#]/)[0]
+  if (path !== '/admin' && !path.startsWith('/admin/')) return false
+  const rest = path.slice('/admin/'.length)
+  return !(rest === 'login' || rest.startsWith('login/'))
+}
+
+/**
+ * Where an unauthenticated console request is sent, remembering where it was headed.
+ *
+ * The `next` value is validated by `safeAdminReturnPath`, so it can only ever point back inside the
+ * console — never at another origin.
+ */
+export function adminConsoleLoginPath(pathname: string, search = ''): string {
+  const next = safeAdminReturnPath(`${String(pathname ?? '')}${String(search ?? '')}`)
+  return next ? `/admin/login?next=${encodeURIComponent(next)}` : '/admin/login'
+}
+
+/**
+ * A return path the sign-in screen is allowed to honour.
+ *
+ * Accepts only a console path (query string included); anything else — an absolute URL, a
+ * protocol-relative `//evil.example`, a backslash trick some browsers normalise, a control
+ * character, the login page itself — returns null and the caller falls back to `/admin`.
+ */
+export function safeAdminReturnPath(candidate: unknown): string | null {
+  if (typeof candidate !== 'string') return null
+  const value = candidate.trim()
+  if (!value || value.length > 512) return null
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u001f\u007f]/.test(value)) return null
+  if (value.includes('\\') || value.includes('://') || value.startsWith('//')) return null
+  // `..` segments are not a redirect risk (the value is same-origin and the router normalises it)
+  // but they have no business being in a return path, and refusing them keeps the rule obvious.
+  if (value.includes('/..')) return null
+  const path = value.split(/[?#]/)[0]
+  if (!isAdminConsolePath(path)) return null
+  return value
+}
+
 // ─── Response hardening helpers ──────────────────────────────────────────────
 
 export const NO_STORE_HEADERS: Record<string, string> = {

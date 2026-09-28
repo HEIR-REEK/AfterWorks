@@ -184,8 +184,10 @@ export async function verifyToken(
 
   const expectedSig = await hmac(secret, `${TOKEN_VERSION}.${payloadB64}`)
   const givenSig = b64UrlToBytes(sigB64)
+  // No logging here on purpose: this branch runs for every forged or stale cookie, and anything it
+  // printed (the expected signature, the candidate, the secret length) hands an attacker both a
+  // signing oracle and a fingerprint of the deployment's key.
   if (!givenSig || !constantTimeEqual(expectedSig, givenSig)) {
-    console.log('[DEBUG] Signature mismatch!', { expectedSig, givenSig, secretLength: secret.length });
     return { ok: false, reason: 'signature' }
   }
 

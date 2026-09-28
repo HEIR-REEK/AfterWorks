@@ -520,11 +520,22 @@ export type NotificationRow = {
   createdAt: string
 }
 
+/**
+ * The member's activity feed, and marking it read.
+ *
+ * Both calls must go through `authedFetch`: `/api/notifications` resolves the member with
+ * `requireUser`, which reads a bearer token and answers 401 without one. These two used the
+ * unauthenticated `apiFetch` — the same transport the console's cookie-based calls use — so every
+ * poll of the bell was a 401, the catch below turned it into an empty list, and the feed was
+ * silently always empty. A member's approvals, KYC outcomes and payout updates were being written
+ * by the server and thrown away by the client.
+ */
 export async function fetchNotifications(limit = 20): Promise<{ notifications: NotificationRow[]; unread: number; available: boolean }> {
   try {
-    const data = await apiFetch<{ ok: boolean; notifications: NotificationRow[]; unread: number; available?: boolean }>('/api/notifications', {
-      query: { limit },
-    })
+    const data = await authedFetch<{ ok: boolean; notifications: NotificationRow[]; unread: number; available?: boolean }>(
+      '/api/notifications',
+      { query: { limit } },
+    )
     return { notifications: data.notifications ?? [], unread: data.unread ?? 0, available: data.available !== false }
   } catch {
     return { notifications: [], unread: 0, available: false }
@@ -533,7 +544,7 @@ export async function fetchNotifications(limit = 20): Promise<{ notifications: N
 
 export async function markNotificationsRead(ids?: string[]): Promise<void> {
   try {
-    await apiFetch('/api/notifications', { method: 'PATCH', body: ids?.length ? { ids } : { all: true } })
+    await authedFetch('/api/notifications', { method: 'PATCH', body: ids?.length ? { ids } : { all: true } })
   } catch (err) {
     console.warn('[notifications] mark-read failed:', err)
   }

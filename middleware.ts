@@ -71,6 +71,12 @@ const RATE_LIMITED: Array<[RegExp, number]> = [
   [/^\/api\/paystack\//, 25],
   [/^\/api\/applications/, 30],
   [/^\/api\/wallet/, 60],
+  // Referral attribution runs during sign-up, so it is limited like an auth route: it is a write
+  // that can mint credit, and it must never be usable as an unauthenticated faucet. It gets its
+  // own rule because it is not under /api/auth, and the first matching entry wins.
+  // `/api/auth/terms` needs no rule of its own — the `/^\/api\/auth\//` entry above already covers
+  // it, and at 8/min it is already tighter than any limit worth writing here.
+  [/^\/api\/referrals/, 15],
 ]
 
 const LOCAL_HOST = /^(localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0)(:\d+)?$/i
@@ -307,7 +313,7 @@ export async function middleware(request: NextRequest) {
 
   // Tell crawlers not to index private/API routes even if they discover them through links.
   // This is belt-and-suspenders alongside robots.txt (which they should respect first).
-  const NOINDEX_PATHS = /^\/(api|admin|profile|applications|kyc|training|verify-email|forgot-password)(\/|$)/
+  const NOINDEX_PATHS = /^\/(api|admin|profile|applications|referrals|kyc|training|verify-email|forgot-password)(\/|$)/
   if (NOINDEX_PATHS.test(pathname)) {
     response.headers.set('X-Robots-Tag', 'noindex, nofollow')
   }

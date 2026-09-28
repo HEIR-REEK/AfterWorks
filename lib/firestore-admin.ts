@@ -17,7 +17,14 @@ import * as fs from 'fs'
 import * as path from 'path'
 import type { DiditSessionStatus } from '@/lib/didit'
 import { isEmailLike, normalizeEmail, sanitizeLine } from '@/lib/security-core'
-import { isValidMobileNumber } from '@/lib/payouts'
+import {
+  PHONE_CLAIMS_COLLECTION,
+  UniquenessError,
+  assertEmailAvailable,
+  assertPhoneAvailable,
+  phoneTakenError,
+} from '@/lib/account-uniqueness'
+import { normalisePhone } from '@/lib/countries'
 
 // ─── Admin SDK initialisation (singleton) ────────────────────────────────────
 
@@ -1650,9 +1657,39 @@ export async function createMemberAccount(input: {
   const email = normalizeEmail(input.email)
   if (name.length < 3) return { ok: false, error: 'Enter the member’s full name.', code: 'invalid_name' }
   if (!isEmailLike(email)) return { ok: false, error: 'Enter a valid email address.', code: 'invalid_email' }
-  const phone = sanitizeLine(input.phone ?? '', 24)
-  if (phone && !isValidMobileNumber(phone)) {
-    return { ok: false, error: 'That M-Pesa number does not look valid (use 07XX XXX XXX or +254…).', code: 'invalid_phone' }
+  // Resolve the number to E.164 *before* the credential exists, so the two checks below have a
+  // canonical value to compare. The same helper the member's own profile save uses, which is what
+  // makes an operator-created account and a self-registered one land on the same key.
+  let phoneResolution: { e164: string; country: string; key: string } | null = null
+  const rawPhone = sanitizeLine(input.phone ?? '', 24)
+  if (rawPhone) {
+    const countryHint = sanitizeLine(input.country ?? 'KE', 8).toUpperCase() || 'KE'
+    const resolved = normalisePhone(rawPhone, countryHint)
+    if (!resolved.ok) {
+      return { ok: false, error: resolved.error, code: 'invalid_phone' }
+    }
+    try {
+      phoneResolution = await assertPhoneAvailable({ raw: rawPhone, country: resolved.country })
+    } catch (err) {
+      if (err instanceof UniquenessError) return { ok: false, error: err.message, code: err.code }
+      throw err
+    }
+  }
+  const phone = phoneResolution?.e164 ?? ''
+
+  // "One email, one account" has two halves. Firebase Auth enforces the first and is the real
+  // identity system, so `createUser` refusing with EMAIL_EXISTS below is the real guarantee. This
+  // check covers the second: a profile document that exists for an email with no usable
+  // credential — left by an interrupted earlier attempt or a data import. Without it, the Auth
+  // call would *succeed* and quietly create the second account the rule forbids.
+  const db = dbOrNull()
+  if (db) {
+    try {
+      await assertEmailAvailable(email)
+    } catch (err) {
+      if (err instanceof UniquenessError) return { ok: false, error: err.message, code: err.code }
+      return { ok: false, error: 'The datastore is unreachable, so the account was not created.', code: 'storage_unavailable' }
+    }
   }
 
   let uid = ''
@@ -1667,7 +1704,6 @@ export async function createMemberAccount(input: {
     return { ok: false, error: 'The sign-in credential could not be created.', code: 'auth_write_failed' }
   }
 
-  const db = dbOrNull()
   if (!db) {
     // Do not leave a credential with no profile behind: the directory would show an orphan.
     await auth.deleteUser(uid).catch(() => {})
@@ -1676,11 +1712,25 @@ export async function createMemberAccount(input: {
 
   const now = new Date().toISOString()
   try {
-    await db.collection('users').doc(uid).set({
+    const profileRef = db.collection('users').doc(uid)
+    await db.runTransaction(async (tx) => {
+      if (phoneResolution) {
+        // Same guard the member's own save uses: the lookup above can be passed by two operators
+        // creating an account with one number at the same instant, this cannot.
+        const claimRef = db.collection(PHONE_CLAIMS_COLLECTION).doc(phoneResolution.key)
+        const claim = await tx.get(claimRef)
+        const owner = claim.exists ? String((claim.data() ?? {}).uid ?? '') : ''
+        if (owner && owner !== uid) throw phoneTakenError()
+        tx.set(claimRef, { uid, key: phoneResolution.key, claimedAt: now }, { merge: true })
+      }
+      tx.set(
+        profileRef,
+        {
       uid,
       name,
       email,
       phone,
+      ...(phoneResolution ? { phoneKey: phoneResolution.key, phoneCountry: phoneResolution.country } : {}),
       location: sanitizeLine(input.location ?? '', 80),
       country: sanitizeLine(input.country ?? 'Kenya', 60),
       memberSince: new Date().toLocaleString('en-US', { month: 'short', year: 'numeric' }),
@@ -1706,9 +1756,15 @@ export async function createMemberAccount(input: {
       onboardedBy: input.actorEmail,
       createdAt: now,
       updatedAt: now,
+        },
+        { merge: false },
+      )
     })
   } catch (err) {
     await auth.deleteUser(uid).catch(() => {})
+    if (err instanceof UniquenessError) {
+      return { ok: false, error: err.message, code: err.code }
+    }
     console.error('[FirestoreAdmin] createMemberAccount profile write failed:', err)
     return { ok: false, error: 'The profile document could not be written, so the account was rolled back.', code: 'storage_write_failed' }
   }
@@ -1781,7 +1837,7 @@ export async function hardDeleteAccount(
   const auth = authOrNull()
   if (!db) return { ok: false, error: 'The datastore is unreachable, so nothing was deleted.', code: 'storage_unavailable' }
 
-  const removed: Record<string, number> = { profile: 0, applications: 0, ledger: 0, notifications: 0, auth: 0 }
+  const removed: Record<string, number> = { profile: 0, applications: 0, ledger: 0, notifications: 0, auth: 0, phoneClaims: 0 }
   try {
     const [profile, apps, ledger, notes] = await Promise.all([
       db.collection('users').doc(uid).get(),
@@ -1796,6 +1852,16 @@ export async function hardDeleteAccount(
     const batch = db.batch()
     apps?.docs.forEach((d) => batch.delete(d.ref))
     notes?.docs.forEach((d) => batch.delete(d.ref))
+
+    // Release this account's phone claim. Without this the number stays owned by a uid that no
+    // longer exists, and "one phone number, one account" becomes "one phone number, one account
+    // ever" — the number could never be registered again. Safe to do only *after* the profile is
+    // gone, which is the line above.
+    const phoneKey = String(((profile.data() ?? {}) as Record<string, unknown>).phoneKey ?? '')
+    if (phoneKey) {
+      batch.delete(db.collection('phone_claims').doc(phoneKey))
+      removed.phoneClaims = 1
+    }
     if (opts.eraseLedger) ledger?.docs.forEach((d) => batch.delete(d.ref))
     else
       ledger?.docs.forEach((d) =>

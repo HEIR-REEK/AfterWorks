@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import {
   Briefcase,
+  Gift,
   Info,
   LayoutDashboard,
   ListChecks,
@@ -34,6 +35,7 @@ const baseNav = [
   { href: '/jobs', label: 'Jobs', icon: Briefcase },
   { href: '/applications', label: 'Applied', icon: ListChecks },
   { href: '/wallet', label: 'Wallet', icon: Wallet },
+  { href: '/referrals', label: 'Referrals', icon: Gift },
   { href: '/profile', label: 'Profile', icon: User },
 ]
 
@@ -179,6 +181,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             © {new Date().getFullYear()} {site.legalName}. All rights reserved.
           </p>
           <div className="flex items-center gap-5">
+            <Link href="/terms" className="transition-colors hover:text-foreground">
+              Terms
+            </Link>
+            <Link href="/privacy" className="transition-colors hover:text-foreground">
+              Privacy
+            </Link>
             <a href={`mailto:${site.supportEmail}`} className="transition-colors hover:text-foreground">
               Support
             </a>
@@ -190,7 +198,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <nav
         className={cn(
           'fixed bottom-0 left-0 right-0 z-40 grid border-t border-border bg-background/95 backdrop-blur supports-[padding:max(0px)]:pb-[env(safe-area-inset-bottom)] md:hidden',
-          'grid-cols-5',
+          // One column per destination, always. With six items a fixed 5-column grid would
+          // overflow rather than adapt, so the count follows the nav rather than the other way round.
+          'grid-cols-6',
         )}
         aria-label="Primary mobile"
       >
@@ -204,7 +214,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               href={item.href}
               aria-current={active ? 'page' : undefined}
               className={cn(
-                'flex flex-col items-center gap-0.5 py-2.5 text-[10px] font-medium transition-colors',
+                'flex flex-col items-center gap-0.5 px-0.5 py-2.5 text-[9px] font-medium transition-colors sm:text-[10px]',
                 active ? 'text-primary' : 'text-muted-foreground',
               )}
             >

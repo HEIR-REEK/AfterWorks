@@ -41,12 +41,22 @@ service cloud.firestore {
     // Fields a member may never set or change about their own account. This is the list that
     // used to make "grant yourself admin" and "mark your work as completed" possible from the
     // browser console.
+    //
+    // `phoneKey` and `referralCode` joined the list with the referral work for one reason each:
+    //  • `phoneKey` is the value "one phone number, one account" is enforced against. If a member
+    //    could write it, the only field protecting that rule would be the member's own.
+    //  • `termsAcceptedAt` / `termsVersion` / `privacyAcceptedAt` are the acceptance record. Its
+    //    whole value is that the *server* wrote it at a time the server chose, so a client that
+    //    could write it would be fabricating the one document we would ever want to be able to
+    //    prove. (`/api/auth/terms` writes it; the sign-up form cannot.)
     function privilegedKeys() {
       return ['role', 'isAdmin', 'kycVerified', 'kycStatus', 'kycVerifiedAt', 'kycRejectedAt',
               'kycOnHoldAt', 'kycProvider', 'kycLevel', 'kycRejectionReason', 'kycFailedChecks',
               'accountState', 'qualityScore', 'jobsCompleted', 'wallet', 'paidTrainings',
               'moderationReason', 'deletedAt', 'lastModifiedBy', 'phoneVerified', 'identityHash',
-              'emailVerified', 'emailVerifiedAt'];
+              'emailVerified', 'emailVerifiedAt', 'phoneKey', 'referralCode', 'referralCodeCreatedAt',
+              'termsAcceptedAt', 'termsVersion', 'privacyAcceptedAt', 'privacyVersion',
+              'termsAcceptedEmail'];
     }
 
     function touchesPrivilegedKeys() {
@@ -151,6 +161,35 @@ service cloud.firestore {
     match /payout_open/{userId} {
       allow read: if isStaff() || isSelf(userId);
       allow write: if false;
+    }
+
+    // ── Referral program (server-only) ─────────────────────────────────────
+    // `referral_codes/<CODE>` maps a shared code to the member who owns it, and `referrals/<uid>`
+    // records who that member brought in. Both are reachable only through `/api/referrals` and
+    // the transaction in `saveMemberProfile`.
+    //
+    // Clients are denied outright, for two separate reasons:
+    //  • `referral_codes` is a directory. Letting a member list it would enumerate every other
+    //    member's code, which is the raw material for a referral farm.
+    //  • `referrals` holds the $3. It is the credit's *evidence*, and the credit is written by the
+    //    same transaction that completes the referred person's profile — a client that could flip
+    //    `status` to `qualified` would be marking its own bonus as earned.
+    match /referral_codes/{code} {
+      allow read, write: if false;
+    }
+
+    match /referrals/{referredUid} {
+      allow read, write: if false;
+    }
+
+    // ── Phone-number claims (server-only) ───────────────────────────────────
+    // One document per E.164 number, holding the uid that owns it. This is what makes "one phone
+    // number, one account" true under concurrency rather than merely usually true: two members
+    // saving a profile with the same number at the same instant both pass the lookup query, and
+    // it is this document — written in the same transaction as the profile save — that makes the
+    // second one lose. Clients must never be able to claim a number by writing it themselves.
+    match /phone_claims/{key} {
+      allow read, write: if false;
     }
 
     // ── Worker notifications ─────────────────────────────────────────────────

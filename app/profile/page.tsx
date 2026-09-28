@@ -26,13 +26,14 @@ import {
   UserCircle,
   X,
   Building2,
-  Smartphone,
   Landmark,
   AlertCircle,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { formatKesValue, formatUsd } from '@/lib/afterworks-data'
 import { KENYAN_BANKS } from '@/lib/banks'
+import { CountrySelect, PhoneInput } from '@/components/phone-input'
+import { DEFAULT_COUNTRY, guessCountryFromE164, normalisePhone } from '@/lib/countries'
 import { PAYOUT_STATUS_SHORT, PAYOUT_STATUS_TONE } from '@/lib/payouts'
 import { site } from '@/lib/site'
 import { StatusBadge } from '@/components/status-badge'
@@ -51,6 +52,12 @@ function ProfilePageContent() {
   const [activeVerificationUrl, setActiveVerificationUrl] = useState<string | null>(null)
   const [isQrModalOpen, setIsQrModalOpen] = useState(false)
   const [kycFailureReason, setKycFailureReason] = useState<string | null>(null)
+  /**
+   * Client-side phone feedback, so a mistyped number is caught before the round trip. The server
+   * re-checks the same rule — including "this number already belongs to another account", which
+   * only it can know — so this is for speed, never for authority.
+   */
+  const [phoneError, setPhoneError] = useState<string | null>(null)
 
   // 1. Auto-open the edit modal: right after sign-up (`?new=1`) and when the onboarding prompt
   //    sends the member here (`?complete=1`) — the prompt promises the form opens, so it does.
@@ -162,6 +169,7 @@ function ProfilePageContent() {
   const [formData, setFormData] = useState({
     name: worker.name || user?.displayName || user?.email?.split('@')[0] || '',
     phone: worker.phone || wallet.payoutNumber || '',
+    phoneCountry: worker.phoneCountry || guessCountryFromE164(worker.phone || wallet.payoutNumber) || DEFAULT_COUNTRY,
     country: worker.country || '',
     zipCode: worker.zipCode || '',
     location: worker.location || '',
@@ -183,6 +191,7 @@ function ProfilePageContent() {
     setFormData({
       name: worker.name || user?.displayName || user?.email?.split('@')[0] || '',
       phone: worker.phone || wallet.payoutNumber || '',
+      phoneCountry: worker.phoneCountry || guessCountryFromE164(worker.phone || wallet.payoutNumber) || DEFAULT_COUNTRY,
       country: worker.country || '',
       zipCode: worker.zipCode || '',
       location: worker.location || '',
@@ -205,6 +214,7 @@ function ProfilePageContent() {
     setFormData({
       name: worker.name || user?.displayName || user?.email?.split('@')[0] || '',
       phone: worker.phone || wallet.payoutNumber || '',
+      phoneCountry: worker.phoneCountry || guessCountryFromE164(worker.phone || wallet.payoutNumber) || DEFAULT_COUNTRY,
       country: worker.country || '',
       zipCode: worker.zipCode || '',
       location: worker.location || '',
@@ -226,6 +236,21 @@ function ProfilePageContent() {
   // Handle saving profile changes
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault()
+    setPhoneError(null)
+
+    // Validate the phone locally first: the same normaliser the server uses, so the message the
+    // member reads before saving is the message they would have got from the server.
+    let phoneForSave = formData.phone.trim()
+    if (formData.preferredPayoutMethod === 'M-Pesa' && phoneForSave) {
+      const parsed = normalisePhone(formData.phone, formData.phoneCountry)
+      if (!parsed.ok) {
+        setPhoneError(parsed.error)
+        return
+      }
+      // Send the canonical E.164 so the server stores — and compares — exactly this value.
+      phoneForSave = parsed.e164
+    }
+
     setSaving(true)
 
     const skills = formData.skillsStr
@@ -240,9 +265,11 @@ function ProfilePageContent() {
 
     // One server call: it whitelists the fields, saves them, re-scores the profile and — if this
     // save is what takes it to 100% — credits the $5 in the same transaction, then tells us so.
+    // It also releases any referral bonus this completion earned for the member's own referrer.
     const result = await saveProfile({
       name: formData.name.trim(),
-      phone: formData.phone.trim(),
+      phone: phoneForSave,
+      phoneCountry: formData.phoneCountry,
       country: formData.country.trim(),
       zipCode: formData.zipCode.trim(),
       location: formData.location.trim(),
@@ -262,6 +289,9 @@ function ProfilePageContent() {
     setSaving(false)
 
     if (!result.ok) {
+      // A rejected phone is the one save error that belongs on the field, not in a toast that
+      // disappears before the member can read it.
+      if (/phone|number/i.test(result.error)) setPhoneError(result.error)
       setToastMessage(result.error)
       setShowToast(true)
       return
@@ -270,15 +300,20 @@ function ProfilePageContent() {
     setIsEditing(false)
     setToastMessage(
       result.grantedBonus
-        ? `Saved — and your profile is complete. ${formatUsd(result.grantedBonus.amountUsd)} has been added.`
-        : result.dropped.length > 0
-          ? `Profile saved. Some fields were ignored: ${result.dropped.join(', ')}.`
-          : `Profile saved. ${result.completion.percent}% complete${
-              result.completion.missing.length ? ` — still missing: ${result.completion.missingLabels.join(', ')}` : ''
-            }.`,
+        ? `Saved — and your profile is complete. ${formatUsd(result.grantedBonus.amountUsd)} has been added.` +
+          (result.releasedReferral
+            ? ` ${formatUsd(result.releasedReferral.bonusUsd)} has also been added to ${result.releasedReferral.referrerName}'s balance for inviting you.`
+            : '')
+        : result.releasedReferral
+          ? `Profile saved. ${formatUsd(result.releasedReferral.bonusUsd)} has been added to ${result.releasedReferral.referrerName}'s balance for inviting you.`
+          : result.dropped.length > 0
+            ? `Profile saved. Some fields were ignored: ${result.dropped.join(', ')}.`
+            : `Profile saved. ${result.completion.percent}% complete${
+                result.completion.missing.length ? ` — still missing: ${result.completion.missingLabels.join(', ')}` : ''
+              }.`,
     )
     setShowToast(true)
-    setTimeout(() => setShowToast(false), 5000)
+    setTimeout(() => setShowToast(false), 8000)
   }
 
   return (
@@ -759,17 +794,12 @@ function ProfilePageContent() {
               </div>
 
               <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-1.5">
-                  <label className="text-xs font-medium text-muted-foreground">Country</label>
-                  <input
-                    type="text"
-                    required
-                    value={formData.country}
-                    onChange={(e) => setFormData({ ...formData, country: e.target.value })}
-                    className="h-10 w-full rounded-lg border border-input bg-card px-3 text-sm outline-none focus:ring-2 focus:ring-primary"
-                    placeholder="e.g. Kenya"
-                  />
-                </div>
+                <CountrySelect
+                  id="country"
+                  value={formData.country}
+                  onChange={(country) => setFormData({ ...formData, country })}
+                  required
+                />
 
                 <div className="space-y-1.5">
                   <label className="text-xs font-medium text-muted-foreground">City / Region</label>
@@ -872,18 +902,15 @@ function ProfilePageContent() {
                     </div>
                   </div>
                 ) : (
-                  <div className="space-y-1.5 animate-in fade-in slide-in-from-top-2">
-                    <label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
-                      <Smartphone className="size-3.5 text-green-600" />
-                      M-Pesa Mobile Number
-                    </label>
-                    <input
-                      type="text"
-                      required
+                  <div className="animate-in fade-in slide-in-from-top-2">
+                    <PhoneInput
+                      id="phone"
                       value={formData.phone}
-                      onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                      className="h-10 w-full rounded-lg border border-input bg-card px-3 text-sm outline-none focus:ring-2 focus:ring-primary focus:ring-green-500/50"
-                      placeholder="+254 712 345 678"
+                      country={formData.phoneCountry}
+                      onChange={(phone, phoneCountry) => setFormData({ ...formData, phone, phoneCountry })}
+                      required
+                      error={phoneError}
+                      hint="Your M-Pesa number. It must match the name on your verified ID, and it can only be linked to one AfterWorks account."
                     />
                   </div>
                 )}

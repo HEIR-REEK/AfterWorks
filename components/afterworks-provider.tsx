@@ -34,6 +34,7 @@ import {
   getJobSnapshot,
 } from '@/lib/firestore'
 import { profileCompletion, type ProfileCompletion } from '@/lib/profile-completion'
+import { guessCountryFromE164 } from '@/lib/countries'
 import type { PayoutDestinationState, PayoutRequestRow, WalletEntry, WelcomeBonusState } from '@/lib/payouts'
 import {
   applyCatalogueSnapshot,
@@ -58,6 +59,12 @@ export type ProfileSaveResult =
       /** Present when this save released the $5 welcome reward. */
       grantedBonus: { amountUsd: number } | null
       bonusAlreadyGranted: boolean
+      /**
+       * Present when this save completed a profile for somebody who was referred — the $3 went to
+       * *their* referrer, not to this member, so the UI says so rather than showing a balance that
+       * did not move.
+       */
+      releasedReferral: { referrerName: string; bonusUsd: number } | null
     }
   | { ok: false; error: string }
 
@@ -177,13 +184,13 @@ const BLANK_META: WalletMeta = {
   entries: [],
   nextClearingAt: null,
   clearingHours: 72,
-  minWithdrawalUsd: 10,
+  minWithdrawalUsd: 50,
   availableKes: 0,
   asOf: null,
 }
 const BLANK_PAYOUTS: PayoutState = {
   heldUsd: 0,
-  minWithdrawalUsd: 10,
+  minWithdrawalUsd: 50,
   withdrawableUsd: 0,
   withdrawableKes: 0,
   pendingKes: 0,
@@ -460,14 +467,14 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
         entries: Array.isArray(data.entries) ? (data.entries as WalletEntry[]) : [],
         nextClearingAt: (data.nextClearingAt as string | null) ?? null,
         clearingHours: Number(data.clearingHours ?? 72) || 72,
-        minWithdrawalUsd: Number(data.minWithdrawalUsd ?? 10) || 10,
+        minWithdrawalUsd: Number(data.minWithdrawalUsd ?? 50) || 50,
         availableKes: Number(fx.availableKes ?? 0) || 0,
         asOf: (data.asOf as string) ?? null,
       })
       const bonus = (data.welcomeBonus ?? {}) as Partial<WelcomeBonusState>
       setPayouts({
         heldUsd: Number(data.heldUsd ?? 0) || 0,
-        minWithdrawalUsd: Number(data.minWithdrawalUsd ?? 10) || 10,
+        minWithdrawalUsd: Number(data.minWithdrawalUsd ?? 50) || 50,
         withdrawableUsd: Number(data.withdrawableUsd ?? 0) || 0,
         withdrawableKes: Number(fx.withdrawableKes ?? 0) || 0,
         pendingKes: Number(fx.pendingKes ?? 0) || 0,
@@ -685,6 +692,7 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
           dropped?: string[]
           grantedBonus?: { amountUsd: number } | null
           bonusAlreadyGranted?: boolean
+          releasedReferral?: { referrerName: string; bonusUsd: number } | null
         }>('/api/profile', { method: 'PATCH', body: { fields } })
 
         // The server is the authority on what was stored; reflect the accepted fields locally so the
@@ -706,6 +714,7 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
           completion: data.completion,
           grantedBonus: data.grantedBonus ?? null,
           bonusAlreadyGranted: data.bonusAlreadyGranted === true,
+          releasedReferral: data.releasedReferral ?? null,
         }
       } catch (err) {
         const message = describeError(err)
@@ -924,6 +933,7 @@ async function mapUserDoc(
     jobsCompleted: typeof doc.jobsCompleted === 'number' ? doc.jobsCompleted : 0,
     memberSince: doc.memberSince || '',
     phone: doc.phone || doc.wallet?.payoutNumber || '',
+    phoneCountry: doc.phoneCountry || guessCountryFromE164(doc.phone || doc.wallet?.payoutNumber || ''),
     bio: doc.bio || '',
     skills: doc.skills || [],
     languages: doc.languages || [],

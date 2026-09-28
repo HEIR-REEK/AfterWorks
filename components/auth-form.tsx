@@ -12,11 +12,15 @@ import {
   EyeOff,
   MailCheck,
   RefreshCw,
+  Gift,
 } from 'lucide-react'
 import { Button } from './ui/button'
 import { useAuth } from './firebase-auth-provider'
 import { BrandLockup } from '@/components/brand'
 import { validateEmailAddress } from '@/lib/email-validation'
+import { REFERRAL_BONUS_LABEL, normaliseReferralCode } from '@/lib/referrals'
+import { TERMS_VERSION, privacyHref, termsHref } from '@/lib/terms'
+import { cn } from '@/lib/utils'
 
 // ─── Email-not-verified banner with resend ─────────────────────────────────────
 
@@ -93,8 +97,26 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
   const [submitting, setSubmitting] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
   const [emailFieldError, setEmailFieldError] = useState<string | null>(null)
+  const [acceptedTerms, setAcceptedTerms] = useState(false)
+  const [acceptedPrivacy, setAcceptedPrivacy] = useState(false)
+  const [touchedAccept, setTouchedAccept] = useState(false)
 
   const isSignUp = mode === 'sign-up'
+
+  /**
+   * Both boxes are required before an account may be created — and the button is *blurred*, not
+   * just disabled, because a disabled button on a form people have already filled in reads as a
+   * broken page. The blur says "there is one more thing", and the text underneath says what.
+   *
+   * This is a UI gate, deliberately. The real enforcement that matters is the acceptance record
+   * written by `POST /api/auth/terms` and the referral rules enforced on the server.
+   */
+  const canCreate = !isSignUp || (acceptedTerms && acceptedPrivacy)
+  const showAcceptHint = isSignUp && touchedAccept && !canCreate
+
+  // The referral code is in the URL when somebody shared their link with this member. Shown here
+  // so nobody is surprised later that a name is attached to their signup.
+  const incomingReferral = normaliseReferralCode(searchParams.get('ref'))
   // Show a success banner on sign-in page when coming from sign-up or after verifying
   const justRegistered = !isSignUp && searchParams.get('registered') === '1'
 
@@ -130,6 +152,14 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
     setError(null)
     setErrorCode(null)
 
+    // Belt to the button's braces: the form cannot be submitted without both acceptances even if
+    // something (a stale bundle, an autofill, a scripted click) gets past the disabled attribute.
+    if (isSignUp && !(acceptedTerms && acceptedPrivacy)) {
+      setTouchedAccept(true)
+      setError('Please accept the Terms & Conditions and the Privacy Notice to create your account.')
+      return
+    }
+
     // Client-side email gate (blocks disposable/fake domains instantly)
     const emailErr = validateEmailAddress(email)
     if (emailErr) {
@@ -163,6 +193,11 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
   async function handleGoogleSignIn() {
     setError(null)
     setErrorCode(null)
+    if (isSignUp && !(acceptedTerms && acceptedPrivacy)) {
+      setTouchedAccept(true)
+      setError('Please accept the Terms & Conditions and the Privacy Notice before continuing with Google.')
+      return
+    }
     setSubmitting(true)
     // Sign-up may create an account; sign-in may only admit an existing one.
     const result = await signInWithGoogle({ allowSignUp: isSignUp })
@@ -229,6 +264,18 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
         <div className="mb-5 rounded-lg border border-warning/40 bg-warning/10 px-4 py-3 text-sm text-warning-foreground">
           Firebase is not fully configured yet. Add your Firebase web config
           (apiKey, authDomain, projectId, appId) to enable sign in.
+        </div>
+      )}
+
+      {/* Somebody shared their referral link with this member. Said up front, and said exactly
+          what it does and when the money moves — a referral nobody asked for is a bad surprise. */}
+      {isSignUp && incomingReferral && (
+        <div className="mb-5 flex items-start gap-2.5 rounded-lg border border-primary/30 bg-primary/[0.07] px-4 py-3 text-sm">
+          <Gift className="mt-0.5 size-4 shrink-0 text-primary" />
+          <span className="text-muted-foreground">
+            You were invited with code <strong className="font-mono text-foreground">{incomingReferral}</strong>. Finish
+            your profile and they will get {REFERRAL_BONUS_LABEL} added to their balance. It costs you nothing.
+          </span>
         </div>
       )}
 
@@ -372,7 +419,67 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
           </div>
         )}
 
-        <Button type="submit" size="lg" disabled={submitting || !configured} className="mt-1">
+        {/* ── Terms & Privacy acceptance ───────────────────────────────────────
+            Placed directly above the button it gates, so the thing being asked for and the
+            thing being withheld are adjacent rather than at the bottom of a scroll. */}
+        {isSignUp && (
+          <div className="mt-1 flex flex-col gap-3 rounded-xl border border-border bg-muted/30 p-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Before you create your account
+            </p>
+
+            <label className="flex cursor-pointer items-start gap-3 text-sm">
+              <input
+                type="checkbox"
+                checked={acceptedTerms}
+                onChange={(e) => setAcceptedTerms(e.target.checked)}
+                className="mt-0.5 size-4 shrink-0 cursor-pointer accent-primary"
+              />
+              <span className="text-muted-foreground">
+                I have read and agree to the{' '}
+                <Link href={termsHref()} target="_blank" rel="noopener noreferrer" className="font-medium text-primary hover:underline">
+                  Terms &amp; Conditions
+                </Link>
+                , including the referral program rules.
+              </span>
+            </label>
+
+            <label className="flex cursor-pointer items-start gap-3 text-sm">
+              <input
+                type="checkbox"
+                checked={acceptedPrivacy}
+                onChange={(e) => setAcceptedPrivacy(e.target.checked)}
+                className="mt-0.5 size-4 shrink-0 cursor-pointer accent-primary"
+              />
+              <span className="text-muted-foreground">
+                I have read and agree to the{' '}
+                <Link href={privacyHref()} target="_blank" rel="noopener noreferrer" className="font-medium text-primary hover:underline">
+                  Privacy Notice
+                </Link>{' '}
+                — how AfterWorks stores and uses my data.
+              </span>
+            </label>
+
+            <p className={cn('text-[11px] leading-relaxed', showAcceptHint ? 'text-warning' : 'text-muted-foreground')}>
+              {showAcceptHint
+                ? 'Tick both boxes to enable the Create account button.'
+                : `Version ${TERMS_VERSION} · one email address and one phone number per account.`}
+            </p>
+          </div>
+        )}
+
+        <Button
+          type="submit"
+          size="lg"
+          disabled={submitting || !configured || !canCreate}
+          aria-disabled={!canCreate}
+          className={cn(
+            'mt-1 transition-all',
+            // The blur is the whole point: the button is visibly *there* and visibly *not ready*,
+            // instead of being a dead control with no explanation.
+            isSignUp && !canCreate && 'cursor-not-allowed opacity-55 blur-[2.5px] saturate-50',
+          )}
+        >
           {submitting && <Loader2 className="size-4 animate-spin" />}
           {isSignUp ? 'Create account' : 'Sign in'}
         </Button>
@@ -388,9 +495,15 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
         type="button"
         variant="outline"
         size="lg"
-        disabled={submitting || !configured}
+        // Held back on sign-up for the same reason the submit button is: Google can create an
+        // account, so it is an account-creation path and it owes the same acceptance.
+        disabled={submitting || !configured || !canCreate}
+        aria-disabled={!canCreate}
         onClick={handleGoogleSignIn}
-        className="w-full relative bg-card hover:bg-muted"
+        className={cn(
+          'relative w-full bg-card hover:bg-muted',
+          isSignUp && !canCreate && 'cursor-not-allowed opacity-55 blur-[2.5px] saturate-50',
+        )}
       >
         <svg className="absolute left-4 size-5" viewBox="0 0 24 24">
           <path
@@ -412,6 +525,12 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
         </svg>
         Continue with Google
       </Button>
+
+      {isSignUp && !canCreate && (
+        <p className="mt-2 text-center text-[11px] text-muted-foreground">
+          Tick the two boxes above to continue — your account is created once you accept.
+        </p>
+      )}
 
       {!isSignUp && (
         <p className="mt-2 text-center text-[11px] leading-snug text-muted-foreground">

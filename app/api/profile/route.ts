@@ -4,6 +4,7 @@ import { readJsonBody } from '@/lib/security-core'
 import { profileCompletion } from '@/lib/profile-completion'
 import { withdrawalQuote } from '@/lib/payouts'
 import { WalletError, getMemberWallet, saveMemberProfile } from '@/lib/wallet-server'
+import { UniquenessError } from '@/lib/account-uniqueness'
 
 /**
  * GET   /api/profile — the member's own document, scored, plus what the wallet allows.
@@ -98,10 +99,18 @@ export async function PATCH(req: NextRequest) {
       completion: result.completion,
       grantedBonus: result.grantedBonus,
       bonusAlreadyGranted: result.bonusAlreadyGranted,
+      // Present only when this save is what completed a referred member's profile — the money
+      // went to *their* referrer, and the UI says so rather than showing a balance that did not move.
+      releasedReferral: result.releasedReferral,
       wallet: result.wallet,
     })
   } catch (err) {
     if (err instanceof WalletError) {
+      return fail(err.status, err.message, { code: err.code })
+    }
+    // "One phone number, one account" is a rule, not a crash: the member gets a specific message
+    // and a 409, and the other account's uid never leaves the server.
+    if (err instanceof UniquenessError) {
       return fail(err.status, err.message, { code: err.code })
     }
     return routeError('profile:PATCH', err)

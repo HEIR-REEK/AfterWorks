@@ -71,6 +71,8 @@ export type UserProfile = {
   kycVerified: boolean
   emailVerified?: boolean
   emailVerifiedAt?: string
+  /** ISO-3166 country of the phone number, written alongside it by PATCH /api/profile. */
+  phoneCountry?: string
   accountState: AccountState
   role?: 'admin' | 'user'
   isAdmin?: boolean
@@ -138,6 +140,7 @@ const MEMBER_EDITABLE_FIELDS = new Set([
   'jobExperience',
   'career',
   'phone',
+  'phoneCountry',
 ])
 
 // ─── Firestore handle ────────────────────────────────────────────────────────

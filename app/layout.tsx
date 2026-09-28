@@ -43,7 +43,7 @@ export async function generateMetadata(): Promise<Metadata> {
       template: `%s · ${site.name}`,
     },
     description: site.description,
-    metadataBase: new URL(site.url.startsWith('http') ? site.url : 'https://afterworks.site'),
+    metadataBase: site.origin,
     applicationName: site.name,
     generator: 'AfterWorks',
     keywords: [
@@ -54,7 +54,7 @@ export async function generateMetadata(): Promise<Metadata> {
       'verified remote work',
       'AfterWorks',
     ],
-    authors: [{ name: `${site.name} Operations`, url: site.url }],
+    authors: [{ name: `${site.name} Operations`, url: site.origin.href }],
     creator: site.name,
     publisher: site.legalName,
     category: 'work',
@@ -63,7 +63,7 @@ export async function generateMetadata(): Promise<Metadata> {
       siteName: site.name,
       title: `${site.name} — ${site.tagline}`,
       description: site.description,
-      url: site.url,
+      url: site.origin.href,
       images: [{ url: '/brand/opengraph.png', width: 1200, height: 630, alt: `${site.name} — verified microwork` }],
       locale: 'en_KE',
     },
@@ -84,6 +84,11 @@ export async function generateMetadata(): Promise<Metadata> {
       apple: '/apple-icon.png',
     },
     manifest: '/manifest.webmanifest',
+    // Second verification path for Search Console. The HTML file in `public/` already verifies the
+    // property; a meta tag survives a redeploy that forgets to ship static files, and costs nothing.
+    ...(env('GOOGLE_SITE_VERIFICATION')
+      ? { verification: { google: env('GOOGLE_SITE_VERIFICATION') } }
+      : {}),
   } satisfies Metadata
 
   // While a blackout window is running, keep bots off the interim pages and stop reindex churn.
@@ -119,10 +124,10 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
     '@type': 'Organization',
     name: site.name,
     legalName: site.legalName,
-    url: site.url,
+    url: site.origin.href,
     email: site.supportEmail,
     description: site.description,
-    areaServed: ['KE', 'UG', 'TZ', 'RW', 'NG', 'ZA'],
+    areaServed: site.areaServed,
     sameAs: [site.twitter, site.linkedin],
     contactPoint: [
       {

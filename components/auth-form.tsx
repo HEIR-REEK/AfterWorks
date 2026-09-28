@@ -136,7 +136,7 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
         router.push('/profile?new=1')
         router.refresh()
       } else {
-        router.push('/')
+        router.push('/dashboard')
         router.refresh()
       }
     } else {
@@ -159,7 +159,7 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
         router.push('/profile?new=1')
         router.refresh()
       } else {
-        router.push('/')
+        router.push('/dashboard')
         router.refresh()
       }
     } else {

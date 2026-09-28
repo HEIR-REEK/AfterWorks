@@ -72,6 +72,9 @@ still require a deployed check using a test account you control.
 | `app/api/auth/**` | Resend verification send + consume; Firebase Auth is marked verified only after the link is clicked |
 | `components/app-gate.tsx` | sign-in gate, unverified-email hold, maintenance interception for the worker app |
 | `app/admin/**` | operations console (overview, users, jobs, QA, maintenance, audit, security) |
+| `app/page.tsx`, `app/jobs/**` | public, server-rendered pages: the landing page, the board and one page per job card |
+| `lib/public-catalogue.ts`, `lib/public-job.ts` | Admin-SDK reads for those pages, and the projection that strips paid training + answer keys |
+| `app/dashboard/**` | the signed-in worker home (it used to be `/`; `/` is public now) |
 
 ## Conventions that matter
 
@@ -110,6 +113,7 @@ still require a deployed check using a test account you control.
 
 ## Documentation map
 
+`SEO.md` (how the site gets indexed, and the one-time Search Console checklist) ·
 `SECURITY_HARDENING.md` (what is enforced and how to verify it) · `ADMIN_DATA.md` (which system each
 console figure is read from, and what a zero means) · `DEPLOYMENT.md` (Render/Firebase setup) ·
 `FEATURES.md` and `IMPLEMENTATION_STATUS.md` are

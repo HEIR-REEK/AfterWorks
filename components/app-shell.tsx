@@ -26,8 +26,10 @@ function initials(nameOrEmail: string) {
   return (parts[0]?.[0] ?? '') + (parts[1]?.[0] ?? '')
 }
 
+// `/` is the public landing page now (that is what makes the site indexable); the member home —
+// the page that used to be at `/` — lives at `/dashboard`.
 const baseNav = [
-  { href: '/', label: 'Dashboard', icon: LayoutDashboard },
+  { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/jobs', label: 'Jobs', icon: Briefcase },
   { href: '/applications', label: 'Applied', icon: ListChecks },
   { href: '/profile', label: 'Profile', icon: User },
@@ -62,7 +64,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   function isActive(href: string) {
-    if (href === '/') return pathname === '/'
+    // The member home is an exact match: `/dashboard` must not light up for every other route.
+    if (href === '/dashboard') return pathname === '/dashboard' || pathname === '/'
     return pathname.startsWith(href)
   }
 
@@ -71,7 +74,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       {/* Top Header */}
       <header className="sticky top-0 z-40 border-b border-border bg-background/85 backdrop-blur">
         <div className="mx-auto flex h-14 w-full max-w-6xl items-center gap-4 px-4 sm:h-16 sm:gap-6 sm:px-6">
-          <BrandLink href="/" label={site.name} size={40} wordmarkClass="sm:text-base" />
+          <BrandLink href="/dashboard" label={site.name} size={40} wordmarkClass="sm:text-base" />
 
           {/* Desktop nav */}
           <nav className="hidden items-center gap-1 md:flex" aria-label="Primary">

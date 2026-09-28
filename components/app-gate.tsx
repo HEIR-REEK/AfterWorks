@@ -24,7 +24,19 @@ import { matchesBlockedPath } from '@/lib/maintenance-shared'
  *    verified by `useAdminSession()`, plus the server-side allow-list check.
  */
 
-const PUBLIC_ROUTES = ['/sign-in', '/sign-up', '/forgot-password', '/verify-email', '/kyc/callback', '/maintenance', '/status']
+const PUBLIC_ROUTES = ['/sign-in', '/sign-up', '/forgot-password', '/verify-email', '/kyc/callback', '/maintenance', '/status', '/', '/jobs']
+
+/**
+ * Public routes that a signed-in member should still get inside the app chrome.
+ *
+ * `/` and `/jobs` have to be readable with no session — that is what makes them indexable, since a
+ * crawler is just a visitor who never signs in. But a member browsing the board still wants the nav,
+ * the live catalogue listener and their "already applied" state. So these two render bare for
+ * everyone at first paint (real HTML for the crawler) and are wrapped in the provider + shell the
+ * moment a session resolves. `/` is not listed: members are sent to `/dashboard` instead, by
+ * `WorkspaceRedirect`, so the landing page stays a marketing page.
+ */
+const MEMBER_CHROME_ROUTES = ['/jobs']
 
 export function AppGate({ children }: { children: React.ReactNode }) {
   return (
@@ -43,6 +55,11 @@ function Gate({ children }: { children: React.ReactNode }) {
   const [redirectArmed, setRedirectArmed] = useState(false)
 
   const isPublic = useMemo(() => PUBLIC_ROUTES.some((route) => pathname === route || pathname.startsWith(`${route}/`)), [pathname])
+  // A public page that upgrades to the full app for members (see MEMBER_CHROME_ROUTES).
+  const isMemberChrome = useMemo(
+    () => MEMBER_CHROME_ROUTES.some((route) => pathname === route || pathname.startsWith(`${route}/`)),
+    [pathname],
+  )
   const isAdminRoute = pathname.startsWith('/admin') || pathname.startsWith('/api/admin')
   // A full blackout replaces the whole app, including /sign-in. A scoped one (`sections`) replaces
   // only the affected route, so a payout run does not take the job board down with it.
@@ -57,13 +74,17 @@ function Gate({ children }: { children: React.ReactNode }) {
   // Resend link — /verify-email is public so that page still renders when signed out too.
   useEffect(() => {
     if (loading || configured === false) return
-    if (isPublic || isAdminRoute || blackout) return
+    if (isAdminRoute || blackout) return
+    // Public marketing pages need nobody: `/` always, and `/jobs` for a visitor with no session.
+    if (isPublic && !(isMemberChrome && user)) return
     if (!user) {
       router.replace('/sign-in')
       return
     }
+    // `/jobs` is public, but a member who has not confirmed their email still belongs on
+    // /verify-email rather than on the board — that rule predates the public pages and stands.
     if (!user.emailVerified) router.replace('/verify-email')
-  }, [loading, user, isPublic, isAdminRoute, blackout, router, configured])
+  }, [loading, user, isPublic, isMemberChrome, isAdminRoute, blackout, router, configured])
 
   // Flip the "loading" screen off only once we know what we are rendering.
   useEffect(() => {
@@ -77,7 +98,10 @@ function Gate({ children }: { children: React.ReactNode }) {
     return <MaintenanceScreen config={view} />
   }
 
-  if (isPublic) return <>{children}</>
+  // Public pages render bare. This is the branch a crawler takes, so it must not depend on a
+  // session, a provider or any client state — the HTML below is the whole page.
+  // Members on `/jobs` fall through to the provider + shell further down.
+  if (isPublic && !(isMemberChrome && user)) return <>{children}</>
 
   if (loading || (admin.status === 'checking' && view.unknown && !redirectArmed)) {
     return (

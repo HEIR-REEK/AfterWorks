@@ -1,296 +1,177 @@
-'use client'
+import type { Metadata } from 'next'
+import { notFound } from 'next/navigation'
+import { JobDetail } from '@/components/job-detail'
+import { formatDuration, formatUsd, trainingFeeUsdFor } from '@/lib/afterworks-data'
+import { getPublicJob } from '@/lib/public-catalogue'
+import { publicPostedDate } from '@/lib/public-job'
+import { absoluteUrl, site } from '@/lib/site'
 
-import { useState } from 'react'
-import Link from 'next/link'
-import { useRouter } from 'next/navigation'
-import {
-  AlertCircle,
-  ArrowLeft,
-  CheckCircle2,
-  Clock,
-  GraduationCap,
-  Loader2,
-  ShieldAlert,
-  ShieldCheck,
-  Users,
-} from 'lucide-react'
-import { useAfterWorks, useJobDetail } from '@/components/afterworks-provider'
-import emailjs from '@emailjs/browser'
-import { StatusBadge } from '@/components/status-badge'
-import { Button } from '@/components/ui/button'
-import {
-  APPLICATION_LABELS,
-  APPLICATION_TONE,
-  formatDuration,
-  formatUsd,
-  trainingFeeUsdFor,
-  Application,
-} from '../../../lib/afterworks-data'
+/**
+ * One job card as a public, indexable page.
+ *
+ * Every card is a real landing page for a real search: "swahili transcription jobs", "paid image
+ * labelling work kenya". Before this the route was a client component with a fixed layout-level title
+ * ("Job Details &amp; Requirements") for every card, behind the sign-in gate — so there was nothing
+ * for a crawler to distinguish one job from another, and nothing to rank.
+ *
+ * Two things are emitted here rather than in the client component, because they have to be in the
+ * first response: the per-card `<title>`/description/canonical, and the `JobPosting` +
+ * `BreadcrumbList` JSON-LD. Google reads structured data from the served HTML; a script injected
+ * after hydration may never be seen.
+ *
+ * The card itself is read with the Admin SDK (`lib/public-catalogue.ts`), so `firestore.rules` still
+ * requires a session for client reads — publishing the board does not open the database.
+ */
 
-import { use } from 'react'
+type Params = Promise<{ id: string }>
 
-export default function JobDetailPage({
-  params,
-}: {
-  params: Promise<{ id: string }>
-}) {
-  const { id } = use(params)
-  const router = useRouter()
-  const { getApplicationForJob, isJobPaid, worker } = useAfterWorks()
-  const [error, setError] = useState<string | null>(null)
-  const [isApplying, setIsApplying] = useState(false)
+function clampId(raw: string): string {
+  return String(raw ?? '').trim().slice(0, 80)
+}
 
-  // Reads the card from the live catalogue, and re-reads the document when the tab regains focus
-  // so a price, slot count or status changed in the console is what this page shows.
-  const { job, checking } = useJobDetail(id)
-  const application = getApplicationForJob(id) as Application | null
-  const isPaid = job ? isJobPaid(job.id) : false
+/** Plain-text description for meta tags: one line, no markup, bounded to a sane snippet length. */
+function metaDescription(job: { description: string; responsibilities: string[]; category: string }): string {
+  const base = job.description.replace(/\s+/g, ' ').trim()
+  const firstTask = job.responsibilities[0]?.replace(/\s+/g, ' ').trim() ?? ''
+  const text = firstTask && !base.toLowerCase().includes(firstTask.toLowerCase().slice(0, 40))
+    ? `${base} Includes: ${firstTask}.`
+    : base
+  const suffix = ` ${job.category} microwork on ${site.name}, paid to mobile money.`
+  const budget = 158 - suffix.length
+  const body = text.length > budget ? `${text.slice(0, Math.max(0, budget - 1)).trimEnd()}…` : text
+  return `${body}${suffix}`.trim()
+}
 
+export async function generateMetadata({ params }: { params: Params }): Promise<Metadata> {
+  const { id } = await params
+  const job = await getPublicJob(clampId(id))
   if (!job) {
-    return (
-      <div className="flex flex-col items-center gap-4 py-20 text-center">
-        {checking ? (
-          <>
-            <Loader2 className="size-6 animate-spin text-muted-foreground" />
-            <p className="text-sm text-muted-foreground">Loading this job card…</p>
-          </>
-        ) : (
-          <>
-            <p className="text-sm text-muted-foreground">This job could not be found.</p>
-            <Button render={<Link href="/jobs" />} variant="outline">
-              Back to jobs
-            </Button>
-          </>
-        )}
-      </div>
-    )
+    // The route answers 404 (see `notFound()` below), which is what tells a crawler the card is
+    // gone — no `robots` here on purpose. Adding one made Next emit *two* conflicting meta robots
+    // tags on the same document (this page's `noindex` plus the root layout's `index, follow`), and
+    // a 404 does not need noindex: Google drops non-200 responses from the index by itself.
+    return { title: 'Job not found' }
   }
 
-  const isClosed = job.status !== 'open' || job.slotsRemaining <= 0
-  const filled = job.capacity - job.slotsRemaining
-  const fillPct = Math.round((filled / job.capacity) * 100)
-  const trainingFee = formatUsd(trainingFeeUsdFor(job.trainingFeeUsd))
+  const url = `/jobs/${job.id}`
+  const pay = `${formatUsd(job.payAmountUsd)} · ${formatDuration(job.estimatedMinutes)}`
+  const title = `${job.title} (${pay})`
+  const description = metaDescription(job)
 
-  async function handleApply() {
-    setError(null)
-    if (!worker.kycVerified) {
-      setError('Identity verification (KYC) is required before applying for jobs.')
-      return
-    }
-    
-    setIsApplying(true)
-    router.push(`/training/${job!.id}`)
+  return {
+    title,
+    description,
+    alternates: { canonical: url },
+    keywords: [job.category, 'microwork Kenya', 'remote work Kenya', 'mobile money payout', site.name],
+    openGraph: {
+      type: 'article',
+      url: absoluteUrl(url),
+      title: `${job.title} · ${site.name}`,
+      description,
+      images: [{ url: '/brand/opengraph.png', width: 1200, height: 630, alt: `${site.name} — verified microwork` }],
+      locale: 'en_KE',
+    },
+    twitter: { card: 'summary_large_image', title: `${job.title} · ${site.name}`, description },
+  }
+}
+
+export default async function JobDetailPage({ params }: { params: Params }) {
+  const { id } = await params
+  const job = await getPublicJob(clampId(id))
+  if (!job) notFound()
+
+  const postedDate = publicPostedDate(job)
+  const closesAt = Date.parse(job.closesAt)
+
+  const descriptionHtml = [
+    `<p>${escapeHtml(job.description)}</p>`,
+    job.responsibilities.length
+      ? `<h3>What you'll do</h3><ul>${job.responsibilities.map((entry) => `<li>${escapeHtml(entry)}</li>`).join('')}</ul>`
+      : '',
+    `<h3>How the work is paid</h3><p>${escapeHtml(
+      `${formatUsd(job.payAmountUsd)} on completion, estimated ${formatDuration(job.estimatedMinutes)}. ` +
+        `Earnings clear in ${site.clearingWindowHours} hours and are withdrawable to mobile money from ${formatUsd(site.minWithdrawalUsd)}. ` +
+        (job.trainingRequired
+          ? `This card requires a one-off training module of ${formatUsd(trainingFeeUsdFor(job.trainingFeeUsd))} plus a short assessment before you can apply.`
+          : 'No training fee is required for this card.'),
+    )}</p>`,
+    `<h3>Requirements</h3><p>${escapeHtml(
+      job.requiresVerified
+        ? 'A free AfterWorks account, a confirmed email address and a one-time government ID verification with a liveness check.'
+        : 'A free AfterWorks account and a confirmed email address.',
+    )}</p>`,
+  ].join('')
+
+  /**
+   * `JobPosting` per Google's required fields: title, description, datePosted, hiringOrganization
+   * name, and — because this work is remote — `jobLocationType: TELECOMMUTE` together with
+   * `applicantLocationRequirements`. `datePosted` is omitted rather than faked when the document
+   * carries no usable timestamp: an invented date is the kind of thing that gets structured data
+   * discounted. The real fix is a `postedAt` field written by the console when a card is published.
+   */
+  const jobPosting = {
+    '@context': 'https://schema.org',
+    '@type': 'JobPosting',
+    headline: job.title.slice(0, 100),
+    title: job.title,
+    description: descriptionHtml,
+    ...(postedDate ? { datePosted: postedDate } : {}),
+    ...(Number.isFinite(closesAt) ? { validThrough: new Date(closesAt).toISOString() } : {}),
+    employmentType: ['CONTRACT', 'PART_TIME'],
+    jobLocationType: 'TELECOMMUTE',
+    applicantLocationRequirements: site.areaServed.map((country) => ({ '@type': 'Country', name: country })),
+    hiringOrganization: {
+      '@type': 'Organization',
+      name: site.name,
+      legalName: site.legalName,
+      url: absoluteUrl('/'),
+      sameAs: [site.twitter, site.linkedin],
+    },
+    baseSalary: {
+      '@type': 'MonetaryAmount',
+      currency: 'USD',
+      value: { '@type': 'QuantitativeValue', value: job.payAmountUsd, unitText: 'JOB' },
+    },
+    industry: 'Information Services',
+    occupationalCategory: job.category,
+    responsibilities: job.responsibilities.join(', '),
+    qualifications: job.requiresVerified
+      ? 'Government ID verification with a liveness check; confirmed email address.'
+      : 'Confirmed email address.',
+    url: absoluteUrl(`/jobs/${job.id}`),
+  }
+
+  const breadcrumbs = {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: [
+      { '@type': 'ListItem', position: 1, name: 'Home', item: absoluteUrl('/') },
+      { '@type': 'ListItem', position: 2, name: 'Jobs', item: absoluteUrl('/jobs') },
+      { '@type': 'ListItem', position: 3, name: job.title, item: absoluteUrl(`/jobs/${job.id}`) },
+    ],
   }
 
   return (
-    <div className="flex flex-col gap-6">
-      <Link
-        href="/jobs"
-        className="inline-flex w-fit items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground"
-      >
-        <ArrowLeft className="size-4" />
-        Back to jobs
-      </Link>
-
-      <div className="grid gap-6 lg:grid-cols-3">
-        {/* Main */}
-        <div className="flex flex-col gap-6 lg:col-span-2">
-          <div className="rounded-2xl border border-border bg-card p-6">
-            <div className="flex flex-wrap items-center gap-2">
-              <StatusBadge tone="neutral">{job.category}</StatusBadge>
-              {isClosed ? (
-                <StatusBadge tone="danger">Slots full</StatusBadge>
-              ) : job.slotsRemaining <= 3 ? (
-                <StatusBadge tone="warning">{job.slotsRemaining} slots left</StatusBadge>
-              ) : (
-                <StatusBadge tone="success">{job.slotsRemaining} slots open</StatusBadge>
-              )}
-              <span className="ml-auto text-xs text-muted-foreground">
-                Posted {job.postedAgo}
-              </span>
-            </div>
-
-            <h1 className="mt-4 text-pretty text-2xl font-semibold leading-tight">
-              {job.title}
-            </h1>
-            <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
-              {job.description}
-            </p>
-
-            <h2 className="mt-6 text-sm font-semibold">What you&apos;ll do</h2>
-            <ul className="mt-2 flex flex-col gap-2">
-              {job.responsibilities.map((r: string) => (
-                <li key={r} className="flex items-start gap-2 text-sm text-muted-foreground">
-                  <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-success" />
-                  {r}
-                </li>
-              ))}
-            </ul>
-          </div>
-
-          <div className="rounded-2xl border border-border bg-card p-6">
-            <h2 className="text-sm font-semibold">Requirements & Flow</h2>
-            <ul className="mt-3 flex flex-col gap-3 text-sm">
-              <li className="flex items-center gap-2.5 text-muted-foreground">
-                {worker.kycVerified ? (
-                  <>
-                    <ShieldCheck className="size-4 shrink-0 text-success" />
-                    <span>Identity Verification (KYC) — <strong className="text-success font-medium">Verified</strong></span>
-                  </>
-                ) : (
-                  <>
-                    <ShieldAlert className="size-4 shrink-0 text-warning" />
-                    <span>Identity Verification (KYC) — <strong className="text-warning font-medium">Action required</strong></span>
-                  </>
-                )}
-              </li>
-              {job.trainingRequired ? (
-                <li className="flex items-start gap-2.5 text-muted-foreground">
-                  <GraduationCap className="mt-0.5 size-4 shrink-0 text-primary" />
-                  <div>
-                    <span>Step 1: Pay {trainingFee} → Step 2: Access Training → Step 3: Skill Assessment → Step 4: Apply for Job Card</span>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {isPaid ? (
-                        <strong className="text-success font-medium">✓ Payment confirmed. Training &amp; assessment unlocked for this job card!</strong>
-                      ) : (
-                        <span>Each job card requires its own separate {trainingFee} payment. Completing payment unlocks training &amp; assessment for this specific job card only.</span>
-                      )}
-                    </p>
-                  </div>
-                </li>
-              ) : (
-                <li className="flex items-center gap-2.5 text-muted-foreground">
-                  <GraduationCap className="size-4 shrink-0 text-muted-foreground" />
-                  No training fee required for this job card category
-                </li>
-              )}
-            </ul>
-          </div>
-        </div>
-
-        {/* Sidebar */}
-        <aside className="flex flex-col gap-4 lg:sticky lg:top-24 lg:h-fit">
-          <div className="rounded-2xl border border-border bg-card p-6">
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Payment on completion
-            </p>
-            <p className="mt-1 font-mono text-3xl font-semibold">
-              {formatUsd(job.payAmountUsd)}
-            </p>
-
-            <dl className="mt-5 flex flex-col gap-3 text-sm">
-              <div className="flex items-center justify-between">
-                <dt className="flex items-center gap-2 text-muted-foreground">
-                  <Clock className="size-4" /> Estimated time
-                </dt>
-                <dd className="font-medium">{formatDuration(job.estimatedMinutes)}</dd>
-              </div>
-              <div className="flex items-center justify-between">
-                <dt className="flex items-center gap-2 text-muted-foreground">
-                  <Users className="size-4" /> Slots filled
-                </dt>
-                <dd className="font-medium">
-                  {filled} / {job.capacity}
-                </dd>
-              </div>
-            </dl>
-
-            <div className="mt-3">
-              <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
-                <div
-                  className="h-full rounded-full bg-primary transition-all"
-                  style={{ width: `${fillPct}%` }}
-                />
-              </div>
-            </div>
-
-            {job.trainingRequired && (
-              <div className={`mt-4 flex items-start gap-2 rounded-lg p-3 text-xs ${
-                isPaid ? 'bg-success/15 text-success border border-success/30' : 'bg-accent text-accent-foreground'
-              }`}>
-                <GraduationCap className="mt-0.5 size-4 shrink-0" />
-                <span>
-                  {isPaid
-                    ? 'Payment detected! Training modules & assessment are unlocked.'
-                    : `This job card requires payment detection (${trainingFee}) before training and assessment open.`}
-                </span>
-              </div>
-            )}
-
-            <div className="mt-5">
-              {application ? (
-                <div className="flex flex-col gap-2 rounded-lg border border-border p-3">
-                  <span className="text-xs text-muted-foreground">
-                    Your application status
-                  </span>
-                  <StatusBadge tone={APPLICATION_TONE[application.status]}>
-                    {APPLICATION_LABELS[application.status]}
-                  </StatusBadge>
-                  <Button
-                    render={<Link href="/applications" />}
-                    variant="outline"
-                    className="mt-1 w-full"
-                  >
-                    Track application
-                  </Button>
-                </div>
-              ) : !worker.kycVerified ? (
-                <div className="flex flex-col gap-2">
-                  <Button
-                    onClick={handleApply}
-                    disabled={isClosed || isApplying}
-                    size="lg"
-                    className="w-full gap-2"
-                  >
-                    {isApplying && <Loader2 className="size-4 animate-spin" />}
-                    {isApplying ? 'Redirecting...' : isClosed ? 'Slots full' : 'Take Assessment to Apply'}
-                  </Button>
-                  <Button
-                    render={<Link href="/profile" />}
-                    variant="outline"
-                    size="sm"
-                    className="w-full gap-1.5 border-warning/40 text-warning hover:bg-warning/10"
-                  >
-                    <ShieldAlert className="size-4" />
-                    Verify KYC in Profile
-                  </Button>
-                </div>
-              ) : (
-                <Button
-                  onClick={handleApply}
-                  disabled={isClosed || isApplying}
-                  size="lg"
-                  className="w-full gap-2"
-                >
-                  {isApplying && <Loader2 className="size-4 animate-spin" />}
-                  {isApplying
-                    ? 'Redirecting...'
-                    : isClosed
-                      ? 'Slots full'
-                      : job.trainingRequired
-                        ? isPaid
-                          ? 'Continue Training & Assessment'
-                          : `Pay ${trainingFee} to Unlock Training`
-                        : 'Take Assessment to Apply'}
-                </Button>
-              )}
-
-              {error && (
-                <p className="mt-2 flex items-center gap-1.5 text-xs text-destructive">
-                  <AlertCircle className="size-3.5" />
-                  {error}
-                </p>
-              )}
-
-              {!application && !isClosed && (
-                <p className="mt-3 text-center text-xs text-muted-foreground">
-                  No fee to apply. Your saved professional details are attached automatically.
-                </p>
-              )}
-            </div>
-          </div>
-        </aside>
-      </div>
-    </div>
+    <>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(jobPosting) }}
+      />
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbs) }}
+      />
+      <JobDetail publicJob={job} />
+    </>
   )
+}
+
+/** Structured data is HTML, so the authored copy has to be escaped on the way in. */
+function escapeHtml(value: string): string {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
 }

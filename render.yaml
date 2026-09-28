@@ -31,6 +31,18 @@ services:
       - key: FORCE_SECURE_COOKIES
         value: "true"
 
+      # ── Search indexing ────────────────────────────────────────────────────
+      # Must stay "false" in production: true puts noindex on every page and the site disappears
+      # from search. Staging/pre-launch deployments are the only place to set it to "true".
+      - key: SITE_NO_INDEX
+        value: "false"
+      # 308 any www.* host to NEXT_PUBLIC_APP_URL so one hostname owns the ranking signals.
+      - key: CANONICAL_WWW_REDIRECT
+        value: "true"
+      # Optional <meta name="google-site-verification">; the HTML file in public/ already verifies.
+      - key: GOOGLE_SITE_VERIFICATION
+        sync: false
+
       # ── Firebase (client config; read server-side and passed to the provider) ──
       - key: FIREBASE_PROJECT_ID
         sync: false

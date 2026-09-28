@@ -35,6 +35,31 @@ const noStore = [
   { key: 'Vary', value: 'Cookie, Authorization' },
 ]
 
+/**
+ * One hostname should own the site's ranking signals. `afterworks.site` and `www.afterworks.site`
+ * both resolve and both serve the app, which splits inbound links and crawl budget across two
+ * identical copies — and every duplicate URL is a chance for the wrong one to be the one that ranks.
+ * The apex is canonical (it is what `NEXT_PUBLIC_APP_URL`, the sitemap and every `rel=canonical` use),
+ * so `www` 308s to it. Set `CANONICAL_WWW_REDIRECT=false` if a deployment is meant to be reached on
+ * a `www` host.
+ */
+const canonicalWwwRedirect = isProduction && (process.env.CANONICAL_WWW_REDIRECT ?? 'true') !== 'false'
+
+/**
+ * Where `www` sends you. Derived from the same variable the sitemap and canonical tags use, so the
+ * redirect cannot point somewhere the rest of the site does not already claim.
+ */
+const canonicalOrigin = (process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || 'https://afterworks.site')
+  .replace(/\/$/, '')
+  .replace(/^(https?:\/\/)?/, 'https://')
+/**
+ * Two cases where the redirect must not be installed: a deployment whose canonical host *is* a `www`
+ * host (it would redirect to itself in a loop), and a loopback origin (a local or preview build has
+ * no `www` variant to consolidate).
+ */
+const canonicalHostIsWww = /^https:\/\/www\./i.test(canonicalOrigin)
+const canonicalHostIsLoopback = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0)/i.test(canonicalOrigin)
+
 const nextConfig = {
   // Hosted development previews are framed; production remains non-embeddable.
   allowedDevOrigins: ['localhost', '127.0.0.1', '*.e2b.app'],
@@ -51,13 +76,14 @@ const nextConfig = {
   poweredByHeader: false,
   reactStrictMode: false, // effects here subscribe/unsubscribe live listeners; keep deterministic
   compress: true,
-  eslint: { ignoreDuringBuilds: true },
   typescript: { ignoreBuildErrors: false },
   // Self-hosted fonts already; nothing else may reference the framework version leak.
   productionBrowserSourceMaps: false,
   transpilePackages: [],
+  // `experimental.serverComponentsExternalPackages` was renamed in Next 15+; the old key is ignored
+  // with a warning, which would quietly bundle firebase-admin into the server build.
+  serverExternalPackages: ['firebase-admin'],
   experimental: {
-    serverComponentsExternalPackages: ['firebase-admin'],
     // lucide-react ships hundreds of icons; tree-shake them at import time instead of bundling all.
     // Note: the self-hosted font packages must NOT be listed here. optimizePackageImports rewrites
     // sub-path imports for the listed packages, and Next then tries to parse their `index.css` as
@@ -73,6 +99,21 @@ const nextConfig = {
     localPatterns: [{ pathname: '/**' }],
   },
   output: process.env.NEXT_OUTPUT_STANDALONE === '1' ? 'standalone' : undefined,
+  async redirects() {
+    if (!canonicalWwwRedirect || canonicalHostIsWww || canonicalHostIsLoopback) return []
+    return [
+      {
+        // No named capture group: Next 16 lowercases `has` match keys before the destination is
+        // built, so `:canonicalHost` arrives as `canonicalhost` and throws
+        // `TypeError: Expected "canonicalhost" to be a string` on every `www` request. The target is
+        // a known constant anyway — that is the whole point of picking a canonical host.
+        source: '/:path*',
+        has: [{ type: 'host', value: 'www\\..+' }],
+        destination: `${canonicalOrigin}/:path*`,
+        permanent: true,
+      },
+    ]
+  },
   async headers() {
     return [
       { source: '/:path*', headers: securityHeaders },

@@ -675,6 +675,18 @@ export function useAfterWorks() {
   return ctx
 }
 
+/**
+ * The same context, but `null` instead of a throw when there is no provider.
+ *
+ * `/jobs` and `/jobs/[id]` are public now: a signed-out visitor (and a crawler) gets a
+ * server-rendered board, a member gets the live one inside `AfterWorksProvider`. The component that
+ * picks between them renders during SSR, when no session is known yet, so it must be able to ask
+ * "is there a provider?" without blowing up the whole route.
+ */
+export function useAfterWorksOptional(): AfterWorksContextValue | null {
+  return useContext(AfterWorksContext)
+}
+
 export type JobDetailState = {
   job: Job | undefined
   /** True while a card that is not in the live catalogue is being fetched — render a spinner, not a 404. */

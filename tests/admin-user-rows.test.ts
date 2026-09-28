@@ -3,6 +3,8 @@ import test from 'node:test'
 import {
   adminUserDetailFromDoc,
   adminUserRowFromDoc,
+  adminUserRowFromPayload,
+  adminUserRowsFromPayload,
   coerceIsoTimestamp,
   maskPayoutHandle,
 } from '@/lib/admin-domain'
@@ -221,6 +223,147 @@ test('the console client normalises the API response: a stub from the server sti
   } finally {
     globalThis.fetch = originalFetch
   }
+})
+
+// ─── The directory table: the same crash, one row at a time ──────────────────
+//
+// The drawer was fixed by projecting the detail payload. The *table* still rendered
+// `row.wallet.availableUsd` straight off the response, on the strength of a comment claiming the
+// projection ran on the client too. It did not: `adminApi.users()` forwarded `data.rows` verbatim, so
+// any response that was not projected — a server mid-deploy, a cached body, a partial write — took
+// the whole directory down with the same TypeError. These tests hold the client half of the promise.
+
+test('a directory row with no wallet renders a blank balance instead of throwing', async () => {
+  const { adminApi } = await import('@/lib/admin')
+  const originalFetch = globalThis.fetch
+  // Raw documents, exactly as a not-yet-updated server (or a partial payload) would send them.
+  globalThis.fetch = (async () =>
+    new Response(
+      JSON.stringify({
+        ok: true,
+        rows: [
+          { uid: 'stub-1', termsAcceptedAt: '2026-01-04T09:00:00.000Z' },
+          { uid: 'stub-2', name: 'Amina', wallet: null },
+          { uid: 'stub-3', name: 'Brian', wallet: { availableUsd: 12.5, pendingUsd: 'nonsense' } },
+        ],
+        nextCursor: 'stub-3',
+        hasMore: true,
+        degraded: 'Ordered query fell back to an unindexed read.',
+      }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    )) as typeof fetch
+
+  try {
+    const data = await adminApi.users({ pageSize: 25 })
+
+    // Verbatim what the table cell evaluates for every row.
+    for (const row of data.rows) {
+      assert.doesNotThrow(() => `${row.wallet.availableUsd}`.toString())
+      assert.equal(typeof row.wallet.availableUsd, 'number')
+      assert.equal(typeof row.wallet.pendingUsd, 'number')
+    }
+
+    assert.equal(data.rows[0].wallet.availableUsd, 0)
+    assert.equal(data.rows[0].profileIncomplete, true)
+    assert.equal(data.rows[2].wallet.availableUsd, 12.5)
+    assert.equal(data.rows[2].wallet.pendingUsd, 0)
+    // Paging and the degraded notice survive the projection.
+    assert.equal(data.nextCursor, 'stub-3')
+    assert.equal(data.hasMore, true)
+    assert.equal(data.degraded, 'Ordered query fell back to an unindexed read.')
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('a response with no usable rows list is an empty table, not an exception', async () => {
+  const { adminApi } = await import('@/lib/admin')
+  const originalFetch = globalThis.fetch
+
+  for (const rows of [undefined, null, 'nope', { 0: { uid: 'x' } }]) {
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ ok: true, rows }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })) as typeof fetch
+
+    try {
+      const data = await adminApi.users({})
+      assert.deepEqual(data.rows, [])
+      assert.equal(data.nextCursor, null)
+      assert.equal(data.hasMore, false)
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  }
+})
+
+test('the Auth enrichment is carried across the client projection, and validated', async () => {
+  const { adminApi } = await import('@/lib/admin')
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = (async () =>
+    new Response(
+      JSON.stringify({
+        ok: true,
+        rows: [
+          {
+            uid: 'u1',
+            name: 'Amina',
+            wallet: { availableUsd: 3 },
+            auth: {
+              exists: true,
+              disabled: false,
+              emailVerified: true,
+              createdAt: '2026-01-02T03:04:05.000Z',
+              lastSignInAt: null,
+              providers: ['password', 7],
+            },
+          },
+          // A malformed enrichment must not become an undefined `.length` in the drawer.
+          { uid: 'u2', name: 'Brian', auth: { exists: true, providers: 'password' } },
+          { uid: 'u3', name: 'Chen', auth: 'unreachable' },
+        ],
+      }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    )) as typeof fetch
+
+  try {
+    const data = await adminApi.users({})
+    assert.equal(data.rows[0].auth?.exists, true)
+    assert.equal(data.rows[0].auth?.createdAt, '2026-01-02T03:04:05.000Z')
+    assert.deepEqual(data.rows[0].auth?.providers, ['password'])
+    assert.deepEqual(data.rows[1].auth?.providers, [])
+    assert.equal(data.rows[1].auth?.lastSignInAt, null)
+    assert.equal(data.rows[2].auth, undefined)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('the projection is idempotent — re-projecting a projected row loses nothing', () => {
+  const once = adminUserRowFromDoc('u1', {
+    name: 'Amina Otieno',
+    email: 'amina@example.com',
+    phone: '+254712345678',
+    country: 'Kenya',
+    kycStatus: 'pending',
+    paidTrainings: ['a', 'b'],
+    createdAt: '2026-01-02T03:04:05.000Z',
+    wallet: { pendingUsd: 2, availableUsd: 4, payoutNumber: '+254712345678' },
+  })
+
+  // The masked handle, the masked phone and the training count exist only in projected form; a
+  // second pass must keep them rather than recompute them from fields the browser never receives.
+  const twice = adminUserRowFromPayload(once)
+  assert.deepEqual(twice, once)
+  assert.equal(twice.wallet.payoutNumberMasked, '••••••5678')
+  assert.equal(twice.phoneMasked, '••••••5678')
+  assert.equal(twice.paidTrainingsCount, 2)
+
+  // A third pass changes nothing either, and the whole helper tolerates non-rows.
+  assert.deepEqual(adminUserRowsFromPayload([twice]), [twice])
+  assert.deepEqual(adminUserRowsFromPayload('not-a-list'), [])
+  assert.deepEqual(adminUserRowsFromPayload([null, undefined, 7]).map((row) => row.wallet.availableUsd), [0, 0, 0])
 })
 
 // ─── Sharing story ───────────────────────────────────────────────────────────

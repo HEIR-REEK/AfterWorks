@@ -19,7 +19,6 @@ import {
   Clock3,
   Mail,
   RefreshCw,
-  Shield,
   ShieldCheck,
   AlertTriangle,
   Wrench,
@@ -269,10 +268,7 @@ export default function StatusPage() {
             © {new Date().getFullYear()} {site.legalName}
           </p>
           <div className="flex items-center gap-4">
-            <Link href="/admin/login" className="inline-flex items-center gap-1 font-medium transition-colors hover:text-foreground">
-              <Shield className="size-3.5" />
-              Staff Login
-            </Link>
+            {/* No console link on a public page — the operations sign-in is not advertised here. */}
             <span className="font-mono">
               {health ? `${health.checks.length} checks · ${overall}` : 'offline'}
             </span>

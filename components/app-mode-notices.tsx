@@ -38,19 +38,18 @@ export function ConfigurationRequired() {
         <ShieldAlert className="size-7" />
       </div>
       <div>
-        <h1 className="text-xl font-semibold tracking-tight text-balance sm:text-2xl">This deployment is not connected yet</h1>
+        <h1 className="text-xl font-semibold tracking-tight text-balance sm:text-2xl">AfterWorks is not ready on this site yet</h1>
         <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-          AfterWorks has no Firebase configuration on this host, so there are no accounts, jobs or balances to
-          show — and nothing here would be saved. The screens stay locked until the deployment is configured
-          rather than showing sample data that looks like a real account.
+          There are no jobs, applications or balances to show, and nothing you enter here would be saved. We would
+          rather tell you that than show you a dashboard that is not really yours.
         </p>
       </div>
+      {/* The setup instructions belong in DEPLOYMENT.md, not on a page every visitor can read. */}
       <div className="rounded-xl border border-border bg-card px-4 py-3 text-left text-xs leading-relaxed text-muted-foreground">
-        <p className="font-semibold text-foreground">For whoever deploys this:</p>
+        <p className="font-semibold text-foreground">Need help?</p>
         <p className="mt-1">
-          Set <code className="font-mono">FIREBASE_WEB_API_KEY</code>, <code className="font-mono">FIREBASE_AUTH_DOMAIN</code>,{' '}
-          <code className="font-mono">FIREBASE_PROJECT_ID</code> and <code className="font-mono">FIREBASE_APP_ID</code> in the host&rsquo;s
-          environment, then redeploy. The operations console needs <code className="font-mono">ADMIN_SESSION_SECRET</code> as well.
+          Write to <a href={`mailto:${site.supportEmail}`} className="font-medium text-primary hover:underline">{site.supportEmail}</a>{' '}
+          and we will get you signed in and working.
         </p>
       </div>
       <div className="flex flex-wrap items-center justify-center gap-2">
@@ -73,8 +72,8 @@ export function DemoModeBanner() {
       <div className="mx-auto flex w-full max-w-7xl items-center gap-2">
         <FlaskConical className="size-3.5 shrink-0" />
         <span>
-          <strong className="font-semibold">Demo mode</strong> — Firebase is not configured on this deployment, so this is
-          sample data. Nothing you do here is stored, and no sign-in is possible.
+          <strong className="font-semibold">Preview</strong> — the jobs, applications and balances on screen are
+          examples, not your account. Nothing here is saved and no payments can be made.
         </span>
       </div>
     </div>
@@ -87,7 +86,7 @@ export function ConfigMissingNote({ what }: { what: string }) {
     <p className="flex items-start gap-2 rounded-xl border border-warning/40 bg-warning/10 px-3 py-2 text-[11px] text-warning-foreground">
       <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
       <span>
-        {what} is unavailable because this deployment has no Firebase configuration.{' '}
+        {what} is unavailable right now.{' '}
         <Link href="/status" className="font-semibold underline">
           Check status
         </Link>

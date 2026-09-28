@@ -74,9 +74,9 @@ export default function JobsPage() {
           ) : (
             <span
               className="inline-flex items-center rounded-full border border-border bg-card px-2.5 py-1 text-[11px] font-medium text-muted-foreground"
-              title="These cards are sample data: this deployment is not serving a live catalogue yet."
+              title="These are example jobs — the live listings are not on this site yet."
             >
-              Sample catalogue
+              Sample jobs
             </span>
           )}
           <Button

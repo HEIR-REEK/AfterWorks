@@ -20,6 +20,7 @@ import {
   Wrench,
 } from 'lucide-react'
 import { adminApi, useAdminSession } from '@/lib/admin'
+import type { AdminPlatformStats } from '@/lib/admin-domain'
 import { AdminCard, AdminStat, LiveDot } from '@/components/admin-ui'
 import { Button } from '@/components/ui/button'
 import { StatusBadge } from '@/components/status-badge'
@@ -37,41 +38,15 @@ import { cn } from '@/lib/utils'
  * polls, so the numbers are consistent between tabs and cost one request.
  */
 
-type Stats = {
-  totals: {
-    users: number
-    kycVerified: number
-    kycPending: number
-    suspended: number
-    activeLast7d?: number
-    activeLast24h?: number
-    /** From Firebase Auth. `null` means the credential store is not connected to this deployment. */
-    accounts?: number | null
-    accountsDisabled?: number | null
-    accountsWithoutProfile?: number | null
-  }
-  jobs: { open: number; paused: number; closed: number; totalSlots: number; filledSlots: number }
-  applications: { total: number; underReview: number; active: number; completed: number; rejected: number }
-  money: { liabilityUsd: number; pendingUsd: number; availableUsd: number; revenueKes: number; paidOutKes: number }
-  payments: { successful: number; pending: number; failed: number; last7dVolumeKes: number }
-  security: {
-    failedLogins24h: number
-    lockouts: { tracked: number; totalAttempts: number; totalBlocked: number; locked: { key: string; until: number }[] }
-    posture: { id: string; label: string; severity: 'pass' | 'warn' | 'fail'; detail: string; fix?: string }[]
-  }
-  activity: { id: string; label: string; at: string; tone: string }[]
-  maintenance: {
-    enabled: boolean
-    title: string
-    message: string
-    estimatedEnd: string | null
-    mode: string
-    updatedBy?: string
-    updatedAt: string | null
-  }
-  maintenanceStatus: { active: boolean; bannerOnly: boolean; retryAfterSec: number; remainingMs: number | null }
-  generatedAt: string
-}
+/**
+ * The overview snapshot.
+ *
+ * The shape lives in `lib/admin-domain.ts` because `adminApi.stats()` normalises the response into
+ * it before this page sees it. That is what makes the reads below safe: every group is present, so
+ * `stats.money.availableUsd` is a number rather than a bet on the payload — a snapshot missing one
+ * group used to throw mid-render and take the console's front page down with it.
+ */
+type Stats = AdminPlatformStats
 
 const REFRESH_MS = 60_000
 
@@ -85,8 +60,8 @@ export default function AdminOverviewPage() {
   const load = useCallback(async (refresh = false) => {
     if (!refresh) setLoading(true)
     try {
-      const data = await adminApi.stats(refresh)
-      setStats(data as unknown as Stats)
+      // Already normalised by `adminApi.stats()` — no cast, no field the JSX has to guard.
+      setStats(await adminApi.stats(refresh))
       setError(null)
       setUpdatedAt(Date.now())
     } catch (err) {

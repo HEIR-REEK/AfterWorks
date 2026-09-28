@@ -64,8 +64,8 @@ export default function WalletPage() {
         <div className="flex items-start gap-2.5 rounded-xl border border-border bg-muted/40 px-3.5 py-2.5 text-xs text-muted-foreground">
           <Info className="mt-0.5 size-3.5 shrink-0 text-primary" />
           <span>
-            Demo mode — this deployment has no Firebase project, so balances are zero and withdrawals are disabled instead of
-            being simulated.
+            Preview — the balances on this page are examples and withdrawals are switched off, so you cannot send a
+            request from here.
           </span>
         </div>
       ) : null}
@@ -149,7 +149,7 @@ export default function WalletPage() {
               Money movements
             </h2>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              Every credit, payout and reward the server has recorded for your account.
+              Every credit, payout and reward recorded against your account.
             </p>
           </div>
           <span className="text-[11px] text-muted-foreground">

@@ -10,9 +10,10 @@ import { site } from '@/lib/site'
  * Route error boundary.
  *
  * Before this, a thrown error inside the provider tree unmounted the app to React's blank page (and
- * in dev, to an unstyled stack trace). Here the worker gets a plain sentence, the reason we can show
- * safely, a retry that does not require a hard reload, and — because money is involved — a note that
- * nothing they typed was lost silently.
+ * in dev, to an unstyled stack trace). Here the worker gets a plain sentence — never the raw error
+ * text, which describes our code and not their problem — a retry that does not require a hard
+ * reload, a reference support can look up, and, because money is involved, a note that nothing they
+ * typed was lost silently.
  */
 export default function AppError({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
   useEffect(() => {
@@ -27,10 +28,11 @@ export default function AppError({ error, reset }: { error: Error & { digest?: s
       </div>
       <div>
         <h1 className="text-xl font-semibold tracking-tight text-balance sm:text-2xl">Something broke on our side</h1>
+        {/* Never the raw error message: it is an implementation detail, and it is exactly what a
+            member would paste into a support thread without it telling them anything actionable.
+            The reference below is what support needs; the message stays in the logs. */}
         <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-          {error?.message && error.message.length < 200
-            ? error.message
-            : 'The page could not be rendered. Your applications, wallet and submitted work are stored on the server and are unaffected.'}
+          The page could not be displayed. Your applications, wallet and submitted work are safe and unaffected.
         </p>
       </div>
 

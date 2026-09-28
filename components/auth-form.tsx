@@ -6,7 +6,6 @@ import Link from 'next/link'
 import {
   CheckCircle2,
   Loader2,
-  Shield,
   ShieldCheck,
   Eye,
   EyeOff,
@@ -589,14 +588,9 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
         )}
       </p>
 
+      {/* No link to the operations console here, or anywhere else a member can see: the console
+          address is not something the member app advertises. Staff sign in from a bookmark. */}
       <div className="mt-8 flex flex-col items-center gap-2.5 text-center text-xs text-muted-foreground">
-        <Link
-          href="/admin/login"
-          className="inline-flex items-center gap-1.5 font-medium text-muted-foreground transition-colors hover:text-foreground hover:underline"
-        >
-          <Shield className="size-3.5 text-primary" />
-          Staff &amp; Operations Portal
-        </Link>
         <div className="flex items-center gap-1.5">
           <ShieldCheck className="size-3.5 text-success" />
           Your data is protected. AfterWorks never charges to apply.

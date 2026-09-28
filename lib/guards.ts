@@ -38,6 +38,7 @@ import {
   setCachedRole,
   setCachedRevocation,
 } from '@/lib/guard-cache'
+import { bearerAdminPrincipal } from '@/lib/admin-domain'
 
 /**
  * Console authority level.
@@ -286,26 +287,27 @@ export async function resolveAdmin(req: NextRequest): Promise<AdminPrincipal | n
     }
   }
 
-  // 2) Firebase ID token with an `admin` custom claim (or Firestore role) — used by tooling
-  //    and by the in-app "continue as staff" path.
+  // 2) Firebase ID token with a resolvable console role — used by tooling that already has an
+  //    operator identity. The `admin` custom claim is deliberately *not* sufficient on its own:
+  //    it is minted onto member accounts (and trusted by firestore.rules), so a bare claim would
+  //    turn an ordinary worker session into a passcode-free administration credential. See
+  //    `bearerAdminPrincipal` in `lib/admin-domain.ts`.
   const authHeader = req.headers.get('authorization') || ''
   const bearer = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : ''
   if (bearer) {
     try {
       const { verifyIdToken } = await import('@/lib/firestore-admin')
       const decoded = await verifyIdToken(bearer)
-      if (decoded?.email) {
-        const claimedAdmin = (decoded as unknown as { admin?: boolean }).admin === true
-        const role = await resolveAdminRole(decoded.email)
-        if (claimedAdmin || role) {
+      if (decoded) {
+        const role = await resolveAdminRole(String(decoded.email ?? ''))
+        const identity = bearerAdminPrincipal(decoded, role)
+        if (identity) {
           return {
-            email: decoded.email.toLowerCase(),
-            jti: `uid:${decoded.uid}`,
-            expiresAt: (decoded.exp ?? 0) * 1000,
+            email: identity.email,
+            jti: `uid:${identity.uid}`,
+            expiresAt: identity.expiresAt,
             via: 'firebase-token',
-            // A raw `admin` claim with no resolvable role keeps the historical behaviour but at
-            // the lowest authority level; the roster is the only source of owner power.
-            role: role ?? 'staff',
+            role: identity.role,
           }
         }
       }
@@ -366,13 +368,16 @@ export async function requireUser(req: NextRequest): Promise<GuardResult<UserPri
       return { ok: false, response: fail(401, 'Your session expired. Please sign in again.', { code: 'auth_invalid' }) }
     }
     const email = (decoded.email || '').toLowerCase()
+    // The `admin` claim is deliberately not accepted on its own here either — it is minted onto
+    // member documents (and trusted by firestore.rules), so it is a UI hint, not a credential. Only
+    // the role table answers "is this person staff?". See `bearerAdminPrincipal`.
     return {
       ok: true,
       value: {
         uid: decoded.uid,
         email,
         emailVerified: Boolean(decoded.email_verified),
-        isAdmin: (decoded as unknown as { admin?: boolean }).admin === true || (await isPrivilegedEmail(email)),
+        isAdmin: await isPrivilegedEmail(email),
       },
     }
   } catch (err) {

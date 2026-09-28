@@ -13,13 +13,17 @@ export function StatusBadge({
   tone,
   children,
   className,
+  title,
 }: {
   tone: StatusTone
   children: React.ReactNode
   className?: string
+  /** Optional explanation, for badges whose meaning is not obvious from the label alone. */
+  title?: string
 }) {
   return (
     <span
+      title={title}
       className={cn(
         'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium',
         toneStyles[tone],

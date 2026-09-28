@@ -148,3 +148,255 @@ export const ACTION_TO_STATUS: Record<ApplicationAction, string> = {
 }
 
 export const REQUIRED_REASON: ApplicationAction[] = ['reject', 'request_revision', 'fail_qa']
+
+// ─── Member rows: one projection, shared by the API and the console ──────────
+//
+// A `users/{uid}` document is not guaranteed to look like a profile. The phone-claim guard
+// (`lib/account-uniqueness.ts`), the terms acceptance write and the referral index all use
+// `set(..., { merge: true })`, so a stub document — no name, no email, no `wallet` — can exist
+// before, or even instead of, a real profile. Older rows are worse: the schema grows and old
+// documents simply lack the new fields.
+//
+// The console used to trust whatever the document said. One stub row was enough to take the whole
+// page down: the detail drawer read `user.wallet.availableUsd` on a document with no `wallet` at
+// all, which threw "Cannot read properties of undefined (reading 'availableUsd')" and replaced the
+// directory with the error boundary. So the projection lives here, is applied to *both* the
+// directory page and the detail payload by the server and again by the client, and every value it
+// returns is present and typed. Nothing downstream has to guess, and a half-written record is a
+// blank row with a label — not an outage.
+
+export type AdminUserWalletRow = {
+  pendingUsd: number
+  availableUsd: number
+  payoutNumberMasked: string
+}
+
+/** The directory columns, exactly as the console renders them. Never partially populated. */
+export type AdminUserRowModel = {
+  uid: string
+  name: string
+  email: string
+  accountState: string
+  kycVerified: boolean
+  kycStatus?: string
+  role: string
+  qualityScore: number
+  jobsCompleted: number
+  memberSince: string
+  createdAt: string | null
+  lastActiveAt: string | null
+  wallet: AdminUserWalletRow
+  country?: string
+  phoneMasked?: string
+  paidTrainingsCount: number
+  /**
+   * No name *and* no email: a stub document (a phone claim, a terms acceptance, an interrupted
+   * write) rather than a member we can describe. Worth flagging in the UI instead of rendering a
+   * row that looks like a rendering bug.
+   */
+  profileIncomplete: boolean
+}
+
+/** The optional fields the detail drawer knows how to show, all normalised. */
+export type AdminUserDetailModel = AdminUserRowModel & {
+  phone?: string
+  payoutNumberMasked?: string
+  skills?: string[]
+  languages?: string[]
+  bio?: string
+  rating?: number
+  jobsApplied?: number
+  walletNote?: string
+  moderationReason?: string
+  signupBonusGranted?: boolean
+  welcomeBonusPending?: boolean
+  signupBonusGrantedAt?: string | null
+  kycProvider?: string
+  kycLevel?: string
+  kycRejectedAt?: string | null
+  kycOnHoldAt?: string | null
+  career?: string
+  bank?: Record<string, unknown> | null
+  updatedAt?: string | null
+  deletedAt?: string | null
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
+}
+
+/** Text as the UI can print it: numbers are welcome, objects/arrays are not (they crash React). */
+function asText(value: unknown): string {
+  if (typeof value === 'string') return value
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value)
+  return ''
+}
+
+function asCount(value: unknown, fallback: number): number {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : fallback
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value)
+    return Number.isFinite(parsed) ? parsed : fallback
+  }
+  return fallback
+}
+
+/** Money as a finite number, or 0. `NaN` in a balance is a display bug, never a real balance. */
+function asMoney(value: unknown): number {
+  return asCount(value, 0)
+}
+
+/**
+ * Payout handles (M-Pesa numbers, bank accounts) are shown as a bulleted tail only — the console
+ * never needs the full value to do its job.
+ */
+export function maskPayoutHandle(value: unknown): string {
+  const digits = String(value ?? '').replace(/\D/g, '')
+  if (digits.length < 4) return ''
+  return `${'•'.repeat(Math.max(2, digits.length - 6))}${digits.slice(-4)}`
+}
+
+/**
+ * Firestore has three ways of spelling the same timestamp depending on who wrote the document:
+ * an ISO string (our server writes), a `Timestamp` from the Admin SDK, or the `{_seconds}` object
+ * left behind when a `serverTimestamp()` value is JSON-serialised. All three become an ISO string
+ * or `null`; `new Date(undefined)` rendered as "Invalid Date" is the symptom of skipping this.
+ */
+export function coerceIsoTimestamp(value: unknown): string | null {
+  if (typeof value === 'string') return value.trim() ? value : null
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value.toISOString()
+  const record = asRecord(value)
+  const toDate = record.toDate
+  if (typeof toDate === 'function') {
+    const converted = (toDate as () => unknown).call(value)
+    if (converted instanceof Date && !Number.isNaN(converted.getTime())) return converted.toISOString()
+  }
+  const seconds = Number(record._seconds ?? record.seconds)
+  if (Number.isFinite(seconds) && seconds > 0) return new Date(seconds * 1000).toISOString()
+  return null
+}
+
+/**
+ * Project one `users/{uid}` document onto the directory row. Tolerates anything: a missing
+ * document body, a `wallet` that is a string, a timestamp that is an object.
+ */
+export function adminUserRowFromDoc(
+  uid: string,
+  data: Record<string, unknown> | null | undefined,
+): AdminUserRowModel {
+  const doc = asRecord(data)
+  const wallet = asRecord(doc.wallet)
+  const name = asText(doc.name).trim()
+  const email = asText(doc.email).trim()
+  const phone = asText(doc.phone)
+  const payoutHandle = asText(wallet.payoutNumber) || phone
+  const phoneMasked = maskPayoutHandle(phone)
+
+  return {
+    uid: asText(uid).trim(),
+    name,
+    email,
+    accountState: asText(doc.accountState).trim() || 'active',
+    kycVerified: doc.kycVerified === true,
+    kycStatus: asText(doc.kycStatus).trim() || undefined,
+    role: doc.isAdmin === true ? 'admin' : asText(doc.role).trim() || 'user',
+    qualityScore: asCount(doc.qualityScore, 100),
+    jobsCompleted: asCount(doc.jobsCompleted, 0),
+    memberSince: asText(doc.memberSince).trim(),
+    createdAt: coerceIsoTimestamp(doc.createdAt),
+    lastActiveAt: coerceIsoTimestamp(doc.updatedAt ?? doc.lastActiveAt),
+    wallet: {
+      pendingUsd: asMoney(wallet.pendingUsd),
+      availableUsd: asMoney(wallet.availableUsd),
+      payoutNumberMasked: maskPayoutHandle(payoutHandle),
+    },
+    country: asText(doc.country).trim() || undefined,
+    phoneMasked: phoneMasked || undefined,
+    paidTrainingsCount: Array.isArray(doc.paidTrainings) ? doc.paidTrainings.length : 0,
+    profileIncomplete: !name && !email,
+  }
+}
+
+/**
+ * The detail drawer's payload: the row above (so every column is present) plus the extra profile
+ * fields, each coerced to what JSX can actually render. Unknown keys are dropped rather than
+ * spread through — the browser should never receive a document we have not described, and the
+ * document holds a plaintext payout number next to the masked one.
+ */
+export function adminUserDetailFromDoc(raw: unknown): AdminUserDetailModel {
+  const doc = asRecord(raw)
+  const row = adminUserRowFromDoc(asText(doc.uid) || asText(doc.id), doc)
+  const detail: AdminUserDetailModel = { ...row }
+
+  const phone = asText(doc.phone).trim()
+  if (phone) detail.phone = phone
+  detail.payoutNumberMasked = row.wallet.payoutNumberMasked
+  if (asText(doc.walletNote).trim()) detail.walletNote = asText(doc.walletNote).trim()
+  if (asText(doc.moderationReason).trim()) detail.moderationReason = asText(doc.moderationReason).trim()
+  if (asText(doc.bio)) detail.bio = asText(doc.bio)
+  if (asText(doc.career)) detail.career = asText(doc.career)
+  if (asText(doc.kycProvider)) detail.kycProvider = asText(doc.kycProvider)
+  if (asText(doc.kycLevel)) detail.kycLevel = asText(doc.kycLevel)
+
+  const skills = asTextList(doc.skills)
+  if (skills.length) detail.skills = skills
+  const languages = asTextList(doc.languages)
+  if (languages.length) detail.languages = languages
+
+  if (typeof doc.rating === 'number' && Number.isFinite(doc.rating)) detail.rating = doc.rating
+  if (typeof doc.jobsApplied === 'number' && Number.isFinite(doc.jobsApplied)) detail.jobsApplied = doc.jobsApplied
+  if (doc.signupBonusGranted === true) detail.signupBonusGranted = true
+  if (doc.welcomeBonusPending === true) detail.welcomeBonusPending = true
+  detail.signupBonusGrantedAt = coerceIsoTimestamp(doc.signupBonusGrantedAt)
+  detail.kycRejectedAt = coerceIsoTimestamp(doc.kycRejectedAt)
+  detail.kycOnHoldAt = coerceIsoTimestamp(doc.kycOnHoldAt)
+  detail.updatedAt = coerceIsoTimestamp(doc.updatedAt)
+  detail.deletedAt = coerceIsoTimestamp(doc.deletedAt)
+
+  const bank = asRecord(doc.bank)
+  if (Object.keys(bank).length) {
+    const accountNumber = asText(bank.accountNumber) || asText(bank.bankAccountNumber)
+    detail.bank = {
+      ...bank,
+      ...(accountNumber ? { accountNumber: maskPayoutHandle(accountNumber), accountNumberMasked: maskPayoutHandle(accountNumber) } : {}),
+    }
+  } else if (doc.bank === null) {
+    detail.bank = null
+  }
+
+  return detail
+}
+
+function asTextList(value: unknown): string[] {
+  return Array.isArray(value) ? value.map((entry) => asText(entry)).filter(Boolean) : []
+}
+
+// ─── Bearer sessions: what a verified ID token is allowed to become ──────────
+
+/**
+ * The administrator a *verified* Firebase ID token may act as — or `null` if it may not act as one.
+ *
+ * The decision is deliberately made from the role table (the `ADMIN_EMAILS` roster, an active staff
+ * account, or a legacy `users.isAdmin` grant) and **not** from the token's own `admin` claim.
+ *
+ * Why that matters enough to spell out: the claim is real — `firestore.rules` trusts it for direct
+ * browser reads of every member document, and `ADMIN_SYNC_CUSTOM_CLAIM` mints it onto the *member*
+ * document of whoever signs into the console. So honouring a bare claim here would mean that any
+ * ordinary worker session (the owner's own Gmail account, for instance) is also an administration
+ * credential that never had to pass the sign-in screen — exactly the "how can I get in without
+ * logging in?" question this file is guarding against. A claim without a resolvable role is drift,
+ * and drift is denied.
+ *
+ * Tooling that presents a roster email still works: the roster resolves, so the role comes back.
+ */
+export function bearerAdminPrincipal(
+  decoded: { email?: unknown; uid?: unknown; exp?: unknown; admin?: unknown },
+  resolvedRole: AdminRoleName | null,
+): { email: string; uid: string; expiresAt: number; role: AdminRoleName } | null {
+  if (!resolvedRole) return null
+  const email = typeof decoded?.email === 'string' ? decoded.email.trim().toLowerCase() : ''
+  const uid = typeof decoded?.uid === 'string' ? decoded.uid.trim() : ''
+  if (!email || !uid) return null
+  const exp = typeof decoded?.exp === 'number' && Number.isFinite(decoded.exp) ? decoded.exp : 0
+  return { email, uid, expiresAt: exp * 1000, role: resolvedRole }
+}

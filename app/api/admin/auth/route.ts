@@ -215,12 +215,19 @@ export async function POST(req: NextRequest) {
     },
   })
 
+  // A browser-session cookie: closing the browser drops it, so reopening the console always means
+  // signing in again. The server is unchanged and still the authority — `expiresAt` bounds the
+  // session absolutely and the revocation list can end it at any moment — but a key the browser
+  // throws away on close is what makes "I closed Chrome and it was still logged in" impossible.
+  // `ADMIN_SESSION_PERSIST=true` restores a durable cookie for an operator who wants to stay signed
+  // in on a machine they control.
+  const persistCookie = envBool('ADMIN_SESSION_PERSIST', false)
   response.cookies.set(ADMIN_COOKIE, session.token, {
     httpOnly: true,
     secure,
     sameSite: 'strict',
     path: '/',
-    maxAge,
+    ...(persistCookie ? { maxAge } : {}),
   })
   if (bypass) {
     response.cookies.set(BYPASS_COOKIE, bypass, {

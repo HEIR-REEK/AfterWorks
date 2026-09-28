@@ -201,8 +201,18 @@ function ProfilePageContent() {
     career: worker.career || '',
   })
 
-  // Sync formData whenever real worker data loads or updates
+  // Sync formData whenever real worker data loads or updates — but never while the member is
+  // editing.
+  //
+  // `worker` is a fresh object on every Firestore snapshot, and snapshots arrive for reasons that
+  // have nothing to do with this form: the wallet settlement pass writes `wallet.*` on every wallet
+  // read, an operator edits the profile in the console, the same account saves on another device.
+  // Without the `isEditing` guard each of those replaced whatever the member had typed with the
+  // stored values — reported as "I click save and it deletes the contents of the fields". While the
+  // form is open the member's input is the authority; `handleOpenEdit` seeds it from the document
+  // when they open it, and a successful save closes it, at which point this sync runs again.
   useEffect(() => {
+    if (isEditing) return
     setFormData({
       name: worker.name || user?.displayName || user?.email?.split('@')[0] || '',
       phone: worker.phone || wallet.payoutNumber || '',
@@ -222,7 +232,7 @@ function ProfilePageContent() {
       jobExperience: worker.jobExperience || '',
       career: worker.career || '',
     })
-  }, [worker, wallet, user])
+  }, [worker, wallet, user, isEditing])
 
   // Open edit modal & sync form data
   const handleOpenEdit = () => {

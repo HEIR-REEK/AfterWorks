@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import { consumeBucket, json, maintenanceBlockForApi, requireUser, routeError } from '@/lib/guards'
 import { getMemberWallet } from '@/lib/wallet-server'
+import { site } from '@/lib/site'
 
 /**
  * GET /api/wallet — the member's money, read the way the ledger wrote it.
@@ -44,7 +45,9 @@ export async function GET(req: NextRequest) {
         paidTrainings: [],
         clearingHours: 0,
         nextClearingAt: null,
-        minWithdrawalUsd: 0,
+        // Not 0: a degraded read that reports "no minimum" would make the withdraw form look
+        // available. The platform's real floor is still the floor.
+        minWithdrawalUsd: site.minWithdrawalUsd,
         fx: { usdToKes: 0, availableKes: 0, withdrawableKes: 0 },
         unavailable: true,
         note: 'The datastore is not reachable from this server, so balances are shown as zero rather than cached values.',

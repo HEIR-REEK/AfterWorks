@@ -112,6 +112,8 @@ export type WorkerProfile = {
   jobsCompleted: number
   memberSince: string
   phone?: string
+  /** ISO-3166 code the phone number was entered against (drives the flag + dialling code). */
+  phoneCountry?: string
   bio?: string
   skills?: string[]
   languages?: string[]

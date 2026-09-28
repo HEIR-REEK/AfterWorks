@@ -212,7 +212,7 @@ export default function WalletPage() {
           <li>• Completed work is credited instantly but sits in <strong>pending</strong> for {site.clearingWindowHours} hours, so a client can raise a quality issue before money leaves.</li>
           <li>• After clearing it moves to <strong>available</strong>. A payout request claims the amount (shown as <strong>held</strong>) while our team sends it.</li>
           <li>• {site.payoutSla}</li>
-          <li>• The minimum withdrawal is {formatUsd(payouts.minWithdrawalUsd || 10)}, paid only to payout details in your own name.</li>
+          <li>• The minimum withdrawal is {formatUsd(payouts.minWithdrawalUsd || 50)}, paid only to payout details in your own name.</li>
         </ul>
       </section>
     </div>

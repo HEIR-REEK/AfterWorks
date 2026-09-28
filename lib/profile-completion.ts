@@ -34,6 +34,9 @@ export const WELCOME_BONUS_USD = 5
 export const MEMBER_PROFILE_FIELDS = [
   'name',
   'phone',
+  // ISO-3166 code the phone number was entered against. Stored beside `phone` so the country
+  // picker reopens on the right country and the E.164 number is never re-guessed from a prefix.
+  'phoneCountry',
   'location',
   'country',
   'zipCode',
@@ -138,10 +141,17 @@ export function sanitiseProfilePatch(
     patch.bankName = ''
     patch.bankBranch = ''
     patch.bankAccountNumber = ''
-  } else if (nextMethod === 'Bank Transfer') {
-    // The reverse also holds: a bank payer has no M-Pesa number to fall back to.
-    patch.phone = patch.phone ?? undefined
   }
+  // The reverse is deliberately NOT done. A bank payer still has a phone number: it is a required
+  // profile field, it is the account's contact detail, and it is the identifier "one phone number,
+  // one account" is enforced against — clearing it on a method switch would let a number be
+  // released and re-registered by somebody else. The M-Pesa number is only ever read as a payout
+  // destination when `preferredPayoutMethod` is 'M-Pesa' (see `payoutDestinationState`), so
+  // keeping it cannot route a bank payout to the wrong place.
+  //
+  // This branch also used to assign `patch.phone = patch.phone ?? undefined`, which was a no-op
+  // when the field was present and wrote an `undefined` value into Firestore when it was not — the
+  // Admin SDK rejects that, turning a save into a 500.
 
   return { patch, dropped }
 }

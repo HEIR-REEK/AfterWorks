@@ -35,7 +35,7 @@ export type FirebaseConfig = {
 }
 
 type AuthResult =
-  | { ok: true; isNewUser?: boolean; needsEmailVerification?: boolean }
+  | { ok: true; isNewUser?: boolean; needsEmailVerification?: boolean; referredBy?: string }
   | { ok: false; error: string; code?: string }
 
 type AuthContextValue = {
@@ -66,6 +66,9 @@ type AuthContextValue = {
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
+
+/** Where a `?ref=` code waits between page loads. Session-scoped: it dies with the tab. */
+const REFERRAL_STORAGE_KEY = 'afterworks:ref'
 
 function isConfigComplete(config: FirebaseConfig) {
   return Boolean(config.apiKey && config.authDomain && config.projectId && config.appId)
@@ -262,10 +265,94 @@ export function FirebaseAuthProvider({
         } catch {
           // Account exists; /verify-email lets them resend. Do not fail the signup.
         }
-        return { ok: true, isNewUser: true, needsEmailVerification: !cred.user.emailVerified }
+        // Everything below is best-effort bookkeeping. The account exists and works; a failed
+        // referral, terms or terms record must never turn a successful sign-up into an error.
+        const referredBy = await attachReferral(cred.user)
+        await recordTermsAcceptance(cred.user)
+        return {
+          ok: true,
+          isNewUser: true,
+          needsEmailVerification: !cred.user.emailVerified,
+          ...(referredBy ? { referredBy } : {}),
+        }
       } catch (err) {
         const code = firebaseErrorCode(err)
         return { ok: false, error: friendlyError(code), code }
+      }
+    }
+
+    /**
+     * Reads `?ref=` once and remembers it for the rest of the browser session.
+     *
+     * Session storage, not a ref: the code is read on the sign-up page and consumed on the same
+     * page, but a member can bounce through Google's popup and back, and losing the attribution
+     * to a navigation would quietly cost somebody $3.
+     */
+    function readReferralCode(): string | null {
+      if (typeof window === 'undefined') return null
+      try {
+        const fromUrl = new URLSearchParams(window.location.search).get('ref')
+        if (fromUrl) {
+          window.sessionStorage.setItem(REFERRAL_STORAGE_KEY, fromUrl)
+          return fromUrl
+        }
+        return window.sessionStorage.getItem(REFERRAL_STORAGE_KEY)
+      } catch {
+        return null
+      }
+    }
+
+    /** Consumes the stored code and posts it. Never throws. */
+    async function attachReferral(user: User): Promise<string | null> {
+      const code = readReferralCode()
+      if (!code) return null
+      try {
+        const token = await user.getIdToken()
+        const res = await fetch('/api/referrals/claim', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'content-type': 'application/json', accept: 'application/json', authorization: `Bearer ${token}` },
+          body: JSON.stringify({ code, name: user.displayName ?? '', email: user.email ?? '' }),
+          cache: 'no-store',
+        })
+        const data = (await res.json().catch(() => ({}))) as { attached?: boolean; reason?: string }
+        if (res.ok && data.attached) {
+          // One shot: a reload must not try to re-attribute the same account.
+          try {
+            window.sessionStorage.removeItem(REFERRAL_STORAGE_KEY)
+          } catch {
+            /* storage blocked */
+          }
+          return code
+        }
+        if (data.reason && data.reason !== 'no_referral_code') {
+          console.info('[referral] not attached:', data.reason)
+        }
+        return null
+      } catch (err) {
+        console.warn('[referral] claim skipped:', err instanceof Error ? err.message : err)
+        return null
+      }
+    }
+
+    /**
+     * Records the Terms & Privacy acceptance server-side. The boxes were ticked in the form; this
+     * only reports that, and the server owns the timestamp and the version.
+     */
+    async function recordTermsAcceptance(user: User): Promise<boolean> {
+      try {
+        const token = await user.getIdToken()
+        const res = await fetch('/api/auth/terms', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'content-type': 'application/json', accept: 'application/json', authorization: `Bearer ${token}` },
+          body: JSON.stringify({ terms: true, privacy: true }),
+          cache: 'no-store',
+        })
+        return res.ok
+      } catch (err) {
+        console.warn('[terms] acceptance not recorded:', err instanceof Error ? err.message : err)
+        return false
       }
     }
 
@@ -306,6 +393,18 @@ export function FirebaseAuthProvider({
         const name = cred.user.displayName || cred.user.email?.split('@')[0] || 'Worker'
         await createUserDocument(cred.user.uid, name, cred.user.email || '')
         setUser(cred.user)
+        // Only for an account that did not exist a moment ago. `additionalInfo.isNewUser` is
+        // Firebase's own answer to "was this a sign-up or a sign-in", and it matters here in a way
+        // it does not elsewhere: this branch also runs for returning members, and replaying the
+        // terms call for them would rewrite the acceptance timestamp every time they signed in,
+        // turning "the moment this person accepted" into "the last time they logged in". It would
+        // also let a returning member claim a referral link that happened to be in the session.
+        if (additionalInfo?.isNewUser) {
+          // A Google sign-up through somebody's referral link is still a referral. Best effort —
+          // never fails the sign-in.
+          await attachReferral(cred.user)
+          await recordTermsAcceptance(cred.user)
+        }
         if (!cred.user.emailVerified) {
           try {
             const token = await cred.user.getIdToken()

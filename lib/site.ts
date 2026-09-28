@@ -28,7 +28,7 @@ export const site = {
   /** Hours a completed job sits in clearing before it becomes withdrawable. */
   clearingWindowHours: envInt('PAYOUT_CLEARING_WINDOW_HOURS', 72),
   /** Minimum withdrawable balance in USD. */
-  minWithdrawalUsd: envInt('MIN_WITHDRAWAL_USD', 10),
+  minWithdrawalUsd: envInt('MIN_WITHDRAWAL_USD', 50),
   /** SLA shown on the status page and inside the app shell. */
   payoutSla: 'Mobile money payouts are sent within 24 hours of a completed job clearing.',
   /** How long a worker has to hear back on an application. */

@@ -30,6 +30,8 @@ import {
   sanitiseProfilePatch,
   type ProfileCompletion,
 } from '@/lib/profile-completion'
+import { PHONE_CLAIMS_COLLECTION, assertPhoneAvailable, phoneTakenError } from '@/lib/account-uniqueness'
+import { REFERRAL_BONUS_USD, stageReferralBonusForCompletedProfile, notifyReferralQualified } from '@/lib/referral-server'
 import {
   describeDestination,
   isCancellablePayoutStatus,
@@ -346,6 +348,12 @@ export type SaveProfileResult = {
   wallet: { pendingUsd: number; availableUsd: number }
   /** True when the member had already been paid the reward before this save. */
   bonusAlreadyGranted: boolean
+  /**
+   * The referral this save released, when the member was themselves referred and this save is what
+   * took their profile to 100%. The bonus goes to the *referrer*, not to this member — this is
+   * only so the UI can say "you unlocked $3 for the person who invited you".
+   */
+  releasedReferral: { referrerName: string; bonusUsd: number } | null
 }
 
 /**
@@ -353,8 +361,15 @@ export type SaveProfileResult = {
  * welcome reward in the same transaction — so the congratulations popup can fire immediately and
  * truthfully (the client is told the money was already written, not asked to claim it).
  *
- * Idempotent: the reward is keyed by `signup_bonus_<uid>` in `wallet_ledger`, so a double-submit,
- * a retry, or the old claim endpoint cannot pay twice.
+ * The same transaction also releases any referral bonus this completion earned for the member's
+ * referrer. That is the whole trigger for the referral program, so it has to live here rather
+ * than on a separate "claim" endpoint: a separate endpoint is a thing a member can skip, race, or
+ * have credited twice, and "I completed my profile and my friend never got paid" is exactly the
+ * failure the platform already fixed once for the welcome reward.
+ *
+ * Idempotent: the welcome reward is keyed by `signup_bonus_<uid>` and the referral bonus by
+ * `referral_bonus_<referredUid>` in `wallet_ledger`, so a double-submit, a retry, or a replayed
+ * transaction cannot pay either of them twice.
  */
 export async function saveMemberProfile(
   uid: string,
@@ -373,8 +388,21 @@ export async function saveMemberProfile(
     )
   }
 
+  // "One phone number, one account" is enforced *before* the transaction opens, because the check
+  // is a query against other people's documents and a transaction that reads a collection it is
+  // not going to write is both slower and easier to deadlock. The canonical value it returns
+  // replaces whatever was typed, so the document stores E.164 and the comparison key, not prose.
+  let phoneResolution: { e164: string; country: string; key: string } | null = null
+  if (typeof patch.phone === 'string' && patch.phone.trim()) {
+    const countryHint = String(patch.phoneCountry ?? input.phoneCountry ?? 'KE')
+    phoneResolution = await assertPhoneAvailable({ raw: patch.phone, country: countryHint, exceptUid: uid })
+    patch.phone = phoneResolution.e164
+    patch.phoneCountry = phoneResolution.country
+  }
+
   const userRef = db.collection('users').doc(uid)
   const ledgerRef = db.collection('wallet_ledger').doc(PAYOUT_BONUS_LEDGER(uid))
+  const claimRef = phoneResolution ? db.collection(PHONE_CLAIMS_COLLECTION).doc(phoneResolution.key) : null
 
   const result = await db.runTransaction(async (tx) => {
     const [userSnap, ledgerSnap] = await Promise.all([tx.get(userRef), tx.get(ledgerRef)])
@@ -383,16 +411,49 @@ export async function saveMemberProfile(
     const merged: Record<string, unknown> = { ...current, ...patch }
     const completion = profileCompletion(merged)
 
+    // Serialise the phone claim. The query above gives a good answer and good error copy, but two
+    // members saving at the same instant can both pass it; the claim document is the one thing
+    // that cannot be both-wrong, because the second transaction to commit conflicts and re-reads.
+    let previousClaimKey = ''
+    if (claimRef) {
+      const claimSnap = await tx.get(claimRef)
+      const owner = claimSnap.exists ? String((claimSnap.data() ?? {}).uid ?? '') : ''
+      if (owner && owner !== uid) throw phoneTakenError()
+      const heldKey = String(current.phoneKey ?? '')
+      previousClaimKey = heldKey && heldKey !== phoneResolution!.key ? heldKey : ''
+    }
+
     const now = new Date().toISOString()
     const updates: Record<string, unknown> = { ...patch, updatedAt: now }
     if (actorEmail) updates.lastModifiedBy = actorEmail
+    if (phoneResolution) updates.phoneKey = phoneResolution.key
     // The payout handle follows the phone number the member typed, so a first payout does not ask
     // for the same detail twice.
     if (typeof patch.phone === 'string' && patch.phone.trim()) updates['wallet.payoutNumber'] = patch.phone.trim()
 
+    if (claimRef) {
+      tx.set(claimRef, { uid, key: phoneResolution!.key, claimedAt: now }, { merge: true })
+      // Release the number this member just gave up, so a correction is not a permanent loss.
+      if (previousClaimKey) tx.delete(db.collection(PHONE_CLAIMS_COLLECTION).doc(previousClaimKey))
+    }
+
     const alreadyGranted = current.signupBonusGranted === true || ledgerSnap.exists
     let grantedBonus: { amountUsd: number } | null = null
     let availableUsd = Number(wallet.availableUsd ?? 0) || 0
+
+    // The referral bonus is staged here — still *before* any write in this transaction, because
+    // Firestore rejects a read issued after the first write. It credits the *referrer's* pending
+    // balance and writes their statement line; this member's own balance is untouched by it.
+    let releasedReferral: { referrerName: string; bonusUsd: number } | null = null
+    if (completion.complete) {
+      const staged = await stageReferralBonusForCompletedProfile(tx, uid)
+      if (staged.applied && staged.referrerUid) {
+        releasedReferral = {
+          referrerName: staged.referrerName || 'the person who referred you',
+          bonusUsd: REFERRAL_BONUS_USD,
+        }
+      }
+    }
 
     if (completion.complete && !alreadyGranted) {
       grantedBonus = { amountUsd: WELCOME_BONUS_USD }
@@ -423,6 +484,7 @@ export async function saveMemberProfile(
       completion,
       grantedBonus,
       alreadyGranted,
+      releasedReferral,
       wallet: {
         pendingUsd: roundUsd(Number(wallet.pendingUsd ?? 0) || 0),
         availableUsd: roundUsd(availableUsd),
@@ -432,9 +494,20 @@ export async function saveMemberProfile(
 
   await createAuditEntry(
     result.grantedBonus ? 'PROFILE_COMPLETED_REWARD_GRANTED' : 'PROFILE_UPDATED',
-    { uid, fields: Object.keys(patch), dropped, completion: result.completion.percent, rewardUsd: result.grantedBonus?.amountUsd },
+    {
+      uid,
+      fields: Object.keys(patch),
+      dropped,
+      completion: result.completion.percent,
+      rewardUsd: result.grantedBonus?.amountUsd,
+      releasedReferralUsd: result.releasedReferral?.bonusUsd,
+    },
     actorEmail || `member:${uid}`,
   )
+
+  // The transaction has committed by now, so the money is real; telling the referrer about it is
+  // a courtesy that must never be able to fail the save that earned it.
+  if (result.releasedReferral) await notifyReferralQualified(uid).catch(() => {})
 
   return {
     ok: true,
@@ -444,6 +517,7 @@ export async function saveMemberProfile(
     grantedBonus: result.grantedBonus,
     wallet: result.wallet,
     bonusAlreadyGranted: result.alreadyGranted,
+    releasedReferral: result.releasedReferral,
   }
 }
 

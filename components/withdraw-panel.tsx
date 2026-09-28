@@ -61,7 +61,7 @@ export function WithdrawPanel() {
         availableUsd: wallet.availableUsd,
         heldUsd: payouts.heldUsd,
         amountUsd: Number(amount) || 0,
-        minWithdrawalUsd: payouts.minWithdrawalUsd || walletMeta.minWithdrawalUsd || 10,
+        minWithdrawalUsd: payouts.minWithdrawalUsd || walletMeta.minWithdrawalUsd || 50,
         usdToKes: payouts.usdToKes,
       }),
     [amount, payouts.heldUsd, payouts.minWithdrawalUsd, payouts.usdToKes, wallet.availableUsd, walletMeta.minWithdrawalUsd],

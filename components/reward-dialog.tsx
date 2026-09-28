@@ -28,7 +28,7 @@ export function RewardDialog() {
 
   const amount = reward.amountUsd || payouts.welcomeBonus.amountUsd || 5
   const first = (worker.name || 'there').split(' ')[0]
-  const minUsd = payouts.minWithdrawalUsd || 10
+  const minUsd = payouts.minWithdrawalUsd || 50
   const canWithdrawNow = payouts.withdrawableUsd >= minUsd && minUsd > 0
 
   return (

@@ -106,7 +106,7 @@ export default function DashboardPage() {
                 className="border-primary-foreground/40 bg-transparent text-primary-foreground hover:bg-primary-foreground/10 hover:text-primary-foreground"
               >
                 <Banknote className="size-4" />
-                {payouts.withdrawableUsd >= (payouts.minWithdrawalUsd || 10) ? 'Withdraw earnings' : 'Wallet & payouts'}
+                {payouts.withdrawableUsd >= (payouts.minWithdrawalUsd || 50) ? 'Withdraw earnings' : 'Wallet & payouts'}
               </Button>
             </div>
           </div>

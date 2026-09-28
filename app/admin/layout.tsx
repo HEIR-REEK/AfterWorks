@@ -6,6 +6,7 @@ import { usePathname } from 'next/navigation'
 import {
   Activity,
   ArrowUpRight,
+  Banknote,
   Briefcase,
   Landmark,
   LayoutDashboard,
@@ -35,6 +36,7 @@ const adminNavItems = [
   { href: '/admin/jobs', label: 'Jobs Catalogue', icon: Briefcase },
   { href: '/admin/applications', label: 'Applications & QA', icon: ListChecks },
   { href: '/admin/staff', label: 'Staff', icon: UserCog, ownerOnly: true },
+  { href: '/admin/payouts', label: 'Withdrawals', icon: Banknote },
   { href: '/admin/money', label: 'Money Ledger', icon: Landmark, ownerOnly: true },
   { href: '/admin/maintenance', label: 'Maintenance Mode', icon: Wrench, ownerOnly: true },
   { href: '/admin/audit-log', label: 'Audit Log', icon: ScrollText, ownerOnly: true },

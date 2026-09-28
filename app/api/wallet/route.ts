@@ -1,17 +1,18 @@
 import { NextRequest } from 'next/server'
 import { consumeBucket, json, maintenanceBlockForApi, requireUser, routeError } from '@/lib/guards'
-import { getExchangeRateUsdToKes } from '@/lib/afterworks-data'
-import { site } from '@/lib/site'
+import { getMemberWallet } from '@/lib/wallet-server'
 
 /**
  * GET /api/wallet — the member's money, read the way the ledger wrote it.
  *
- * Two fixes in one:
- *  1. The route used to carry its own copy of the Admin-SDK bootstrap (a second, weaker parser
- *     than `lib/firestore-admin`), so a base64/escaped-newline service account that worked for KYC
- *     silently failed here. One initialiser now, one behaviour.
- *  2. Balances are server-derived, and the response includes *when* each pending amount clears and
- *     which training entitlements were paid for. The client no longer gets to decide either.
+ * Answers with the full snapshot from `lib/wallet-server`: pending, cleared (any matured credit is
+ * settled on the way past — this deployment has no scheduler), the amount held by an open payout
+ * request, what is therefore withdrawable, where a payout would be sent, and the payout history.
+ *
+ * The response keeps its historical keys (`pendingUsd`, `availableUsd`, `payoutNumber`, `entries`,
+ * `paidTrainings`, `clearingHours`, `nextClearingAt`, `minWithdrawalUsd`, `fx`, `asOf`) so older
+ * callers keep working, and adds `heldUsd` / `withdrawableUsd` / `destination` / `openPayout` /
+ * `welcomeBonus` for the wallet panel and the payout form.
  */
 
 export const dynamic = 'force-dynamic'
@@ -29,84 +30,38 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const firestore = await import('@/lib/firestore-admin')
-    const db = firestore.dbOrNull()
-    if (!db) {
+    const wallet = await getMemberWallet(guard.value.uid)
+    if (!wallet) {
       return json({
         ok: true,
         pendingUsd: 0,
         availableUsd: 0,
+        heldUsd: 0,
+        withdrawableUsd: 0,
         payoutNumber: '',
+        payoutHoldUsd: 0,
+        entries: [],
+        paidTrainings: [],
+        clearingHours: 0,
+        nextClearingAt: null,
+        minWithdrawalUsd: 0,
+        fx: { usdToKes: 0, availableKes: 0, withdrawableKes: 0 },
         unavailable: true,
         note: 'The datastore is not reachable from this server, so balances are shown as zero rather than cached values.',
       })
     }
 
-    const uid = guard.value.uid
-    const [userSnap, ledgerSnap] = await Promise.all([
-      db.collection('users').doc(uid).get(),
-      db
-        .collection('wallet_ledger')
-        .where('uid', '==', uid)
-        .orderBy('createdAt', 'desc')
-        .limit(10)
-        .get()
-        .catch(() => null),
-    ])
-
-    const data = (userSnap.exists ? userSnap.data() : {}) as Record<string, unknown>
-    const wallet = (data.wallet ?? {}) as Record<string, unknown>
-
-    const entries = ledgerSnap
-      ? ledgerSnap.docs.map((d) => {
-          const row = (d.data() ?? {}) as Record<string, unknown>
-          return {
-            id: d.id,
-            kind: String(row.kind ?? 'earning'),
-            amountUsd: Number(row.amountUsd ?? 0) || 0,
-            status: String(row.status ?? 'pending'),
-            createdAt: String(row.createdAt ?? ''),
-            clearedAt: (row.clearedAt as string) ?? null,
-            jobTitle: (row.jobTitle as string) ?? '',
-            applicationId: (row.applicationId as string) ?? '',
-          }
-        })
-      : []
-
-    const nextClearing = entries
-      .filter((e) => e.status === 'pending' && e.clearedAt)
-      .map((e) => e.clearedAt as string)
-      .sort()[0]
-
-    const paidTrainingsFromDoc = Array.isArray(data.paidTrainings) ? (data.paidTrainings as string[]) : []
-    const txSnap = await db
-      .collection('transactions')
-      .where('userId', '==', uid)
-      .where('status', '==', 'success')
-      .get()
-      .catch(() => null)
-    const txJobIds = txSnap ? txSnap.docs.map((d) => String(d.data()?.jobId ?? '')).filter(Boolean) : []
-    const paidTrainings = Array.from(new Set([...paidTrainingsFromDoc, ...txJobIds]))
-    const rate = getExchangeRateUsdToKes()
-    const availableUsd = Number(wallet.availableUsd ?? 0) || 0
-    const pendingUsd = Number(wallet.pendingUsd ?? 0) || 0
-
     return json({
       ok: true,
-      pendingUsd,
-      availableUsd,
-      payoutNumber: String(wallet.payoutNumber ?? data.phone ?? ''),
-      preferredPayoutMethod: String(data.preferredPayoutMethod ?? 'M-Pesa'),
-      entries,
-      paidTrainings,
-      clearingHours: site.clearingWindowHours,
-      nextClearingAt: nextClearing ?? null,
-      minWithdrawalUsd: site.minWithdrawalUsd,
-      fx: { usdToKes: rate, availableKes: Math.round(availableUsd * rate) },
-      qualityScore: Number(data.qualityScore ?? 100) || 100,
-      jobsCompleted: Number(data.jobsCompleted ?? 0) || 0,
-      accountState: String(data.accountState ?? 'active'),
-      asOf: new Date().toISOString(),
+      ...wallet,
+      /** Legacy key kept for callers written before the hold existed. */
+      payoutHoldUsd: wallet.heldUsd,
+      fx: {
+        usdToKes: wallet.usdToKes,
+        availableKes: wallet.availableKes,
+        withdrawableKes: wallet.withdrawableKes,
+        pendingKes: wallet.pendingKes,
+      },
     })
   } catch (err) {
     return routeError('wallet:GET', err)

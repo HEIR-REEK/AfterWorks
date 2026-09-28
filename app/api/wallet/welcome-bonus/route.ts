@@ -1,39 +1,79 @@
 import { NextRequest } from 'next/server'
-import { json, requireUser, routeError } from '@/lib/guards'
-import { dbOrNull } from '@/lib/firestore-admin'
+import { audit, consumeBucket, fail, json, maintenanceBlockForApi, requireUser, routeError } from '@/lib/guards'
+import { WELCOME_BONUS_USD, WalletError, getMemberWallet, grantWelcomeBonus } from '@/lib/wallet-server'
 
-const requiredFields = ['name', 'phone', 'location', 'bio', 'skills', 'languages'] as const
-function completion(data: Record<string, unknown>) {
-  const checks = requiredFields.map((key) => {
-    const value = data[key]
-    return Array.isArray(value) ? value.length > 0 : typeof value === 'string' && value.trim().length > 0
-  })
-  return Math.round((checks.filter(Boolean).length / checks.length) * 100)
-}
+/**
+ * POST /api/wallet/welcome-bonus — settle the $5 profile reward, exactly once.
+ *
+ * Two callers:
+ *  • the member, from the popup or the wallet panel, with no body → the reward is paid only when the
+ *    stored profile is 100% complete (the server re-scores; the client's opinion is not consulted);
+ *  • `PATCH`/`POST` from `/admin/users` for a member an operator onboarded, which passes `uid` and
+ *    requires an operator session — handled in the console route, not here.
+ *
+ * The response always reports the *current* completion, so the UI can say precisely what is still
+ * missing instead of guessing why the reward did not arrive.
+ *
+ * Note for operators: the amount is a server constant. The previous version credited a fixed $5 too,
+ * but it was awarded on any save that happened to look complete, which is how a member with an empty
+ * skills list received it and a member with everything filled in did not.
+ */
 
-/** Credit the one-time welcome reward only after the server confirms a fully filled profile. */
+export const dynamic = 'force-dynamic'
+
 export async function POST(req: NextRequest) {
+  const blocked = await maintenanceBlockForApi(req)
+  if (blocked) return blocked
+
   const guard = await requireUser(req)
   if (!guard.ok) return guard.response
+
+  const bucket = consumeBucket('welcome-bonus', 10, 60_000, guard.value.uid)
+  if (!bucket.ok) return fail(429, 'Too many attempts. Please wait a minute and try again.', { code: 'rate_limited' })
+
   try {
-    const db = dbOrNull()
-    if (!db) return json({ ok: false, error: 'Wallet service unavailable.' }, { status: 503 })
-    const userRef = db.collection('users').doc(guard.value.uid)
-    const ledgerRef = db.collection('wallet_ledger').doc(`signup_bonus_${guard.value.uid}`)
-    const result = await db.runTransaction(async (tx) => {
-      const [user, ledger] = await Promise.all([tx.get(userRef), tx.get(ledgerRef)])
-      if (!user.exists) return { granted: false, completion: 0 }
-      const data = user.data() as Record<string, unknown>
-      const percent = completion(data)
-      if (percent < 100 || ledger.exists || data.signupBonusGranted === true) return { granted: false, completion: percent }
-      const wallet = (data.wallet ?? {}) as Record<string, unknown>
-      const availableUsd = Math.round(((Number(wallet.availableUsd) || 0) + 5) * 100) / 100
-      tx.set(userRef, { wallet: { ...wallet, availableUsd }, signupBonusGranted: true }, { merge: true })
-      tx.create(ledgerRef, { uid: guard.value.uid, kind: 'signup_bonus', status: 'cleared', amountUsd: 5, description: 'Complete profile welcome reward', createdAt: new Date().toISOString() })
-      return { granted: true, completion: percent }
+    const result = await grantWelcomeBonus({
+      uid: guard.value.uid,
+      actor: `member:${guard.value.uid}`,
+      actorKind: 'member',
+      amountUsd: WELCOME_BONUS_USD,
     })
-    return json({ ok: true, ...result })
+
+    const wallet = await getMemberWallet(guard.value.uid)
+
+    if (!result.granted) {
+      // Not an error: either it was already paid, or the profile is not finished yet.
+      const alreadyPaid = /already been paid/i.test(result.reason ?? '')
+      return json(
+        {
+          ok: true,
+          granted: false,
+          alreadyGranted: alreadyPaid,
+          amountUsd: result.amountUsd,
+          completion: result.completion,
+          reason: result.reason,
+          wallet,
+        },
+        { status: alreadyPaid ? 200 : 409 },
+      )
+    }
+
+    await audit({
+      action: 'WELCOME_BONUS_CLAIMED',
+      actorEmail: guard.value.email,
+      details: { uid: guard.value.uid, amountUsd: result.amountUsd, completion: result.completion.percent },
+      req,
+    })
+
+    return json({
+      ok: true,
+      granted: true,
+      amountUsd: result.amountUsd,
+      completion: result.completion,
+      wallet,
+    })
   } catch (err) {
+    if (err instanceof WalletError) return fail(err.status, err.message, { code: err.code })
     return routeError('wallet:welcome-bonus', err)
   }
 }

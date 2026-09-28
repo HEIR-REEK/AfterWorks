@@ -29,12 +29,12 @@ import {
 import {
   getUserDocument,
   subscribeToUserDocument,
-  updateUserProfile,
-  updateUserWallet,
   readCatalogue,
   subscribeToJobs,
   getJobSnapshot,
 } from '@/lib/firestore'
+import { profileCompletion, type ProfileCompletion } from '@/lib/profile-completion'
+import type { PayoutDestinationState, PayoutRequestRow, WalletEntry, WelcomeBonusState } from '@/lib/payouts'
 import {
   applyCatalogueSnapshot,
   CATALOGUE_PAGE_SIZE,
@@ -49,10 +49,64 @@ import { authedFetch, describeError } from '@/lib/client-api'
 
 export type ApplyResult = { ok: true; applicationId: string } | { ok: false; reason: string }
 
+export type ProfileSaveResult =
+  | {
+      ok: true
+      saved: string[]
+      dropped: string[]
+      completion: ProfileCompletion
+      /** Present when this save released the $5 welcome reward. */
+      grantedBonus: { amountUsd: number } | null
+      bonusAlreadyGranted: boolean
+    }
+  | { ok: false; error: string }
+
+export type PayoutEligibility = {
+  kycVerified: boolean
+  accountState: string
+  destinationReady: boolean
+  destinationProblem: string | null
+  minWithdrawalUsd: number
+  withdrawableUsd: number
+  heldUsd: number
+  openPayoutId: string | null
+  openPayoutStatus: PayoutRequestRow['status'] | null
+  canRequest: boolean
+}
+
+/**
+ * The onboarding layer the popups are driven from — one state machine, used by the app shell, the
+ * dashboard and the profile page, so "the prompt and the congratulations never both appear, and
+ * neither appears twice" is a property of the state, not of three components agreeing.
+ */
+export type OnboardingState = {
+  /** Server-scored profile progress for the signed-in member. */
+  completion: ProfileCompletion
+  /** True while the member still owes a profile and has not dismissed the prompt this session. */
+  promptOpen: boolean
+  /** Set when the reward has just been paid (or was paid elsewhere) and should be celebrated. */
+  reward: { open: boolean; amountUsd: number; alreadyPaid: boolean } | null
+  /** Member dismissed the reminder for now (the profile tab still re-opens it). */
+  dismissPrompt: () => void
+  /** The profile page (or any explicit CTA) asks for the prompt again. */
+  requestPrompt: () => void
+  dismissReward: () => void
+}
+
 type AfterWorksContextValue = {
   worker: WorkerProfile
   wallet: Wallet
   walletMeta: WalletMeta
+  /** Server-computed wallet snapshot: held amount, withdrawable balance, payout state. */
+  payouts: PayoutState
+  onboarding: OnboardingState
+  /** Save profile fields through PATCH /api/profile (server-validated; may release the $5). */
+  saveProfile: (fields: Record<string, unknown>) => Promise<ProfileSaveResult>
+  /** Ask the server to settle the $5 reward (used when the profile is already complete). */
+  claimWelcomeBonus: () => Promise<{ ok: boolean; granted: boolean; error?: string }>
+  requestPayout: (amountUsd: number) => Promise<{ ok: boolean; error?: string }>
+  cancelPayout: (requestId: string) => Promise<{ ok: boolean; error?: string }>
+  refreshPayouts: () => Promise<void>
   jobs: Job[]
   applications: Application[]
   paidTrainings: string[]
@@ -86,16 +140,36 @@ type AfterWorksContextValue = {
   withdrawApplication: (applicationId: string) => Promise<ApplyResult>
   refreshWallet: () => Promise<void>
   refreshApplications: () => Promise<void>
-  updateProfile: (updatedFields: Partial<WorkerProfile>) => Promise<void>
 }
 
 type WalletMeta = {
-  entries: { id: string; kind: string; amountUsd: number; status: string; createdAt: string; clearedAt: string | null; jobTitle?: string }[]
+  entries: WalletEntry[]
   nextClearingAt: string | null
   clearingHours: number
   minWithdrawalUsd: number
   availableKes: number
   asOf: string | null
+}
+
+/**
+ * Everything the wallet panel needs that the legacy `wallet` object does not carry: the hold, what
+ * is genuinely withdrawable, where a payout would go, the open request and the reward state. All of
+ * it is computed by the server (`lib/wallet-server.ts`) and copied here verbatim.
+ */
+export type PayoutState = {
+  heldUsd: number
+  minWithdrawalUsd: number
+  withdrawableUsd: number
+  withdrawableKes: number
+  pendingKes: number
+  usdToKes: number
+  destination: PayoutDestinationState
+  openPayout: PayoutRequestRow | null
+  requests: PayoutRequestRow[]
+  welcomeBonus: WelcomeBonusState
+  kycVerified: boolean
+  accountState: string
+  loaded: boolean
 }
 
 const BLANK_WALLET: Wallet = { pendingUsd: 0, availableUsd: 0, payoutNumber: '' }
@@ -106,6 +180,50 @@ const BLANK_META: WalletMeta = {
   minWithdrawalUsd: 10,
   availableKes: 0,
   asOf: null,
+}
+const BLANK_PAYOUTS: PayoutState = {
+  heldUsd: 0,
+  minWithdrawalUsd: 10,
+  withdrawableUsd: 0,
+  withdrawableKes: 0,
+  pendingKes: 0,
+  usdToKes: 0,
+  destination: { ready: false, method: 'M-Pesa', label: 'No payout details saved', accountName: '', problem: 'Add your payout details on the profile page.' },
+  openPayout: null,
+  requests: [],
+  welcomeBonus: { amountUsd: 5, granted: false, grantedAt: null, pendingFromStaff: false },
+  kycVerified: false,
+  accountState: 'active',
+  loaded: false,
+}
+
+/**
+ * Cosmetic acknowledgement marker for the congratulations popup.
+ *
+ * Deliberately browser-local and per-uid: it records "this person has seen the celebration in this
+ * browser", which is a display concern, not a financial one. Whether the $5 was actually paid is
+ * decided by `wallet_ledger/signup_bonus_<uid>` on the server — never by this key.
+ */
+function celebrationKey(uid: string): string {
+  return `afterworks:celebrated:${uid}`
+}
+
+function hasCelebrated(uid: string): boolean {
+  if (typeof window === 'undefined') return true
+  try {
+    return window.localStorage.getItem(celebrationKey(uid)) === '1'
+  } catch {
+    return true // storage blocked (private mode) — better to miss a popup than to loop it
+  }
+}
+
+function markCelebrated(uid: string): void {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.setItem(celebrationKey(uid), '1')
+  } catch {
+    /* storage blocked */
+  }
 }
 
 const AfterWorksContext = createContext<AfterWorksContextValue | null>(null)
@@ -119,7 +237,12 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
   const [worker, setWorker] = useState<WorkerProfile>(() => seedWorker())
   const [wallet, setWallet] = useState<Wallet>(BLANK_WALLET)
   const [walletMeta, setWalletMeta] = useState<WalletMeta>(BLANK_META)
+  const [payouts, setPayouts] = useState<PayoutState>(BLANK_PAYOUTS)
   const [profileLoaded, setProfileLoaded] = useState(false)
+  /** Server copy of the profile document (the listener above keeps the UI fields current). */
+  const [profileDoc, setProfileDoc] = useState<Record<string, unknown> | null>(null)
+  const [promptDismissed, setPromptDismissed] = useState(false)
+  const [reward, setReward] = useState<OnboardingState['reward']>(null)
   /**
    * The catalogue store. A ref mirrors the state because the catalogue callbacks do not re-create
    * on every render (that keeps the Firestore listener from being torn down and re-subscribed).
@@ -288,8 +411,12 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
     if (!user) {
       setWorker(seedWorker())
       setWallet(BLANK_WALLET)
+      setProfileDoc(null)
+      setPayouts(BLANK_PAYOUTS)
       setPaidTrainings([])
       setApplications([])
+      setPromptDismissed(false)
+      setReward(null)
       setProfileLoaded(true)
       return
     }
@@ -299,6 +426,7 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
       if (userDoc) {
         setWorker(userDoc.worker)
         setWallet(userDoc.wallet)
+        setProfileDoc(userDoc.raw)
         setPaidTrainings((prev) => Array.from(new Set([...prev, ...userDoc.paidTrainings])))
       }
       setProfileLoaded(true)
@@ -322,18 +450,42 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
     try {
       const data = await authedFetch<Record<string, unknown>>('/api/wallet')
       if (!mounted.current) return
+      const fx = (data.fx ?? {}) as Record<string, unknown>
       setWallet({
         pendingUsd: Number(data.pendingUsd ?? 0) || 0,
         availableUsd: Number(data.availableUsd ?? 0) || 0,
         payoutNumber: String(data.payoutNumber ?? ''),
       })
       setWalletMeta({
-        entries: Array.isArray(data.entries) ? (data.entries as WalletMeta['entries']) : [],
+        entries: Array.isArray(data.entries) ? (data.entries as WalletEntry[]) : [],
         nextClearingAt: (data.nextClearingAt as string | null) ?? null,
         clearingHours: Number(data.clearingHours ?? 72) || 72,
         minWithdrawalUsd: Number(data.minWithdrawalUsd ?? 10) || 10,
-        availableKes: Number(((data.fx as Record<string, unknown>)?.availableKes as number) ?? 0) || 0,
+        availableKes: Number(fx.availableKes ?? 0) || 0,
         asOf: (data.asOf as string) ?? null,
+      })
+      const bonus = (data.welcomeBonus ?? {}) as Partial<WelcomeBonusState>
+      setPayouts({
+        heldUsd: Number(data.heldUsd ?? 0) || 0,
+        minWithdrawalUsd: Number(data.minWithdrawalUsd ?? 10) || 10,
+        withdrawableUsd: Number(data.withdrawableUsd ?? 0) || 0,
+        withdrawableKes: Number(fx.withdrawableKes ?? 0) || 0,
+        pendingKes: Number(fx.pendingKes ?? 0) || 0,
+        usdToKes: Number(data.usdToKes ?? 0) || 0,
+        destination:
+          (data.destination as PayoutDestinationState | undefined) ??
+          BLANK_PAYOUTS.destination,
+        openPayout: (data.openPayout as PayoutRequestRow | null) ?? null,
+        requests: Array.isArray(data.payoutRequests) ? (data.payoutRequests as PayoutRequestRow[]) : [],
+        welcomeBonus: {
+          amountUsd: Number(bonus.amountUsd ?? 5) || 5,
+          granted: bonus.granted === true,
+          grantedAt: (bonus.grantedAt as string | null) ?? null,
+          pendingFromStaff: bonus.pendingFromStaff === true,
+        },
+        kycVerified: data.kycVerified === true,
+        accountState: String(data.accountState ?? 'active'),
+        loaded: true,
       })
       if (Array.isArray(data.paidTrainings)) {
         setPaidTrainings((prev) => Array.from(new Set([...prev, ...(data.paidTrainings as string[]).filter(Boolean)])))
@@ -516,46 +668,150 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
     [refreshWallet, setBusy],
   )
 
-  const updateProfile = useCallback(
-    async (fields: Partial<WorkerProfile>) => {
-      // Optimistic UI, but only for the fields a member is actually allowed to set — the rest are
-      // dropped here and rejected by both the rules and the API if someone bypasses this code.
-      const allowed = new Set([
-        'name',
-        'location',
-        'bio',
-        'skills',
-        'languages',
-        'preferredPayoutMethod',
-        'country',
-        'zipCode',
-        'bankName',
-        'bankBranch',
-        'bankAccountNumber',
-        'school',
-        'course',
-        'jobExperience',
-        'career',
-        'phone',
-      ])
-      const safe = Object.fromEntries(Object.entries(fields).filter(([key]) => allowed.has(key)))
-
-      setWorker((prev) => ({ ...prev, ...(safe as Partial<WorkerProfile>) }))
-      if (!user || !configured) return
-
+  // ── Profile save (server-validated; can release the welcome reward) ─────────────
+  const saveProfile = useCallback(
+    async (fields: Record<string, unknown>): Promise<ProfileSaveResult> => {
+      if (!user || !configured) {
+        // Demo mode keeps the UI honest: the fields stay on screen for the session and the member is
+        // told nothing was stored, instead of pretending a write happened.
+        setWorker((prev) => ({ ...prev, ...(fields as Partial<WorkerProfile>) }))
+        return { ok: false, error: 'Demo mode — set the Firebase variables to store profile changes.' }
+      }
+      setBusy('profile', true)
       try {
-        await updateUserProfile(user.uid, safe as Record<string, never>)
-        if (typeof safe.phone === 'string' && safe.phone) {
-          await updateUserWallet(user.uid, { payoutNumber: safe.phone })
-          setWallet((w) => ({ ...w, payoutNumber: safe.phone as string }))
+        const data = await authedFetch<{
+          completion: ProfileCompletion
+          saved?: string[]
+          dropped?: string[]
+          grantedBonus?: { amountUsd: number } | null
+          bonusAlreadyGranted?: boolean
+        }>('/api/profile', { method: 'PATCH', body: { fields } })
+
+        // The server is the authority on what was stored; reflect the accepted fields locally so the
+        // page does not flicker back to the previous value while the Firestore listener catches up.
+        setWorker((prev) => ({ ...prev, ...(fields as Partial<WorkerProfile>) }))
+        setProfileDoc((prev) => ({ ...(prev ?? {}), ...fields }))
+        if (typeof fields.phone === 'string' && fields.phone) setWallet((w) => ({ ...w, payoutNumber: fields.phone as string }))
+
+        if (data.grantedBonus) {
+          setReward({ open: true, amountUsd: data.grantedBonus.amountUsd, alreadyPaid: false })
+          markCelebrated(user.uid)
+        }
+
+        void refreshWallet()
+        return {
+          ok: true,
+          saved: data.saved ?? Object.keys(fields),
+          dropped: data.dropped ?? [],
+          completion: data.completion,
+          grantedBonus: data.grantedBonus ?? null,
+          bonusAlreadyGranted: data.bonusAlreadyGranted === true,
         }
       } catch (err) {
-        console.error('[profile] update failed:', err)
-        setError('Your changes could not be saved. Please try again.')
+        const message = describeError(err)
+        setError(message)
+        return { ok: false, error: message }
+      } finally {
+        setBusy('profile', false)
       }
     },
-    [user, configured],
+    [user, configured, refreshWallet, setBusy],
   )
+
+  const claimWelcomeBonus = useCallback(async () => {
+    if (!user || !configured) return { ok: false, granted: false, error: 'Demo mode — nothing is stored.' }
+    setBusy('bonus', true)
+    try {
+      const data = await authedFetch<{
+        granted?: boolean
+        amountUsd?: number
+        reason?: string
+        completion?: ProfileCompletion
+      }>('/api/wallet/welcome-bonus', { method: 'POST' })
+      void refreshWallet()
+      if (data.granted) {
+        setReward({ open: true, amountUsd: Number(data.amountUsd ?? 5) || 5, alreadyPaid: false })
+        if (user) markCelebrated(user.uid)
+        return { ok: true, granted: true }
+      }
+      return { ok: true, granted: false, error: data.reason || 'The reward is not available yet.' }
+    } catch (err) {
+      return { ok: false, granted: false, error: describeError(err) }
+    } finally {
+      setBusy('bonus', false)
+    }
+  }, [user, configured, refreshWallet, setBusy])
+
+  // ── Withdrawals ────────────────────────────────────────────────────────────────
+  const requestPayout = useCallback(
+    async (amountUsd: number) => {
+      if (!user || !configured) return { ok: false, error: 'Demo mode — withdrawals need a live Firebase project.' }
+      setBusy('payout:new', true)
+      try {
+        await authedFetch('/api/payouts', { method: 'POST', body: { amountUsd } })
+        await refreshWallet()
+        return { ok: true }
+      } catch (err) {
+        const message = describeError(err)
+        setError(message)
+        return { ok: false, error: message }
+      } finally {
+        setBusy('payout:new', false)
+      }
+    },
+    [user, configured, refreshWallet, setBusy],
+  )
+
+  const cancelPayout = useCallback(
+    async (requestId: string) => {
+      if (!user || !configured) return { ok: false, error: 'Demo mode — nothing to cancel.' }
+      setBusy(`payout:${requestId}`, true)
+      try {
+        await authedFetch('/api/payouts', { method: 'PATCH', body: { requestId } })
+        await refreshWallet()
+        return { ok: true }
+      } catch (err) {
+        const message = describeError(err)
+        setError(message)
+        return { ok: false, error: message }
+      } finally {
+        setBusy(`payout:${requestId}`, false)
+      }
+    },
+    [user, configured, refreshWallet, setBusy],
+  )
+
+  const refreshPayouts = useCallback(async () => {
+    await refreshWallet()
+  }, [refreshWallet])
+
+  // ── Onboarding: profile prompt + reward celebration ─────────────────────────────
+  const completion = useMemo<ProfileCompletion>(() => profileCompletion(profileDoc), [profileDoc])
+
+  // The prompt appears once the session is settled and a profile is genuinely owed. It stays away
+  // when: the member is in demo mode, the inbox is unproven (the app gate owns that conversation),
+  // the profile is complete, or the member already dismissed it *this session*.
+  const promptOpen =
+    Boolean(configured && user) &&
+    profileLoaded &&
+    !completion.complete &&
+    !payouts.welcomeBonus.granted &&
+    !promptDismissed
+
+  const dismissPrompt = useCallback(() => setPromptDismissed(true), [])
+  const requestPrompt = useCallback(() => setPromptDismissed(false), [])
+  const dismissReward = useCallback(() => setReward(null), [])
+
+  // A reward paid from another device (or by an operator) is celebrated the first time this browser
+  // sees it — the marker is cosmetic and per-uid, so a shared device does not re-celebrate for the
+  // next person who signs in.
+  useEffect(() => {
+    if (!configured || !user || !profileLoaded) return
+    if (!payouts.welcomeBonus.granted) return
+    if (hasCelebrated(user.uid)) return
+    setReward({ open: true, amountUsd: payouts.welcomeBonus.amountUsd, alreadyPaid: true })
+    markCelebrated(user.uid)
+  }, [configured, user, profileLoaded, payouts.welcomeBonus.granted, payouts.welcomeBonus.amountUsd])
 
   const value = useMemo<AfterWorksContextValue>(() => {
     const byId = new Map(jobs.map((j) => [j.id, j]))
@@ -586,7 +842,20 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
       withdrawApplication,
       refreshWallet,
       refreshApplications,
-      updateProfile,
+      payouts,
+      onboarding: {
+        completion,
+        promptOpen,
+        reward,
+        dismissPrompt,
+        requestPrompt,
+        dismissReward,
+      },
+      saveProfile,
+      claimWelcomeBonus,
+      requestPayout,
+      cancelPayout,
+      refreshPayouts,
     }
   }, [
     worker,
@@ -610,7 +879,18 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
     withdrawApplication,
     refreshWallet,
     refreshApplications,
-    updateProfile,
+    payouts,
+    completion,
+    promptOpen,
+    reward,
+    dismissPrompt,
+    requestPrompt,
+    dismissReward,
+    saveProfile,
+    claimWelcomeBonus,
+    requestPayout,
+    cancelPayout,
+    refreshPayouts,
   ])
 
   return <AfterWorksContext.Provider value={value}>{children}</AfterWorksContext.Provider>
@@ -660,6 +940,7 @@ async function mapUserDoc(
   }
   return {
     worker,
+    raw: doc as unknown as Record<string, unknown>,
     wallet: {
       pendingUsd: doc.wallet?.pendingUsd ?? 0,
       availableUsd: doc.wallet?.availableUsd ?? 0,

@@ -176,6 +176,7 @@ export function ReasonDialog({
   requireReason = true,
   minReasonLength = 4,
   busy = false,
+  confirmDisabled,
   onCancel,
   onConfirm,
   extra,
@@ -188,6 +189,11 @@ export function ReasonDialog({
   requireReason?: boolean
   minReasonLength?: number
   busy?: boolean
+  /**
+   * Set by callers whose `extra` fields must be filled before the action is valid (a payout
+   * reference, a typed uid). The reason box cannot see those fields, so it is told to hold.
+   */
+  confirmDisabled?: boolean
   onCancel: () => void
   onConfirm: (reason: string) => void
   /** Optional extra fields rendered under the reason box. */
@@ -253,7 +259,7 @@ export function ReasonDialog({
             type="button"
             size="sm"
             variant={tone === 'destructive' ? 'destructive' : 'default'}
-            disabled={busy || invalid}
+            disabled={busy || invalid || confirmDisabled === true}
             onClick={() => onConfirm(reason.trim())}
             className="gap-1.5"
           >

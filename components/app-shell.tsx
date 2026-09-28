@@ -10,6 +10,7 @@ import {
   LogOut,
   ShieldCheck,
   User,
+  Wallet,
   Wrench,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -18,6 +19,8 @@ import { useAfterWorks } from '@/components/afterworks-provider'
 import { NotificationsBell } from '@/components/notifications-bell'
 import { useMaintenance } from '@/components/maintenance-provider'
 import { BrandLink } from '@/components/brand'
+import { OnboardingGate } from '@/components/onboarding-gate'
+import { RewardDialog } from '@/components/reward-dialog'
 import { site } from '@/lib/site'
 
 function initials(nameOrEmail: string) {
@@ -30,6 +33,7 @@ const baseNav = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/jobs', label: 'Jobs', icon: Briefcase },
   { href: '/applications', label: 'Applied', icon: ListChecks },
+  { href: '/wallet', label: 'Wallet', icon: Wallet },
   { href: '/profile', label: 'Profile', icon: User },
 ]
 
@@ -68,6 +72,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex min-h-dvh flex-col">
+      {/* Onboarding: the profile prompt and the welcome-reward celebration live here so they can
+          appear over any worker route, and are driven by one state machine in the provider. */}
+      <OnboardingGate />
+      <RewardDialog />
+
       {/* Top Header */}
       <header className="sticky top-0 z-40 border-b border-border bg-background/85 backdrop-blur">
         <div className="mx-auto flex h-14 w-full max-w-6xl items-center gap-4 px-4 sm:h-16 sm:gap-6 sm:px-6">
@@ -181,7 +190,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <nav
         className={cn(
           'fixed bottom-0 left-0 right-0 z-40 grid border-t border-border bg-background/95 backdrop-blur supports-[padding:max(0px)]:pb-[env(safe-area-inset-bottom)] md:hidden',
-          'grid-cols-4',
+          'grid-cols-5',
         )}
         aria-label="Primary mobile"
       >

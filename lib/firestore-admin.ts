@@ -16,6 +16,8 @@ import { getAuth, type DecodedIdToken, type Auth, type UserInfo } from 'firebase
 import * as fs from 'fs'
 import * as path from 'path'
 import type { DiditSessionStatus } from '@/lib/didit'
+import { isEmailLike, normalizeEmail, sanitizeLine } from '@/lib/security-core'
+import { isValidMobileNumber } from '@/lib/payouts'
 
 // ─── Admin SDK initialisation (singleton) ────────────────────────────────────
 
@@ -1596,6 +1598,173 @@ export async function issueEmailVerificationLink(email: string, actorEmail: stri
     const message = err instanceof Error ? err.message : 'Unknown error'
     if (/EMAIL_NOT_FOUND/i.test(message)) return { ok: false, error: 'No account uses that address.', code: 'account_missing' }
     return { ok: false, error: 'A verification link could not be generated for this address.', code: 'auth_write_failed' }
+  }
+}
+
+// ─── Member onboarding (created by an operator, not by the member) ───────────
+//
+// The console could moderate, suspend and delete accounts but had no way to *create* one, so
+// onboarding somebody who phones support (or who is being migrated from a spreadsheet) meant
+// asking them to sign up from a device they may not have — and then a member exists in name only
+// until they finish their profile.
+
+export type MemberAccountResult =
+  | {
+      ok: true
+      uid: string
+      email: string
+      /** Firebase password-setup link — the member chooses their own credential; no password is ever stored. */
+      setupLink: string
+      /** True when the branded invite email was accepted by the mail transport. */
+      inviteSent: boolean
+      inviteNote: string
+      /** True when the $5 welcome reward waits for either a completed profile or an operator grant. */
+      welcomeBonusPending: boolean
+    }
+  | { ok: false; error: string; code: string }
+
+/**
+ * Creates a sign-in credential (email proven, no password yet) plus its profile document, and hands
+ * back a one-time link the member uses to choose a password.
+ *
+ * Deliberate choices:
+ *  • no password is generated, stored or emailed — the reset link is a credential the member sets;
+ *  • the profile is created in the same inert shape the public sign-up writes (`role: 'user'`,
+ *    `kycVerified: false`, empty wallet), because rules and routes both assume it;
+ *  • `welcomeBonusPending` records that an operator onboarded this member. The reward is released
+ *    either by the member completing their profile or by an operator grant, and only ever once.
+ */
+export async function createMemberAccount(input: {
+  name: string
+  email: string
+  phone?: string
+  location?: string
+  country?: string
+  /** `defer` keeps the welcome reward for after onboarding; `standard` lets the profile save pay it. */
+  welcomeBonus?: 'standard' | 'defer'
+  actorEmail: string
+}): Promise<MemberAccountResult> {
+  const auth = authOrNull()
+  if (!auth) return { ok: false, error: 'Firebase Auth is not reachable from this server.', code: 'auth_unavailable' }
+  const name = sanitizeLine(input.name, 80)
+  const email = normalizeEmail(input.email)
+  if (name.length < 3) return { ok: false, error: 'Enter the member’s full name.', code: 'invalid_name' }
+  if (!isEmailLike(email)) return { ok: false, error: 'Enter a valid email address.', code: 'invalid_email' }
+  const phone = sanitizeLine(input.phone ?? '', 24)
+  if (phone && !isValidMobileNumber(phone)) {
+    return { ok: false, error: 'That M-Pesa number does not look valid (use 07XX XXX XXX or +254…).', code: 'invalid_phone' }
+  }
+
+  let uid = ''
+  try {
+    const user = await auth.createUser({ email, displayName: name, emailVerified: true })
+    uid = user.uid
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Unknown error'
+    if (/EMAIL_EXISTS/i.test(message)) {
+      return { ok: false, error: 'An account already uses that email address.', code: 'email_in_use' }
+    }
+    return { ok: false, error: 'The sign-in credential could not be created.', code: 'auth_write_failed' }
+  }
+
+  const db = dbOrNull()
+  if (!db) {
+    // Do not leave a credential with no profile behind: the directory would show an orphan.
+    await auth.deleteUser(uid).catch(() => {})
+    return { ok: false, error: 'The datastore is unreachable, so the account was rolled back.', code: 'storage_unavailable' }
+  }
+
+  const now = new Date().toISOString()
+  try {
+    await db.collection('users').doc(uid).set({
+      uid,
+      name,
+      email,
+      phone,
+      location: sanitizeLine(input.location ?? '', 80),
+      country: sanitizeLine(input.country ?? 'Kenya', 60),
+      memberSince: new Date().toLocaleString('en-US', { month: 'short', year: 'numeric' }),
+      qualityScore: 100,
+      jobsCompleted: 0,
+      kycVerified: false,
+      emailVerified: true,
+      emailVerifiedAt: now,
+      accountState: 'active',
+      role: 'user',
+      isAdmin: false,
+      bio: '',
+      skills: [],
+      languages: [],
+      preferredPayoutMethod: 'M-Pesa',
+      bankName: '',
+      bankBranch: '',
+      bankAccountNumber: '',
+      paidTrainings: [],
+      wallet: { pendingUsd: 0, availableUsd: 0, payoutNumber: phone, payoutHoldUsd: 0 },
+      signupBonusGranted: false,
+      welcomeBonusPending: input.welcomeBonus === 'defer',
+      onboardedBy: input.actorEmail,
+      createdAt: now,
+      updatedAt: now,
+    })
+  } catch (err) {
+    await auth.deleteUser(uid).catch(() => {})
+    console.error('[FirestoreAdmin] createMemberAccount profile write failed:', err)
+    return { ok: false, error: 'The profile document could not be written, so the account was rolled back.', code: 'storage_write_failed' }
+  }
+
+  let setupLink = ''
+  let inviteNote = 'Send the setup link from your own channel — it is shown once.'
+  try {
+    const { site } = await import('@/lib/site')
+    setupLink = await auth.generatePasswordResetLink(email, {
+      url: `${site.url.replace(/\/$/, '')}/sign-in?setup=1`,
+      handleCodeInApp: false,
+    })
+  } catch (err) {
+    console.warn('[FirestoreAdmin] setup link generation failed:', err instanceof Error ? err.message : err)
+    inviteNote = 'A setup link could not be generated (check Firebase → Authentication → Settings → Authorized domains). The member can still use “Forgot password”.'
+  }
+
+  let inviteSent = false
+  if (setupLink) {
+    try {
+      const { sendEmail, accountInviteEmailHtml, accountInviteEmailText } = await import('@/lib/email')
+      const result = await sendEmail({
+        to: email,
+        subject: 'Your AfterWorks account is ready — set your password',
+        html: accountInviteEmailHtml({ name, setupUrl: setupLink }),
+        text: accountInviteEmailText({ name, setupUrl: setupLink }),
+        tag: 'account-invite',
+      })
+      inviteSent = result.ok
+      if (!result.ok) inviteNote = `The invite email was not accepted (${result.code}); share the setup link manually.`
+      else inviteNote = 'Invite email sent.'
+    } catch (err) {
+      console.warn('[FirestoreAdmin] invite email skipped:', err instanceof Error ? err.message : err)
+      inviteNote = 'Mail transport unavailable; share the setup link manually.'
+    }
+  }
+
+  await createAuditEntry(
+    'MEMBER_ACCOUNT_CREATED',
+    {
+      uid,
+      email,
+      welcomeBonusPending: input.welcomeBonus === 'defer',
+      inviteSent,
+    },
+    input.actorEmail,
+  )
+
+  return {
+    ok: true,
+    uid,
+    email,
+    setupLink,
+    inviteSent,
+    inviteNote,
+    welcomeBonusPending: input.welcomeBonus === 'defer',
   }
 }
 

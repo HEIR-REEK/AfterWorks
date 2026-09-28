@@ -97,6 +97,21 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
   const isSignUp = mode === 'sign-up'
   // Show a success banner on sign-in page when coming from sign-up or after verifying
   const justRegistered = !isSignUp && searchParams.get('registered') === '1'
+
+  /**
+   * Sign-in failures need to point somewhere.
+   *
+   * Firebase deliberately reports "wrong password" and "no account" with the same code
+   * (`auth/invalid-credential`) so an attacker cannot enumerate addresses. The member does not care
+   * about that nuance — they care about *their* one account — so the copy covers both possibilities
+   * and offers the fix for each: retry, reset the password, or create the account that is missing.
+   */
+  const credentialFailure =
+    !isSignUp && ['auth/invalid-credential', 'auth/wrong-password', 'auth/user-not-found', 'auth/invalid-login-credentials'].includes(errorCode ?? '')
+  const accountExistsFailure = isSignUp && errorCode === 'auth/email-already-in-use'
+  const accountMissingFailure = !isSignUp && errorCode === 'auth/user-not-found'
+  // Google tried to register a stranger on the sign-in page; the session was dropped, not admitted.
+  const googleNeedsAccount = !isSignUp && errorCode === 'auth/account-created-instead-of-signed-in'
   const justVerified = !isSignUp && searchParams.get('verified') === '1'
   const justReset = !isSignUp && searchParams.get('reset') === '1'
 
@@ -149,7 +164,8 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
     setError(null)
     setErrorCode(null)
     setSubmitting(true)
-    const result = await signInWithGoogle()
+    // Sign-up may create an account; sign-in may only admit an existing one.
+    const result = await signInWithGoogle({ allowSignUp: isSignUp })
     setSubmitting(false)
     if (result.ok) {
       if ('needsEmailVerification' in result && result.needsEmailVerification) {
@@ -308,12 +324,50 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
 
         {/* Only show the generic error when it isn't the verification-specific one (that has its own banner) */}
         {error && errorCode !== 'email-not-verified' && (
-          <div role="alert" className="text-sm font-medium text-destructive">
-            <p>{error}</p>
-            {errorCode && (
-              <p className="mt-1 font-mono text-[11px] font-normal text-muted-foreground">
-                Error code: {errorCode}
+          <div role="alert" className="rounded-xl border border-destructive/30 bg-destructive/[0.06] px-3.5 py-3 text-sm">
+            <p className="font-medium text-destructive">{error}</p>
+            {credentialFailure && (
+              <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
+                {accountMissingFailure
+                  ? 'No AfterWorks account uses this address.'
+                  : 'This password does not match — or the account does not exist yet.'}{' '}
+                Check the spelling,{' '}
+                <Link
+                  href={email.trim() ? `/forgot-password?email=${encodeURIComponent(email.trim())}` : '/forgot-password'}
+                  className="font-medium text-primary hover:underline"
+                >
+                  reset your password
+                </Link>
+                , or{' '}
+                <Link href="/sign-up" className="font-medium text-primary hover:underline">
+                  create an account
+                </Link>{' '}
+                — it takes a minute.
               </p>
+            )}
+            {googleNeedsAccount && (
+              <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
+                Nothing was created and you are not signed in. Use{' '}
+                <Link href="/sign-up" className="font-medium text-primary hover:underline">
+                  Create an account
+                </Link>{' '}
+                with the same Google button, or sign in with the email and password you registered.
+              </p>
+            )}
+            {accountExistsFailure && (
+              <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
+                Sign in with your existing account instead, or{' '}
+                <Link
+                  href={email.trim() ? `/forgot-password?email=${encodeURIComponent(email.trim())}` : '/forgot-password'}
+                  className="font-medium text-primary hover:underline"
+                >
+                  reset its password
+                </Link>
+                . Your AfterWorks account and its balance are tied to this address, so a second account is never created for it.
+              </p>
+            )}
+            {errorCode && (
+              <p className="mt-1.5 font-mono text-[11px] font-normal text-muted-foreground">Error code: {errorCode}</p>
             )}
           </div>
         )}
@@ -358,6 +412,23 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
         </svg>
         Continue with Google
       </Button>
+
+      {!isSignUp && (
+        <p className="mt-2 text-center text-[11px] leading-snug text-muted-foreground">
+          Google sign-in only admits accounts that already exist. First time here? Use{' '}
+          <Link href="/sign-up" className="font-medium text-primary hover:underline">
+            Create an account
+          </Link>
+          .
+        </p>
+      )}
+
+      {!isSignUp && (
+        <p className="mt-4 text-center text-xs leading-relaxed text-muted-foreground">
+          AfterWorks has no guest access: an account is created once, with the email you verify, and
+          everything you earn stays attached to it.
+        </p>
+      )}
 
       <p className="mt-6 text-center text-sm text-muted-foreground">
         {isSignUp ? (

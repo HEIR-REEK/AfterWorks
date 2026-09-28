@@ -53,7 +53,13 @@ type AuthContextValue = {
   reloadUser: () => Promise<boolean>
   signIn: (email: string, password: string) => Promise<AuthResult>
   signUp: (email: string, password: string, name: string) => Promise<AuthResult>
-  signInWithGoogle: () => Promise<AuthResult>
+  /**
+   * Google popup. `allowSignUp` must be false on the sign-in page: Google would otherwise mint an
+   * account for a first-time visitor who was only trying to sign in, which is exactly the "no
+   * account, no entry" rule the platform promises. On the sign-up page it is true, because there the
+   * person has explicitly asked for an account.
+   */
+  signInWithGoogle: (options?: { allowSignUp?: boolean }) => Promise<AuthResult>
   signOut: () => Promise<void>
   /** Re-sends a Resend verification email to the currently signed-in (but unverified) user. */
   resendVerification: () => Promise<{ ok: boolean; error?: string; alreadyVerified?: boolean }>
@@ -267,18 +273,39 @@ export function FirebaseAuthProvider({
       if (authRef.current) await fbSignOut(authRef.current)
     }
 
-    async function signInWithGoogle(): Promise<AuthResult> {
+    async function signInWithGoogle(options?: { allowSignUp?: boolean }): Promise<AuthResult> {
       if (!authRef.current) {
         return { ok: false, error: 'Authentication is not configured on this deployment.', code: 'auth/configuration-not-found' }
       }
+      const allowSignUp = options?.allowSignUp !== false
       try {
         const provider = new GoogleAuthProvider()
         provider.setCustomParameters({ prompt: 'select_account' })
         const cred = await signInWithPopup(authRef.current, provider)
+        const additionalInfo = getAdditionalUserInfo(cred)
+
+        /**
+         * A first-time Google visitor arriving through sign-in gets no account here.
+         *
+         * The popup has already created the credential inside Firebase Auth by the time we can look
+         * at it, so the account cannot be "refused" at the provider — but we can refuse to admit it:
+         * no profile document is written, the session is dropped immediately, and the visitor is sent
+         * to create the account deliberately. (Firebase Console → Authentication → Sign-in method →
+         * Google → disable "Enable create account" closes the loop at the provider too.)
+         */
+        if (!allowSignUp && additionalInfo?.isNewUser) {
+          await fbSignOut(authRef.current)
+          setUser(null)
+          return {
+            ok: false,
+            code: 'auth/account-created-instead-of-signed-in',
+            error: 'That Google account has no AfterWorks account yet, so you were not signed in. Create the account first — it takes a minute, and your earnings then stay attached to it.',
+          }
+        }
+
         const name = cred.user.displayName || cred.user.email?.split('@')[0] || 'Worker'
         await createUserDocument(cred.user.uid, name, cred.user.email || '')
         setUser(cred.user)
-        const additionalInfo = getAdditionalUserInfo(cred)
         if (!cred.user.emailVerified) {
           try {
             const token = await cred.user.getIdToken()

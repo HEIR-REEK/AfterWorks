@@ -351,6 +351,102 @@ export function passwordResetEmailHtml(copy: PasswordResetEmailCopy): string {
 </html>`
 }
 
+// ─── Account invite (created by an operator) ─────────────────────────────────
+
+export type AccountInviteCopy = {
+  name: string
+  /** One-time Firebase password-setup link the member uses to choose their own password. */
+  setupUrl: string
+  /** True when the $5 profile reward is waiting for them — changes the copy, not the link. */
+  welcomeReward?: boolean
+}
+
+export function accountInviteEmailSubject(): string {
+  return 'Your AfterWorks account is ready — set your password'
+}
+
+export function accountInviteEmailText(copy: AccountInviteCopy): string {
+  const first = firstName(copy.name, '')
+  return [
+    `Hi ${first},`,
+    '',
+    'An AfterWorks account has been created for you. Choose a password to activate it:',
+    '',
+    copy.setupUrl,
+    '',
+    'The link can be used once and expires shortly — request a new one from the sign-in page if it lapses.',
+    '',
+    copy.welcomeReward === false
+      ? 'Once you are in, finish your profile so we can start matching you with paid microwork.'
+      : 'Once you are in, complete your profile and we will add a $5 welcome reward to your available balance.',
+    '',
+    'AfterWorks staff will never ask you for your password or for a one-time code.',
+    '',
+    `— ${site.name}`,
+    site.supportEmail,
+  ].join('\n')
+}
+
+export function accountInviteEmailHtml(copy: AccountInviteCopy): string {
+  const first = escapeHtml(firstName(copy.name, ''))
+  const url = escapeHtml(copy.setupUrl)
+  const support = escapeHtml(site.supportEmail)
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Set your AfterWorks password</title>
+</head>
+<body style="margin:0;padding:0;background:#F4F6FB;font-family:Inter,Segoe UI,Helvetica,Arial,sans-serif;color:#1A1F36;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F4F6FB;padding:32px 12px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;">
+          <tr>
+            <td align="center" style="padding:8px 8px 20px;">
+              ${EMAIL_BRAND_LOGO_HTML}
+            </td>
+          </tr>
+          <tr>
+            <td style="background:#ffffff;border:1px solid #E4E7F1;border-radius:16px;padding:36px 32px;">
+              <p style="margin:0 0 8px;font-size:13px;font-weight:600;color:#2F5FE0;">Your account is ready</p>
+              <h1 style="margin:0 0 16px;font-size:24px;line-height:1.3;font-weight:700;color:#1A1F36;">Choose your password</h1>
+              <p style="margin:0 0 16px;font-size:15px;line-height:1.6;color:#3C4257;">
+                Hi ${first}, an AfterWorks account was created for you. Click below to set your password and sign in.
+              </p>
+              <table role="presentation" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td style="border-radius:10px;background:#2F5FE0;">
+                    <a href="${url}" style="display:inline-block;padding:14px 22px;font-size:15px;font-weight:600;color:#ffffff;text-decoration:none;">
+                      Set my password
+                    </a>
+                  </td>
+                </tr>
+              </table>
+              <p style="margin:24px 0 0;font-size:14px;line-height:1.6;color:#3C4257;">
+                When you are in, finish your profile — it is what unlocks the welcome reward and makes your applications eligible.
+              </p>
+              <p style="margin:24px 0 0;font-size:12px;line-height:1.55;color:#667085;word-break:break-all;">
+                If the button does not work, paste this URL into your browser:<br />
+                <a href="${url}" style="color:#2F5FE0;">${url}</a>
+              </p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:20px 8px 0;font-size:12px;line-height:1.55;color:#667085;">
+              If you were not expecting this, ignore the email and contact us. Questions? ${support}
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`
+}
+
 function firstName(name: string, email: string): string {
   const trimmed = name.trim()
   if (trimmed) return trimmed.split(/\s+/)[0]!.slice(0, 40)

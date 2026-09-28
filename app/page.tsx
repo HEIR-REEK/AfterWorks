@@ -1,9 +1,9 @@
 'use client'
 
-import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import {
   ArrowRight,
+  Banknote,
   CheckCircle2,
   Star,
   Wallet as WalletIcon,
@@ -20,15 +20,11 @@ import {
 } from '@/lib/afterworks-data'
 
 export default function DashboardPage() {
-  const { worker, wallet, walletMeta, jobs, applications, getJob } = useAfterWorks()
-  const [showWelcome, setShowWelcome] = useState(false)
-  useEffect(() => {
-    if (walletMeta.entries.some((entry) => entry.kind === 'signup_bonus') && !localStorage.getItem('afterworks-welcome-bonus-seen')) setShowWelcome(true)
-  }, [walletMeta.entries])
-  const dismissWelcome = () => { localStorage.setItem('afterworks-welcome-bonus-seen', '1'); setShowWelcome(false) }
-  const profileChecks = [worker.name, worker.phone, worker.location, worker.bio, worker.skills?.length, worker.languages?.length]
-  const profileCompletion = Math.round((profileChecks.filter((value) => typeof value === 'number' ? value > 0 : Boolean(value?.toString().trim())).length / profileChecks.length) * 100)
-  const welcomeRewardPaid = walletMeta.entries.some((entry) => entry.kind === 'signup_bonus')
+  const { worker, wallet, walletMeta, payouts, onboarding, jobs, applications, getJob } = useAfterWorks()
+  // Completion and the reward are server-scored (`lib/profile-completion.ts`) and celebrated by the
+  // shared reward dialog, so this page never has to guess — or store — whether the $5 was paid.
+  const profileCompletion = onboarding.completion.percent
+  const welcomeRewardPaid = payouts.welcomeBonus.granted
 
   const openJobs = jobs.filter((j) => j.status === 'open' && j.slotsRemaining > 0)
   const activeApps = applications.filter(
@@ -37,15 +33,17 @@ export default function DashboardPage() {
 
   const stats = [
     {
-      label: 'Available balance',
-      value: formatUsd(wallet.availableUsd),
-      sub: `≈ ${formatKes(wallet.availableUsd)}`,
+      label: 'Withdrawable',
+      value: formatUsd(payouts.withdrawableUsd),
+      sub: payouts.heldUsd > 0 ? `${formatUsd(payouts.heldUsd)} held by a request` : `≈ ${formatKes(payouts.withdrawableUsd)}`,
       icon: WalletIcon,
     },
     {
       label: 'Pending (clearing)',
       value: formatUsd(wallet.pendingUsd),
-      sub: 'Clears in 48–72h',
+      sub: walletMeta.nextClearingAt
+        ? `Next clears ${new Date(walletMeta.nextClearingAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}`
+        : `Clears after ${walletMeta.clearingHours}h`,
       icon: CheckCircle2,
     },
     {
@@ -58,23 +56,16 @@ export default function DashboardPage() {
 
   return (
     <div className="flex flex-col gap-6 sm:gap-8">
-      {showWelcome && (
-        <div role="dialog" aria-modal="true" aria-labelledby="welcome-title" className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-          <div className="relative w-full max-w-md rounded-2xl bg-card p-8 text-center shadow-2xl">
-            <div aria-hidden="true" className="mb-3 text-3xl tracking-widest">🎉 🎊 🎉</div>
-            <h2 id="welcome-title" className="text-2xl font-bold">Congratulations, {worker.name?.split(' ')[0] || 'you'}!</h2>
-            <p className="mt-3 text-muted-foreground">We added <strong className="text-foreground">$5.00</strong> to your available balance as a free welcome reward.</p>
-            <p className="mt-2 text-sm text-muted-foreground">Withdrawals are reviewed by our team and require at least $10 in available funds.</p>
-            <Button className="mt-6 w-full" onClick={dismissWelcome}>Awesome, thanks!</Button>
-          </div>
-        </div>
-      )}
       {!welcomeRewardPaid && profileCompletion < 100 && (
         <section className="rounded-xl border border-primary/20 bg-primary/5 p-5" aria-label="Welcome reward profile progress">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h2 className="font-semibold">Complete your profile to unlock $5</h2>
-              <p className="mt-1 text-sm text-muted-foreground">Add your contact details, location, bio, skills, and languages to receive your free welcome reward.</p>
+              <h2 className="font-semibold">Complete your profile to unlock {formatUsd(payouts.welcomeBonus.amountUsd)}</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {onboarding.completion.missing.length > 0
+                  ? `Still missing: ${onboarding.completion.missingLabels.join(', ')}.`
+                  : 'Everything is filled in — open your profile to claim the reward.'}
+              </p>
             </div>
             <span className="font-mono text-lg font-semibold text-primary">{profileCompletion}%</span>
           </div>
@@ -99,14 +90,23 @@ export default function DashboardPage() {
               Browsing and applying is always free. You only ever get paid — never
               charged to apply or verify your identity.
             </p>
-            <div className="mt-5">
+            <div className="mt-5 flex flex-wrap gap-2">
               <Button
                 render={<Link href="/jobs" />}
                 size="lg"
-                className="w-full bg-primary-foreground text-primary hover:bg-primary-foreground/90 sm:w-auto"
+                className="bg-primary-foreground text-primary hover:bg-primary-foreground/90"
               >
                 Browse open jobs
                 <ArrowRight className="size-4" />
+              </Button>
+              <Button
+                render={<Link href="/wallet" />}
+                size="lg"
+                variant="outline"
+                className="border-primary-foreground/40 bg-transparent text-primary-foreground hover:bg-primary-foreground/10 hover:text-primary-foreground"
+              >
+                <Banknote className="size-4" />
+                {payouts.withdrawableUsd >= (payouts.minWithdrawalUsd || 10) ? 'Withdraw earnings' : 'Wallet & payouts'}
               </Button>
             </div>
           </div>

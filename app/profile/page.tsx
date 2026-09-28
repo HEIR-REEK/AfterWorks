@@ -31,11 +31,14 @@ import {
   AlertCircle,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { formatUsd } from '@/lib/afterworks-data'
+import { formatKesValue, formatUsd } from '@/lib/afterworks-data'
 import { KENYAN_BANKS } from '@/lib/banks'
+import { PAYOUT_STATUS_SHORT, PAYOUT_STATUS_TONE } from '@/lib/payouts'
+import { site } from '@/lib/site'
+import { StatusBadge } from '@/components/status-badge'
 
 function ProfilePageContent() {
-  const { worker, wallet, applications, getJob, updateProfile } = useAfterWorks()
+  const { worker, wallet, applications, getJob, saveProfile, claimWelcomeBonus, payouts, onboarding, refreshWallet, pending, mode } = useAfterWorks()
   const { user } = useAuth()
   const searchParams = useSearchParams()
   const [isEditing, setIsEditing] = useState(false)
@@ -49,9 +52,10 @@ function ProfilePageContent() {
   const [isQrModalOpen, setIsQrModalOpen] = useState(false)
   const [kycFailureReason, setKycFailureReason] = useState<string | null>(null)
 
-  // 1. Auto-open edit modal for new users
+  // 1. Auto-open the edit modal: right after sign-up (`?new=1`) and when the onboarding prompt
+  //    sends the member here (`?complete=1`) — the prompt promises the form opens, so it does.
   useEffect(() => {
-    if (searchParams.get('new') === '1') {
+    if (searchParams.get('new') === '1' || searchParams.get('complete') === '1') {
       setIsEditing(true)
     }
   }, [searchParams])
@@ -75,7 +79,9 @@ function ProfilePageContent() {
         )
         const data = await res.json()
         if (data.isApproved || data.diditApproved) {
-          await updateProfile({ kycVerified: true, accountState: 'active' })
+          // The verdict is written by the KYC route/webhook; the client only refreshes, so a browser
+          // can never mark itself verified.
+          await refreshWallet()
           setToastMessage('Identity verification complete! Your profile is verified.')
           setShowToast(true)
           setTimeout(() => setShowToast(false), 5000)
@@ -86,7 +92,7 @@ function ProfilePageContent() {
     }
 
     verifyOnReturn()
-  }, [searchParams, user, updateProfile])
+  }, [searchParams, user, refreshWallet])
 
   // 2. Cross-device KYC polling is handled by KycQrModal — no duplicate polling here
 
@@ -232,7 +238,9 @@ function ProfilePageContent() {
       .map((l) => l.trim())
       .filter(Boolean)
 
-    await updateProfile({
+    // One server call: it whitelists the fields, saves them, re-scores the profile and — if this
+    // save is what takes it to 100% — credits the $5 in the same transaction, then tells us so.
+    const result = await saveProfile({
       name: formData.name.trim(),
       phone: formData.phone.trim(),
       country: formData.country.trim(),
@@ -247,24 +255,30 @@ function ProfilePageContent() {
       course: formData.course.trim(),
       jobExperience: formData.jobExperience.trim(),
       career: formData.career.trim(),
-      skills: skills.length > 0 ? skills : worker.skills,
-      languages: languages.length > 0 ? languages : worker.languages,
+      skills: skills.length > 0 ? skills : worker.skills ?? [],
+      languages: languages.length > 0 ? languages : worker.languages ?? [],
     })
 
-    // Server validates all required fields and performs the one-time credit transaction.
-    try {
-      const token = await user?.getIdToken()
-      if (token) {
-        await fetch('/api/wallet/welcome-bonus', { method: 'POST', headers: { Authorization: `Bearer ${token}` } })
-      }
-    } catch { /* The dashboard can retry after a profile save. */ }
-
     setSaving(false)
-    setIsEditing(false)
 
-    // Show temporary success toast
+    if (!result.ok) {
+      setToastMessage(result.error)
+      setShowToast(true)
+      return
+    }
+
+    setIsEditing(false)
+    setToastMessage(
+      result.grantedBonus
+        ? `Saved — and your profile is complete. ${formatUsd(result.grantedBonus.amountUsd)} has been added.`
+        : result.dropped.length > 0
+          ? `Profile saved. Some fields were ignored: ${result.dropped.join(', ')}.`
+          : `Profile saved. ${result.completion.percent}% complete${
+              result.completion.missing.length ? ` — still missing: ${result.completion.missingLabels.join(', ')}` : ''
+            }.`,
+    )
     setShowToast(true)
-    setTimeout(() => setShowToast(false), 4000)
+    setTimeout(() => setShowToast(false), 5000)
   }
 
   return (
@@ -290,6 +304,95 @@ function ProfilePageContent() {
           <span className="hidden sm:inline">Update Profile</span>
           <span className="sm:hidden">Edit</span>
         </Button>
+      </section>
+
+      {/* Completion + payout readiness — the same score the server uses to release the $5 */}
+      <section className="grid gap-3 lg:grid-cols-[1.4fr_1fr]">
+        <div className="rounded-2xl border border-border bg-card p-4 shadow-sm sm:p-5">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold tracking-tight">
+                Profile {onboarding.completion.percent}% complete
+              </h2>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                {payouts.welcomeBonus.granted
+                  ? `Welcome reward of ${formatUsd(payouts.welcomeBonus.amountUsd)} already paid.`
+                  : onboarding.completion.complete
+                    ? `You have earned the ${formatUsd(payouts.welcomeBonus.amountUsd)} welcome reward.`
+                    : `Finish every field to receive the ${formatUsd(payouts.welcomeBonus.amountUsd)} welcome reward.`}
+              </p>
+            </div>
+            {onboarding.completion.complete ? (
+              <Button
+                size="sm"
+                className="shrink-0 gap-1.5"
+                disabled={pending['bonus'] === true || mode === 'demo'}
+                onClick={async () => {
+                  const result = await claimWelcomeBonus()
+                  setToastMessage(
+                    result.granted
+                      ? `Congratulations — ${formatUsd(payouts.welcomeBonus.amountUsd)} has been added to your balance.`
+                      : result.error || 'The reward could not be claimed yet.',
+                  )
+                  setShowToast(true)
+                  setTimeout(() => setShowToast(false), 5000)
+                }}
+              >
+                {pending['bonus'] ? 'Claiming…' : 'Claim reward'}
+              </Button>
+            ) : (
+              <Button size="sm" variant="outline" className="shrink-0" onClick={handleOpenEdit}>
+                Finish now
+              </Button>
+            )}
+          </div>
+          <div
+            className="mt-3 h-2 overflow-hidden rounded-full bg-muted"
+            role="progressbar"
+            aria-valuenow={onboarding.completion.percent}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-label="Profile completion"
+          >
+            <div className="h-full rounded-full bg-primary transition-all duration-500" style={{ width: `${onboarding.completion.percent}%` }} />
+          </div>
+          {onboarding.completion.missing.length > 0 ? (
+            <p className="mt-2 text-[11px] text-muted-foreground">
+              Missing: {onboarding.completion.missingLabels.join(' · ')}
+            </p>
+          ) : (
+            <p className="mt-2 inline-flex items-center gap-1 text-[11px] font-medium text-success">
+              <Check className="size-3" /> Everything the reward asks for is filled in.
+            </p>
+          )}
+        </div>
+
+        <div className="rounded-2xl border border-border bg-card p-4 shadow-sm sm:p-5">
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-sm font-semibold tracking-tight">Payout readiness</h2>
+            <StatusBadge tone={payouts.destination.ready ? 'success' : 'warning'}>
+              {payouts.destination.ready ? 'Ready' : 'Incomplete'}
+            </StatusBadge>
+          </div>
+          <p className="mt-1.5 text-xs text-muted-foreground">{payouts.destination.label}</p>
+          <ul className="mt-2.5 flex flex-col gap-1 text-[11px]">
+            <li className={cn('flex items-center gap-1.5', payouts.kycVerified ? 'text-success' : 'text-warning')}>
+              <Check className="size-3" />
+              {payouts.kycVerified ? 'Identity verified' : 'Identity verification required'}
+            </li>
+            <li className={cn('flex items-center gap-1.5', payouts.destination.ready ? 'text-success' : 'text-warning')}>
+              <Check className="size-3" />
+              {payouts.destination.ready ? 'Payout details saved' : payouts.destination.problem}
+            </li>
+            <li className="flex items-center gap-1.5 text-muted-foreground">
+              <Check className="size-3" />
+              Withdrawable {formatUsd(payouts.withdrawableUsd)} · held {formatUsd(payouts.heldUsd)}
+            </li>
+          </ul>
+          <Button render={<Link href="/wallet" />} variant="outline" size="sm" className="mt-3 w-full">
+            Open wallet &amp; withdraw
+          </Button>
+        </div>
       </section>
 
       {/* Main Profile Hero Card */}

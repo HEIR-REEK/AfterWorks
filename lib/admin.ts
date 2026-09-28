@@ -255,6 +255,27 @@ export const adminApi = {
     }>('/api/admin/users', { method: 'PATCH', body }),
   ledger: (query: { source?: string; kind?: string; status?: string; search?: string; pageSize?: number; cursor?: string | null }) =>
     apiFetch<AdminLedgerPage>('/api/admin/ledger', { query }),
+  /** Withdrawal queue: requests hold member balances until an operator settles them. */
+  payouts: (query: { status?: string; search?: string; pageSize?: number; cursor?: string | null }) =>
+    apiFetch<AdminPayoutPage>('/api/admin/payouts', { query }),
+  /** One payout transition. `payoutReference` is required by the server when marking a request paid. */
+  payoutAction: (body: { id: string; status: string; reason?: string; payoutReference?: string }) =>
+    apiFetch<{ ok: boolean; request: AdminPayoutRow; releasedUsd: number; debitedUsd: number; message?: string }>('/api/admin/payouts', {
+      method: 'PATCH',
+      body,
+    }),
+  /** Create a member account on someone's behalf (staff may do this too). */
+  createMember: (body: { name: string; email: string; phone?: string; location?: string; country?: string; welcomeBonus?: 'standard' | 'defer' }) =>
+    apiFetch<{
+      ok: boolean
+      uid: string
+      email: string
+      setupLink: string
+      inviteSent: boolean
+      inviteNote: string
+      welcomeBonusPending: boolean
+      note: string
+    }>('/api/admin/users', { method: 'POST', body, timeoutMs: 30_000 }),
   applications: (query: { pageSize?: number; cursor?: string | null; status?: string; search?: string }) =>
     apiFetch<{ ok: boolean; rows: AdminApplicationRow[]; nextCursor: string | null; hasMore: boolean; degraded?: string }>('/api/admin/applications', { query }),
   applicationAction: (body: Record<string, unknown>) => apiFetch<{ ok: boolean; message?: string; status?: string }>('/api/admin/applications', { method: 'PATCH', body }),
@@ -351,6 +372,60 @@ export type AdminUserRow = {
     providers: string[]
     orphaned?: boolean
   } | null
+}
+
+/** One withdrawal request as the console queue renders it. */
+export type AdminPayoutRow = {
+  id: string
+  uid: string
+  email: string
+  name: string
+  amountUsd: number
+  amountKes: number
+  status: 'pending' | 'approved' | 'processing' | 'paid' | 'rejected' | 'failed' | 'cancelled'
+  method: 'M-Pesa' | 'Bank Transfer'
+  destinationLabel: string
+  destination: {
+    method: 'M-Pesa' | 'Bank Transfer'
+    accountName: string
+    accountNumber: string
+    bankName: string
+    bankBranch: string
+    bankAccountNumber: string
+  }
+  requestedAt: string
+  updatedAt: string
+  payoutBy: string | null
+  reviewedBy: string | null
+  reviewedAt: string | null
+  paidAt: string | null
+  payoutReference: string
+  reason: string
+  history: { status: string; at: string; by?: string; note?: string }[]
+}
+
+export type AdminPayoutPage = {
+  ok: boolean
+  rows: AdminPayoutRow[]
+  nextCursor: string | null
+  hasMore: boolean
+  pageSize: number
+  summary: {
+    pending: number
+    approved: number
+    processing: number
+    paid: number
+    rejected: number
+    failed: number
+    cancelled: number
+    heldUsd: number
+    paidUsd: number
+    oldestPendingAt: string | null
+  }
+  /** `next` is the list of legal moves from each status; reason/reference flags come from the server. */
+  transitions: Record<string, { next: string[]; needsReason: boolean; needsReference: boolean }>
+  degraded?: string | null
+  payoutSla?: string
 }
 
 /** One money movement, from `wallet_ledger` (earnings/withdrawals) or `transactions` (Paystack). */

@@ -46,6 +46,9 @@ type UserDetail = AdminUserRow & {
   jobsApplied?: number
   walletNote?: string
   moderationReason?: string
+  signupBonusGranted?: boolean
+  welcomeBonusPending?: boolean
+  signupBonusGrantedAt?: string | null
   kycProvider?: string
   kycLevel?: string
   kycRejectedAt?: string | null
@@ -98,6 +101,10 @@ function UsersPageInner() {
   } | null>(null)
   // `null` = not loaded yet (or Auth unreachable); a loaded record always exists as an object.
   const [account, setAccount] = useState<NonNullable<AdminUserRow['auth']> | null>(null)
+  const [addOpen, setAddOpen] = useState(false)
+  const [addBusy, setAddBusy] = useState(false)
+  const [addForm, setAddForm] = useState({ name: '', email: '', phone: '', location: '', welcomeBonus: 'standard' as 'standard' | 'defer' })
+  const [addResult, setAddResult] = useState<{ uid: string; email: string; setupLink: string; inviteSent: boolean; inviteNote: string; welcomeBonusPending: boolean } | null>(null)
 
   useEffect(() => {
     const id = setTimeout(() => setSearch(searchInput.trim()), 350)
@@ -172,6 +179,42 @@ function UsersPageInner() {
     }
   }
 
+  /**
+   * Create a member account on the member's behalf.
+   *
+   * The result carries a one-time password-setup link: it is shown once, with a copy button, because
+   * that link is the only credential that exists until the member chooses a password. Nothing is
+   * emailed to the operator — the invite goes straight to the member when the mail transport is
+   * configured, and the link is the fallback when it is not.
+   */
+  const createMember = async (event: React.FormEvent) => {
+    event.preventDefault()
+    setAddBusy(true)
+    try {
+      const result = await adminApi.createMember({
+        name: addForm.name.trim(),
+        email: addForm.email.trim(),
+        phone: addForm.phone.trim() || undefined,
+        location: addForm.location.trim() || undefined,
+        welcomeBonus: addForm.welcomeBonus,
+      })
+      setAddResult({
+        uid: result.uid,
+        email: result.email,
+        setupLink: result.setupLink,
+        inviteSent: result.inviteSent,
+        inviteNote: result.inviteNote,
+        welcomeBonusPending: result.welcomeBonusPending,
+      })
+      push('success', result.note)
+      await load(cursors[cursors.length - 1] ?? null)
+    } catch (err) {
+      push('error', err instanceof Error ? err.message : 'The account could not be created.')
+    } finally {
+      setAddBusy(false)
+    }
+  }
+
   // Lockout counters live in the security store, not on the user document, so this goes through the
   // operator-actions endpoint rather than PATCH /api/admin/users.
   const clearLockout = async (email: string, reason: string) => {
@@ -206,6 +249,19 @@ function UsersPageInner() {
         icon={<Users className="size-4" />}
         actions={
           <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              size="sm"
+              className="h-8 gap-1.5"
+              onClick={() => {
+                setAddResult(null)
+                setAddForm({ name: '', email: '', phone: '', location: '', welcomeBonus: 'standard' })
+                setAddOpen(true)
+              }}
+            >
+              <UserCheck className="size-3.5" />
+              Add member
+            </Button>
             <div className="relative">
               <Search className="absolute left-2.5 top-2.5 size-3.5 text-muted-foreground" />
               <input
@@ -428,6 +484,26 @@ function UsersPageInner() {
                     {selected.role === 'admin' ? 'Revoke staff' : 'Make staff'}
                   </Button>
                 )}
+                {(isOwner || selected.welcomeBonusPending === true) && !selected.signupBonusGranted ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="gap-1.5"
+                    disabled={busy}
+                    onClick={() => setConfirm({
+                      action: 'grant-bonus',
+                      title: selected.welcomeBonusPending ? 'Release the deferred welcome reward' : 'Grant the welcome reward',
+                      description: selected.welcomeBonusPending
+                        ? 'This member was onboarded with the reward deferred, so releasing it is the promised finish. The server still refuses a second grant, and your reason is audited.'
+                        : 'Credits the one-time welcome reward to this member’s available balance. The server refuses a second grant, and an operator grant is audited with your reason.',
+                      confirmLabel: 'Grant reward',
+                      tone: 'default',
+                    })}
+                  >
+                    <Wallet className="size-3.5" />
+                    Grant welcome reward
+                  </Button>
+                ) : null}
                 {(isOwner || account?.disabled) && (
                   <Button size="sm" variant="outline" className="gap-1.5" disabled={busy || account === null} onClick={() => setConfirm({
                     action: account?.disabled ? 'credential-enable' : 'credential-disable',
@@ -564,6 +640,8 @@ function UsersPageInner() {
               const eraseLedger = (document.getElementById('erase-ledger') as HTMLInputElement | null)?.checked === true
               return act({ ...base, action: 'erase', payload: { confirm: typed, eraseLedger } })
             }
+            case 'grant-bonus':
+              return act({ ...base, action: 'grant-welcome-bonus', payload: {} })
             case 'role':
               return act({ ...base, action: 'role', payload: { isAdmin: selected.role !== 'admin', email: selected.email } })
             case 'wallet': {
@@ -607,6 +685,103 @@ function UsersPageInner() {
           ) : undefined
         }
       />
+
+      {/* Create-member dialog: the console could moderate accounts but never create one. */}
+      {addOpen ? (
+        <div className="fixed inset-0 z-[70] flex items-end justify-center bg-foreground/40 p-3 backdrop-blur-sm sm:items-center" onMouseDown={() => setAddOpen(false)}>
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Add a member"
+            className="max-h-[92dvh] w-full max-w-lg overflow-y-auto rounded-2xl border border-border bg-card p-5 shadow-xl"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-semibold tracking-tight">Add a member</h3>
+                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                  Creates the sign-in credential and the profile in one step, then either emails the member a
+                  password-setup link or shows it to you to pass on. No password is generated or stored by us.
+                </p>
+              </div>
+              <button type="button" onClick={() => setAddOpen(false)} className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground" aria-label="Close">
+                <X className="size-4" />
+              </button>
+            </div>
+
+            {addResult ? (
+              <div className="mt-4 flex flex-col gap-3">
+                <div className={cn('rounded-xl border px-3.5 py-3 text-xs', addResult.inviteSent ? 'border-success/30 bg-success/10 text-success' : 'border-warning/40 bg-warning/10 text-warning-foreground')}>
+                  <p className="font-semibold">{addResult.inviteSent ? 'Account created — invite sent' : 'Account created — share the setup link'}</p>
+                  <p className="mt-0.5 leading-relaxed">{addResult.inviteNote}</p>
+                </div>
+                <Field label="Password-setup link" hint="One-time, expires quickly, and shown only in this dialog. Ask the member to set their password, then sign in.">
+                  <div className="flex gap-2">
+                    <input readOnly value={addResult.setupLink} className={cn(inputClass, 'font-mono text-[10px]')} onFocus={(event) => event.currentTarget.select()} />
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="shrink-0"
+                      onClick={() => {
+                        void navigator.clipboard?.writeText(addResult.setupLink)
+                        push('info', 'Setup link copied.')
+                      }}
+                    >
+                      Copy
+                    </Button>
+                  </div>
+                </Field>
+                <p className="text-[11px] text-muted-foreground">
+                  {addResult.welcomeBonusPending
+                    ? 'The welcome reward is deferred for this account: release it from the member’s drawer once onboarding is done, or let them earn it by completing their profile.'
+                    : 'The welcome reward stays attached to this account and is paid the moment the profile reaches 100%.'}
+                </p>
+                <div className="flex justify-end gap-2 border-t border-border pt-3">
+                  <Button type="button" size="sm" variant="outline" onClick={() => setAddResult(null)}>
+                    Add another
+                  </Button>
+                  <Button type="button" size="sm" onClick={() => setAddOpen(false)}>
+                    Done
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <form onSubmit={createMember} className="mt-4 flex flex-col gap-3">
+                <Field label="Full name" hint="Must match the member’s ID — payouts are checked against it.">
+                  <input required value={addForm.name} onChange={(e) => setAddForm({ ...addForm, name: e.target.value })} className={inputClass} placeholder="Amina Otieno" />
+                </Field>
+                <Field label="Email address" hint="An operator-vouched address is marked verified, and the member proves the inbox by using the setup link.">
+                  <input required type="email" value={addForm.email} onChange={(e) => setAddForm({ ...addForm, email: e.target.value })} className={inputClass} placeholder="amina@example.com" />
+                </Field>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Field label="M-Pesa number (optional)">
+                    <input value={addForm.phone} onChange={(e) => setAddForm({ ...addForm, phone: e.target.value })} className={inputClass} placeholder="0712 345 678" />
+                  </Field>
+                  <Field label="City / region (optional)">
+                    <input value={addForm.location} onChange={(e) => setAddForm({ ...addForm, location: e.target.value })} className={inputClass} placeholder="Nairobi" />
+                  </Field>
+                </div>
+                <Field label="Welcome reward" hint="Deferred means you release it after onboarding; standard means the profile save releases it at 100%.">
+                  <select value={addForm.welcomeBonus} onChange={(e) => setAddForm({ ...addForm, welcomeBonus: e.target.value as 'standard' | 'defer' })} className={inputClass}>
+                    <option value="standard">Standard — paid when the profile is complete</option>
+                    <option value="defer">Deferred — release it later from this console</option>
+                  </select>
+                </Field>
+                <div className="flex justify-end gap-2 border-t border-border pt-3">
+                  <Button type="button" size="sm" variant="ghost" onClick={() => setAddOpen(false)} disabled={addBusy}>
+                    Cancel
+                  </Button>
+                  <Button type="submit" size="sm" className="gap-1.5" disabled={addBusy}>
+                    {addBusy ? <Loader2 className="size-3.5 animate-spin" /> : <UserCheck className="size-3.5" />}
+                    {addBusy ? 'Creating…' : 'Create account'}
+                  </Button>
+                </div>
+              </form>
+            )}
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }

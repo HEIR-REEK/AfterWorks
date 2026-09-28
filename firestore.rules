@@ -73,6 +73,8 @@ service cloud.firestore {
         && request.resource.data.accountState == 'active'
         && request.resource.data.wallet.pendingUsd == 0
         && request.resource.data.wallet.availableUsd == 0
+        && request.resource.data.get('wallet', {}).get('payoutHoldUsd', 0) == 0
+        && request.resource.data.get('signupBonusGranted', false) == false
         && request.resource.data.keys().size() <= 40;
 
       // Profile editing stays client-side (it is the worker's own copy), but privilege and money
@@ -130,6 +132,24 @@ service cloud.firestore {
 
     match /wallet_ledger/{entryId} {
       allow read: if isStaff() || (signedIn() && resource.data.uid == request.auth.uid);
+      allow write: if false;
+    }
+
+    // ── Withdrawal (payout) requests ─────────────────────────────────────────
+    // A member may watch their own request move through the queue; nothing about the money is
+    // client-writable, because the request *is* the hold on their balance. Creating one is
+    // `POST /api/payouts` (KYC + balance + destination + one-at-a-time all re-checked in a
+    // transaction), settling one is `/api/admin/payouts`, cancelling is `PATCH /api/payouts`.
+    match /payout_requests/{requestId} {
+      allow read: if isStaff() || (signedIn() && resource.data.uid == request.auth.uid);
+      allow write: if false;
+    }
+
+    // One guard document per member (id = uid) proving they have a request in flight. It exists so
+    // two taps cannot open two payouts against the same balance; it is written and deleted only
+    // inside the payout transactions.
+    match /payout_open/{userId} {
+      allow read: if isStaff() || isSelf(userId);
       allow write: if false;
     }
 

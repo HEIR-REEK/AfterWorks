@@ -8,7 +8,9 @@ import { ADMIN_MUTABLE_STATES, isStateTransitionAllowed, staffUserActionVerdict 
  *
  * GET   ?pageSize&cursor&search&state        → one redacted, cursor-paginated page
  * GET   ?uid                                  → full profile for the detail drawer
- * PATCH { uid, action, payload, reason }      → moderation, KYC verdict, role change, wallet edit
+ * PATCH { uid, action, payload, reason }      → moderation, KYC verdict, role change, wallet edit,
+ *                                               welcome-reward grant
+ * POST  { name, email, phone?, location?, welcomeBonus? }  → create a member account (staff too)
  *
  * Why this exists: previously the users table wrote `users/{uid}` documents directly from the
  * browser, including an "isAdmin" toggle. The security rules in force at the time let the *owner*
@@ -243,6 +245,28 @@ export async function PATCH(req: NextRequest) {
         return json({ ok: true })
       }
 
+      case 'grant-welcome-bonus': {
+        // Staff may pay this only to a member they onboarded with the reward deferred, so the
+        // action cannot be used to mint a balance for an arbitrary account. Owners are unrestricted.
+        const detail = await firestore.getUserDetail(uid)
+        if (!detail) return fail(404, 'No such user.', { code: 'user_not_found' })
+        const deferred = detail.welcomeBonusPending === true
+        if (guard.value.role !== 'owner' && !deferred) {
+          return fail(403, 'Staff can release the welcome reward only for an account onboarded with it deferred.', { code: 'owner_only' })
+        }
+        if (reason.length < 4) return fail(400, 'Add a short reason — it is written to the audit log.', { code: 'reason_required' })
+
+        const { grantWelcomeBonus } = await import('@/lib/wallet-server')
+        const result = await grantWelcomeBonus({
+          uid,
+          actor: guard.value.email,
+          actorKind: 'operator',
+          reason,
+        })
+        if (!result.granted) return fail(409, result.reason || 'The reward could not be granted.', { code: 'bonus_not_granted' })
+        return json({ ok: true, amountUsd: result.amountUsd, completion: result.completion, note: `Welcome reward of ${result.amountUsd.toFixed(2)} USD added.` })
+      }
+
       case 'delete': {
         if (reason.length < 6) return fail(400, 'Deletion needs a written justification.', { code: 'reason_required' })
         await firestore.adminUpdateUser(uid, { accountState: 'banned', deletedAt: new Date().toISOString(), moderationReason: reason }, guard.value.email, 'USER_MARKED_DELETED')
@@ -276,5 +300,73 @@ export async function PATCH(req: NextRequest) {
     }
   } catch (err) {
     return routeError('admin/users:PATCH', err)
+  }
+}
+
+/**
+ * POST /api/admin/users — create a member account on someone's behalf.
+ *
+ * Staff and owners both need this: the support line regularly onboards people who cannot complete a
+ * sign-up on their own device (or who are being migrated from a spreadsheet), and until now the only
+ * way to do it was to ask them to sign up — after which the account sat with an unverified email and
+ * no way in.
+ *
+ * The endpoint creates a credential with **no password** (email marked verified, because an operator
+ * vouched for it and the member proves the inbox by using the one-time link), writes the same inert
+ * profile document that public sign-up writes, and returns a Firebase password-setup link plus the
+ * outcome of the branded invite email. No password is generated, stored, or returned anywhere.
+ */
+export async function POST(req: NextRequest) {
+  const guard = await requireAdmin(req)
+  if (!guard.ok) return guard.response
+
+  const bucket = consumeBucket('admin-users-create', 10, 60_000, String(guard.value.jti).slice(0, 12))
+  if (!bucket.ok) return fail(429, 'Too many account creations in a short window. Please wait.', { headers: { 'Retry-After': String(bucket.retryAfterSec) } })
+
+  let body: Record<string, unknown>
+  try {
+    const raw = await req.text()
+    if (raw.length > 8_000) return fail(413, 'Payload is too large.', { code: 'payload_too_large' })
+    body = JSON.parse(raw || '{}')
+  } catch {
+    return fail(400, 'Expected a JSON body.', { code: 'bad_request' })
+  }
+
+  try {
+    const firestore = await import('@/lib/firestore-admin')
+    if (!firestore.isFirebaseAdminUsable()) return fail(503, 'Storage unavailable — no account was created.', { code: 'storage_unavailable' })
+
+    const result = await firestore.createMemberAccount({
+      name: String(body.name ?? ''),
+      email: String(body.email ?? ''),
+      phone: body.phone === undefined ? '' : String(body.phone),
+      location: body.location === undefined ? '' : String(body.location),
+      country: body.country === undefined ? 'Kenya' : String(body.country),
+      welcomeBonus: body.welcomeBonus === 'defer' ? 'defer' : 'standard',
+      actorEmail: guard.value.email,
+    })
+    if (!result.ok) return fail(result.code === 'email_in_use' ? 409 : 400, result.error, { code: result.code })
+
+    await audit({
+      action: 'MEMBER_ACCOUNT_CREATED',
+      actorEmail: guard.value.email,
+      details: { uid: result.uid, email: result.email, inviteSent: result.inviteSent, welcomeBonusPending: result.welcomeBonusPending },
+      req,
+    })
+
+    return json({
+      ok: true,
+      uid: result.uid,
+      email: result.email,
+      setupLink: result.setupLink,
+      inviteSent: result.inviteSent,
+      inviteNote: result.inviteNote,
+      welcomeBonusPending: result.welcomeBonusPending,
+      note: result.inviteSent
+        ? 'Account created and the invite email was sent.'
+        : 'Account created. Copy the setup link and share it with the member.',
+    })
+  } catch (err) {
+    return routeError('admin/users:POST', err)
   }
 }

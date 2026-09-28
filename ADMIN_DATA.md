@@ -15,6 +15,7 @@ payout ran.
 | Jobs, slots filled, capacity | Firestore `jobs` | `getPlatformStats`, `listJobsServer` | Slot arithmetic happens on approval/rejection, not in the browser. |
 | Applications, QA states, per-job throughput | Firestore `applications` | `listApplicationsPage`, `getPlatformStats` | Transitions are validated server-side against `TRANSITIONS` in `lib/firestore-admin.ts`. |
 | Earnings credits, withdrawals, clearing | Firestore **`wallet_ledger`** | `listLedgerPage` → `/admin/money` | Written by the application lifecycle (`wd_<applicationId>`, idempotent) and the wallet route. |
+| Withdrawal queue, held funds, payout references | Firestore **`payout_requests`** + **`payout_open`** | `listPayoutRequests`, `getPayoutQueueSummary` → `/admin/payouts` | A request *is* the hold on the member's balance; the amounts are re-derived from `wallet_ledger` when it settles. |
 | Card payments for training | Firestore **`transactions`** + **Paystack** | `listLedgerPage`, `getPlatformStats.payments` | Amounts are re-verified against `api.paystack.co` at confirmation; a Firestore row alone never means "paid". |
 | Platform liability (`pendingUsd + availableUsd`) | Firestore `users.*.wallet` | `getPlatformStats` | Projected read of up to 1 000 wallets per pass; the console shows the window it scanned. |
 | Failed sign-ins, lockouts, role changes | Firestore `admin_logs` + in-memory buckets | `listAuditLogs`, `/api/admin/security` | Audit entries are redacted on write (`lib/security.ts`) and capped at 6 KB. |
@@ -42,6 +43,9 @@ payout ran.
 | Verification link | `auth.generateEmailVerificationLink()` handed to the operator (the app sends no email) | `action: verification-link` |
 | Flag for deletion | Bans + stamps `deletedAt`, keeps financial rows | `action: delete` |
 | Erase account | Deletes profile, credential, notifications, applications; redacts ledger rows unless `eraseLedger` | `action: erase` (reason ≥ 12 chars + uid confirmation) |
+| Create member | Auth account + `users/{uid}` profile in one transaction-ish step, one-time password-setup link returned for the operator to relay (or emailed), full rollback if either half fails | `POST /api/admin/users` (audits `MEMBER_ACCOUNT_CREATED`) |
+| Grant welcome reward | Credits the one-time $5 to `availableUsd` with a `signup_bonus_<uid>` ledger row; refuses a second grant and, for a member, requires a 100 % profile (operators may override with a reason) | `PATCH /api/admin/users` `action: grant-welcome-bonus` |
+| Settle a withdrawal | `pending → approved/processing → paid` with an M-Pesa/bank reference, or `rejected/failed` which refunds the hold | `PATCH /api/admin/payouts` (reason ≥ 4 chars when refusing, reference ≥ 3 when paying) |
 
 Every one of these goes through `requireAdmin`, a same-site check, a rate bucket and `createAuditEntry`, so
 the audit log is a complete record of the console's effect on data. Passwords are never stored by this app:
@@ -59,6 +63,22 @@ scrypt digest in `ADMIN_PASSWORD_SCRYPT` (`npm run hash:admin-password`).
    Admin SDK is not initialised — check the service account, not the code.
 5. `/admin/money` fills up as applications are completed and withdrawals are requested; before that it is
    legitimately empty, and says so.
+
+## How a withdrawal request moves
+
+`/admin/payouts` is the only place money leaves the platform; the member side (`/wallet`) can only ask.
+
+| Step | Member side | Server | Console |
+| --- | --- | --- | --- |
+| 1. Ask | `WithdrawPanel` → `POST /api/payouts` (KYC verified, account active, destination valid, ≥ `minWithdrawalUsd`) | One transaction: re-check eligibility, move `availableUsd → payoutHoldUsd`, write `payout_requests/{id}` + `payout_open/{uid}`, audit `PAYOUT_REQUESTED` | The request appears in the queue with `pending` |
+| 2. Review | Row shows the hold and offers *Cancel* while `pending`/`approved` | — | `approved` / `processing` set by the desk; both keep the money held |
+| 3. Pay | — | `paid` debits the hold, writes `wallet_ledger/payout_<id>`, clears `payout_open/{uid}`, audits `PAYOUT_PAID` | Operator pastes the M-Pesa/bank reference (≥ 3 chars); it is required, so a payout can never be recorded without a trace |
+| 4. Refuse | Balance returns to `availableUsd` automatically (refund is `min(amountUsd, heldUsd)`, idempotent) | `rejected` / `failed` with a reason; the member is notified | Reason is required and stored on the row |
+
+Two invariants hold regardless of how the desk is used: a member can hold only one open request at a time
+(the `payout_open/{uid}` guard document, enforced in the transaction), and re-sending the same transition is
+a no-op rather than a second debit. `firestore.rules` denies all client writes to both collections — the
+member's queue view is read-only, and every state change is server-authorised and audited.
 
 ## How a console edit reaches a worker who is already on the site
 

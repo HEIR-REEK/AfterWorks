@@ -682,7 +682,7 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
         // Demo mode keeps the UI honest: the fields stay on screen for the session and the member is
         // told nothing was stored, instead of pretending a write happened.
         setWorker((prev) => ({ ...prev, ...(fields as Partial<WorkerProfile>) }))
-        return { ok: false, error: 'Demo mode — set the Firebase variables to store profile changes.' }
+        return { ok: false, error: 'Preview — profile changes are not saved on this site.' }
       }
       setBusy('profile', true)
       try {
@@ -728,7 +728,7 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
   )
 
   const claimWelcomeBonus = useCallback(async () => {
-    if (!user || !configured) return { ok: false, granted: false, error: 'Demo mode — nothing is stored.' }
+    if (!user || !configured) return { ok: false, granted: false, error: 'Preview — nothing is saved on this site.' }
     setBusy('bonus', true)
     try {
       const data = await authedFetch<{
@@ -754,7 +754,7 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
   // ── Withdrawals ────────────────────────────────────────────────────────────────
   const requestPayout = useCallback(
     async (amountUsd: number) => {
-      if (!user || !configured) return { ok: false, error: 'Demo mode — withdrawals need a live Firebase project.' }
+      if (!user || !configured) return { ok: false, error: 'Preview — withdrawals are switched off on this site.' }
       setBusy('payout:new', true)
       try {
         await authedFetch('/api/payouts', { method: 'POST', body: { amountUsd } })
@@ -773,7 +773,7 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
 
   const cancelPayout = useCallback(
     async (requestId: string) => {
-      if (!user || !configured) return { ok: false, error: 'Demo mode — nothing to cancel.' }
+      if (!user || !configured) return { ok: false, error: 'Preview — there is no request to cancel on this site.' }
       setBusy(`payout:${requestId}`, true)
       try {
         await authedFetch('/api/payouts', { method: 'PATCH', body: { requestId } })

@@ -165,9 +165,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <div className="flex items-start gap-2.5 rounded-xl border border-border bg-muted/40 px-3.5 py-2.5 text-xs text-muted-foreground">
             <Info className="mt-0.5 size-3.5 shrink-0 text-primary" />
             <span>
-              Demo mode — Firebase is not configured on this deployment, so jobs shown here are sample data and
-              applications are not saved. Set the <code className="rounded bg-background px-1 font-mono text-[11px]">FIREBASE_*</code> variables
-              to go live.
+              Preview — the jobs shown here are examples and applications are not saved, so nothing you do on this
+              site reaches your account.
             </span>
           </div>
         )}

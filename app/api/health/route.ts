@@ -6,8 +6,16 @@ import { json } from '@/lib/guards'
  * GET /api/health — an honest status feed, not a 200-on-a-string.
  *
  * A status page that always says "All systems operational" is worse than none: it teaches people
- * not to trust it. Each check here reflects something the app actually depends on (a configured
- * credential, a reachable datastore, a live maintenance flag) and degrades visibly when it is not.
+ * not to trust it. Each check here reflects something the app actually depends on and degrades
+ * visibly when it is not.
+ *
+ * This feed is public, so it describes *services* in the words a member reads, never the
+ * configuration behind them: no vendor names, no environment-variable names, no runtime or memory
+ * figures, and no mention of the operations console (which is not advertised anywhere a member can
+ * see). The status of each check is still the truth — "Sign-in is unavailable" is more useful to a
+ * worker than a config dump, and the operator-facing version of the same question (which variable is
+ * missing, whether a secret is loaded) lives in the console's posture report, `securityChecks()` in
+ * `lib/security.ts`, behind the admin gate.
  */
 
 export const dynamic = 'force-dynamic'
@@ -31,7 +39,12 @@ async function probeFirestoreRead(): Promise<Check> {
   let value: Check
 
   if (!projectId) {
-    value = { id: 'datastore', label: 'Datastore', status: 'degraded', detail: 'No Firebase project configured for this deployment.' }
+    value = {
+      id: 'datastore',
+      label: 'Data & balances',
+      status: 'degraded',
+      detail: 'We cannot reach your saved data from this site right now.',
+    }
   } else {
     const started = Date.now()
     try {
@@ -39,19 +52,22 @@ async function probeFirestoreRead(): Promise<Check> {
         `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents/system/maintenance${apiKey ? `?key=${apiKey}` : ''}`,
         { cache: 'no-store', signal: AbortSignal.timeout(2500) },
       )
+      const reachable = res.ok || res.status === 404
       value = {
         id: 'datastore',
-        label: 'Datastore',
-        status: res.ok || res.status === 404 ? 'operational' : 'degraded',
-        detail: res.ok || res.status === 404 ? 'Firestore REST reads are answering.' : `Firestore responded ${res.status}.`,
+        label: 'Data & balances',
+        status: reachable ? 'operational' : 'degraded',
+        detail: reachable
+          ? 'Applications, balances and profiles are being saved and read normally.'
+          : 'Saved data is responding slowly — some screens may take longer than usual.',
         latencyMs: Date.now() - started,
       }
-    } catch (err) {
+    } catch {
       value = {
         id: 'datastore',
-        label: 'Datastore',
+        label: 'Data & balances',
         status: 'outage',
-        detail: `Datastore unreachable (${err instanceof Error ? err.name : 'error'}).`,
+        detail: 'We cannot reach your saved data. Nothing you have earned is lost — please try again shortly.',
         latencyMs: Date.now() - started,
       }
     }
@@ -62,22 +78,22 @@ async function probeFirestoreRead(): Promise<Check> {
 }
 
 async function privilegedWritesCheck(): Promise<Pick<Check, 'label' | 'status' | 'detail'>> {
-  const label = 'Privileged writes'
+  const label = 'Payouts & account changes'
   try {
     const { isFirebaseAdminUsable } = await import('@/lib/firestore-admin')
     return isFirebaseAdminUsable()
       ? {
           label,
           status: 'operational',
-          detail: 'Admin SDK handles moderation, payouts, audit and maintenance persistence.',
+          detail: 'Payout requests and account changes are being processed.',
         }
       : {
           label,
           status: 'degraded',
-          detail: 'FIREBASE_SERVICE_ACCOUNT_JSON is not loaded, so moderation and payout writes are disabled.',
+          detail: 'Payouts are paused while we fix a problem. Money you have already earned is unaffected.',
         }
   } catch {
-    return { label, status: 'degraded', detail: 'Admin SDK could not be initialised in this runtime.' }
+    return { label, status: 'degraded', detail: 'Payouts are paused while we fix a problem. Money you have already earned is unaffected.' }
   }
 }
 
@@ -95,20 +111,19 @@ export async function GET() {
     projectId: env('FIREBASE_PROJECT_ID') || env('NEXT_PUBLIC_FIREBASE_PROJECT_ID'),
     appId: env('FIREBASE_APP_ID') || env('NEXT_PUBLIC_FIREBASE_APP_ID'),
   }
-  const missingFirebaseConfig = Object.entries(firebaseClientConfig)
-    .filter(([, value]) => !value)
-    .map(([key]) => key)
-  const firebaseClientReady = missingFirebaseConfig.length === 0
+  // Which values are missing is an operator question (the console's posture report answers it);
+  // the public feed only reports whether sign-in can work at all.
+  const firebaseClientReady = Object.values(firebaseClientConfig).every(Boolean)
 
   const checks: Check[] = [
     datastore,
     {
       id: 'auth',
-      label: 'Authentication',
+      label: 'Sign-in',
       status: firebaseClientReady ? 'operational' : 'degraded',
       detail: firebaseClientReady
-        ? 'Firebase Auth client configuration is complete; ID tokens are verified server-side for privileged calls.'
-        : `Firebase Auth configuration is incomplete (missing ${missingFirebaseConfig.join(', ')}), so sign-in cannot work.`,
+        ? 'Sign-in and account access are working normally.'
+        : 'Sign-in is unavailable right now. Your account and balance are untouched.',
     },
     {
       id: 'privileged-writes',
@@ -116,47 +131,39 @@ export async function GET() {
     },
     {
       id: 'payments',
-      label: 'Payments',
+      label: 'Training payments',
       status: env('PAYSTACK_SECRET_KEY') ? 'operational' : 'degraded',
       detail: env('PAYSTACK_SECRET_KEY')
-        ? `Paystack ${env('PAYSTACK_SECRET_KEY').startsWith('sk_live') ? 'live' : 'test'} key configured; webhook signatures are always required and amounts are re-checked against the API.`
-        : 'PAYSTACK_SECRET_KEY is missing — training checkout cannot run.',
+        ? 'Training checkout is accepting payments.'
+        : 'Training checkout is temporarily unavailable — if you saw an error, you have not been charged.',
     },
     {
       id: 'identity',
       label: 'ID verification',
       status: env('DIDIT_API_KEY') && env('DIDIT_WORKFLOW_ID') ? (env('DIDIT_WEBHOOK_SECRET') ? 'operational' : 'degraded') : 'degraded',
-      detail: !env('DIDIT_API_KEY')
-        ? 'DIDIT_API_KEY is not set, so KYC sessions run in demo mode.'
-        : !env('DIDIT_WORKFLOW_ID')
-          ? 'Key present but DIDIT_WORKFLOW_ID is unset — no verification flow can start.'
-          : env('DIDIT_WEBHOOK_SECRET')
-            ? 'Didit sessions + signed webhooks configured.'
-            : 'Sessions work but DIDIT_WEBHOOK_SECRET is unset — results cannot be trusted in production.',
+      detail:
+        env('DIDIT_API_KEY') && env('DIDIT_WORKFLOW_ID') && env('DIDIT_WEBHOOK_SECRET')
+          ? 'Identity verification is available.'
+          : 'Identity verification is limited right now. You can complete it later — your account stays open.',
     },
     {
       id: 'email',
-      label: 'Transactional email',
+      label: 'Verification email',
       status: env('RESEND_API_KEY').startsWith('re_') ? (env('EMAIL_FROM') || !production ? 'operational' : 'degraded') : 'degraded',
-      detail: env('RESEND_API_KEY').startsWith('re_')
-        ? env('EMAIL_FROM')
-          ? 'Resend delivers signup verification mail; the link is what marks Firebase Auth verified.'
-          : 'Resend key is set. EMAIL_FROM is empty — using the development sender, which will not reach real inboxes in production.'
-        : 'RESEND_API_KEY is not set — new accounts cannot verify their email.',
-    },
-    {
-      id: 'console',
-      label: 'Admin console',
-      status: (env('ADMIN_SESSION_SECRET') ?? '').length >= 32 ? 'operational' : production ? 'outage' : 'degraded',
       detail:
-        (env('ADMIN_SESSION_SECRET') ?? '').length >= 32
-          ? 'Console enabled with signed, revocable sessions.'
-          : 'ADMIN_SESSION_SECRET missing — the console fails closed.',
+        env('RESEND_API_KEY').startsWith('re_') && (env('EMAIL_FROM') || !production)
+          ? 'Verification and receipt emails are being delivered.'
+          : 'Verification emails may be delayed. You can resend one from the verification screen.',
     },
   ]
 
   if (maintenanceReadable === false && datastore.status === 'operational') {
-    checks.push({ id: 'maintenance-feed', label: 'Maintenance feed', status: 'degraded', detail: 'Using the last known maintenance state.' })
+    checks.push({
+      id: 'maintenance-feed',
+      label: 'Maintenance schedule',
+      status: 'degraded',
+      detail: 'Showing the last confirmed maintenance schedule.',
+    })
   }
   if (maintenance.active) {
     checks.push({
@@ -175,17 +182,15 @@ export async function GET() {
         ? 'degraded'
         : 'operational'
 
-  const heap = process.memoryUsage()
+  // No runtime fingerprint here: the node version, the region and the heap size are operator
+  // detail, and this endpoint is public.
   const payload = {
     ok: overall === 'operational',
     status: overall,
-    service: 'afterworks-web',
     version: env('APP_VERSION') || '0.1.0',
     environment: production ? 'production' : env('NODE_ENV') || 'development',
-    region: env('AWS_REGION') || env('REGION') || 'edge',
     now: new Date().toISOString(),
     uptimeSeconds: Math.floor((Date.now() - STARTED_AT) / 1000),
-    node: process.version,
     checks,
     maintenance: {
       enabled: maintenance.config.enabled,
@@ -200,10 +205,6 @@ export async function GET() {
       estimatedEnd: maintenance.config.estimatedEnd,
       remainingMs: maintenance.remainingMs,
       affectedServices: maintenance.config.affectedServices,
-    },
-    load: {
-      heapUsedMb: Math.round((heap.heapUsed / 1024 / 1024) * 10) / 10,
-      rssMb: Math.round((heap.rss / 1024 / 1024) * 10) / 10,
     },
   }
 

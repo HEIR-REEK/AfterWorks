@@ -250,7 +250,7 @@ export function WithdrawPanel() {
 
           {demo ? (
             <p className="text-[11px] text-muted-foreground">
-              Demo mode — this deployment has no Firebase project, so withdrawals are disabled rather than simulated.
+              Preview — withdrawals are switched off on this site, so a request cannot be sent.
             </p>
           ) : null}
         </form>

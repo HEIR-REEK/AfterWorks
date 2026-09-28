@@ -35,10 +35,12 @@ import { cn } from '@/lib/utils'
  * redacted, cursor-paginated page from the API and every mutation goes through
  * `PATCH /api/admin/users` where it is authorised, reasoned and audited.
  *
- * Every field the drawer reads is normalised before it gets here (`adminUserDetailFromDoc`), so a
- * document that is not really a profile — a `users/{uid}` stub written by a phone claim or a terms
- * acceptance — draws an empty *labelled* row. It used to throw `Cannot read properties of undefined
- * (reading 'availableUsd')` and take the whole console down with it.
+ * Every field this page reads is normalised before it gets here — the drawer through
+ * `adminUserDetailFromDoc`, the table rows through `adminUserRowsFromPayload`, both applied in
+ * `lib/admin.ts` on the way in from the API. So a document that is not really a profile — a
+ * `users/{uid}` stub written by a phone claim or a terms acceptance, or a row from a server that has
+ * not been updated yet — draws an empty *labelled* row. It used to throw `Cannot read properties of
+ * undefined (reading 'availableUsd')` and take the whole console down with it.
  */
 
 type UserDetail = AdminUserDetail

@@ -160,10 +160,12 @@ export const REQUIRED_REASON: ApplicationAction[] = ['reject', 'request_revision
 // The console used to trust whatever the document said. One stub row was enough to take the whole
 // page down: the detail drawer read `user.wallet.availableUsd` on a document with no `wallet` at
 // all, which threw "Cannot read properties of undefined (reading 'availableUsd')" and replaced the
-// directory with the error boundary. So the projection lives here, is applied to *both* the
-// directory page and the detail payload by the server and again by the client, and every value it
-// returns is present and typed. Nothing downstream has to guess, and a half-written record is a
-// blank row with a label — not an outage.
+// directory with the error boundary. So the projection lives here, and both sides run it:
+//   • the server — `toRow()` and `getUserDetail()` in `lib/firestore-admin.ts`;
+//   • the client — `adminUserRowsFromPayload()` and `adminUserDetailFromDoc()` in `lib/admin.ts`,
+//     so a stale or partial response cannot hand the table a row it has to defend itself against.
+// Every value it returns is present and typed. Nothing downstream has to guess, and a half-written
+// record is a blank row with a label — not an outage.
 
 export type AdminUserWalletRow = {
   pendingUsd: number
@@ -279,6 +281,13 @@ export function coerceIsoTimestamp(value: unknown): string | null {
 /**
  * Project one `users/{uid}` document onto the directory row. Tolerates anything: a missing
  * document body, a `wallet` that is a string, a timestamp that is an object.
+ *
+ * The projection is also *idempotent*: run it over a row it already produced and nothing is lost.
+ * That matters because the row is projected on the server and again in the browser
+ * (`adminUserRowsFromPayload`), and a few columns only exist in projected form — the masked payout
+ * handle, the masked phone, the training count. Recomputing those from a projected row would blank
+ * them, which is the same class of bug as the crash this file exists to prevent: the console showing
+ * a wrong number because it trusted the shape in front of it.
  */
 export function adminUserRowFromDoc(
   uid: string,
@@ -308,13 +317,39 @@ export function adminUserRowFromDoc(
     wallet: {
       pendingUsd: asMoney(wallet.pendingUsd),
       availableUsd: asMoney(wallet.availableUsd),
-      payoutNumberMasked: maskPayoutHandle(payoutHandle),
+      // The raw handle is never sent to the browser, so an already-projected row only carries the
+      // masked form — keep it instead of re-masking an empty string into nothing.
+      payoutNumberMasked:
+        maskPayoutHandle(payoutHandle) || asText(wallet.payoutNumberMasked) || asText(doc.payoutNumberMasked),
     },
     country: asText(doc.country).trim() || undefined,
-    phoneMasked: phoneMasked || undefined,
-    paidTrainingsCount: Array.isArray(doc.paidTrainings) ? doc.paidTrainings.length : 0,
+    phoneMasked: phoneMasked || asText(doc.phoneMasked) || undefined,
+    paidTrainingsCount: Array.isArray(doc.paidTrainings)
+      ? doc.paidTrainings.length
+      : asCount(doc.paidTrainingsCount, 0),
     profileIncomplete: !name && !email,
   }
+}
+
+/**
+ * One directory row as it arrived over the wire.
+ *
+ * The server projects rows through `adminUserRowFromDoc`, but the console does not bet a page on
+ * that: during a rolling deploy the browser can be talking to an older server, a response can come
+ * from a cache, and a partial payload leaves `row.wallet` undefined — which is precisely how
+ * `row.wallet.availableUsd` in the members table threw "Cannot read properties of undefined
+ * (reading 'availableUsd')" and replaced the directory with the error boundary. One bad row should
+ * be one blank row.
+ */
+export function adminUserRowFromPayload(value: unknown, fallbackUid = ''): AdminUserRowModel {
+  const record = asRecord(value)
+  return adminUserRowFromDoc(asText(record.uid) || asText(record.id) || fallbackUid, record)
+}
+
+/** A whole directory page: a missing or non-array `rows` is an empty table, never an exception. */
+export function adminUserRowsFromPayload(rows: unknown): AdminUserRowModel[] {
+  if (!Array.isArray(rows)) return []
+  return rows.map((row, index) => adminUserRowFromPayload(row, `row-${index}`))
 }
 
 /**
@@ -369,6 +404,194 @@ export function adminUserDetailFromDoc(raw: unknown): AdminUserDetailModel {
 
 function asTextList(value: unknown): string[] {
   return Array.isArray(value) ? value.map((entry) => asText(entry)).filter(Boolean) : []
+}
+
+/** A count that is allowed to mean "not connected" — `null` is a real answer, `undefined` is not. */
+function asNullableCount(value: unknown): number | null {
+  if (value === null || value === undefined) return null
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value)
+    return Number.isFinite(parsed) ? parsed : null
+  }
+  return null
+}
+
+// ─── Console overview snapshot: one shape, every group present ───────────────
+//
+// The overview page renders nested groups all the way down (`stats.money.availableUsd`,
+// `stats.security.lockouts.locked.length`). Optional chaining on `stats` alone does not protect it:
+// a payload that is present but missing one group throws exactly the way the member table threw on
+// a row with no `wallet`, and the console's front page is the worst place for that to happen.
+//
+// The shape is also not as guaranteed as it looks. `PlatformStats` in `lib/firestore-admin.ts`
+// declares `security.lockouts` as a number, while `/api/admin` replaces it with a snapshot object —
+// the page reads `.locked.length` on the latter. So the snapshot is normalised here, once, and the
+// page reads the result without defending itself.
+
+export type AdminStatsPostureCheck = {
+  id: string
+  label: string
+  severity: 'pass' | 'warn' | 'fail'
+  detail: string
+  fix?: string
+}
+
+export type AdminStatsLockout = { key: string; until: number }
+
+export type AdminPlatformStats = {
+  totals: {
+    users: number
+    kycVerified: number
+    kycPending: number
+    suspended: number
+    activeLast7d: number
+    activeLast24h: number
+    /** `null` = the credential store is not connected to this deployment, which is shown as such. */
+    accounts: number | null
+    accountsDisabled: number | null
+    accountsWithoutProfile: number | null
+  }
+  jobs: { open: number; paused: number; closed: number; totalSlots: number; filledSlots: number }
+  applications: { total: number; underReview: number; active: number; completed: number; rejected: number }
+  money: { liabilityUsd: number; pendingUsd: number; availableUsd: number; revenueKes: number; paidOutKes: number }
+  payments: { successful: number; pending: number; failed: number; last7dVolumeKes: number }
+  security: {
+    failedLogins24h: number
+    lockouts: { tracked: number; totalAttempts: number; totalBlocked: number; locked: AdminStatsLockout[] }
+    posture: AdminStatsPostureCheck[]
+  }
+  activity: { id: string; label: string; at: string; tone: string }[]
+  maintenance: {
+    enabled: boolean
+    title: string
+    message: string
+    estimatedEnd: string | null
+    mode: string
+    updatedBy?: string
+    updatedAt: string | null
+  }
+  maintenanceStatus: { active: boolean; bannerOnly: boolean; retryAfterSec: number; remainingMs: number | null }
+  generatedAt: string
+}
+
+function asSeverity(value: unknown): AdminStatsPostureCheck['severity'] {
+  const text = asText(value).trim()
+  return text === 'pass' || text === 'fail' ? text : 'warn'
+}
+
+function asPostureChecks(value: unknown): AdminStatsPostureCheck[] {
+  if (!Array.isArray(value)) return []
+  return value.map((entry, index) => {
+    const check = asRecord(entry)
+    const fix = asText(check.fix).trim()
+    return {
+      id: asText(check.id).trim() || `check-${index}`,
+      label: asText(check.label).trim() || 'Configuration check',
+      severity: asSeverity(check.severity),
+      detail: asText(check.detail).trim(),
+      ...(fix ? { fix } : {}),
+    }
+  })
+}
+
+/** The `/api/admin` snapshot, coerced. Anything the console reads is present after this. */
+export function normalisePlatformStats(raw: unknown): AdminPlatformStats {
+  const doc = asRecord(raw)
+  const totals = asRecord(doc.totals)
+  const jobs = asRecord(doc.jobs)
+  const applications = asRecord(doc.applications)
+  const money = asRecord(doc.money)
+  const payments = asRecord(doc.payments)
+  const security = asRecord(doc.security)
+  const maintenance = asRecord(doc.maintenance)
+  const maintenanceStatus = asRecord(doc.maintenanceStatus)
+  // `security.lockouts` has been a number and an object in different revisions of the payload; only
+  // the object form carries the addresses currently locked out.
+  const lockouts = asRecord(security.lockouts)
+
+  return {
+    totals: {
+      users: asCount(totals.users, 0),
+      kycVerified: asCount(totals.kycVerified, 0),
+      kycPending: asCount(totals.kycPending, 0),
+      suspended: asCount(totals.suspended, 0),
+      activeLast7d: asCount(totals.activeLast7d, 0),
+      activeLast24h: asCount(totals.activeLast24h, 0),
+      accounts: asNullableCount(totals.accounts),
+      accountsDisabled: asNullableCount(totals.accountsDisabled),
+      accountsWithoutProfile: asNullableCount(totals.accountsWithoutProfile),
+    },
+    jobs: {
+      open: asCount(jobs.open, 0),
+      paused: asCount(jobs.paused, 0),
+      closed: asCount(jobs.closed, 0),
+      totalSlots: asCount(jobs.totalSlots, 0),
+      filledSlots: asCount(jobs.filledSlots, 0),
+    },
+    applications: {
+      total: asCount(applications.total, 0),
+      underReview: asCount(applications.underReview, 0),
+      active: asCount(applications.active, 0),
+      completed: asCount(applications.completed, 0),
+      rejected: asCount(applications.rejected, 0),
+    },
+    money: {
+      liabilityUsd: asMoney(money.liabilityUsd),
+      pendingUsd: asMoney(money.pendingUsd),
+      availableUsd: asMoney(money.availableUsd),
+      revenueKes: asMoney(money.revenueKes),
+      paidOutKes: asMoney(money.paidOutKes),
+    },
+    payments: {
+      successful: asCount(payments.successful, 0),
+      pending: asCount(payments.pending, 0),
+      failed: asCount(payments.failed, 0),
+      last7dVolumeKes: asCount(payments.last7dVolumeKes, 0),
+    },
+    security: {
+      failedLogins24h: asCount(security.failedLogins24h, 0),
+      lockouts: {
+        tracked: asCount(lockouts.tracked, 0),
+        totalAttempts: asCount(lockouts.totalAttempts, 0),
+        totalBlocked: asCount(lockouts.totalBlocked, 0),
+        locked: Array.isArray(lockouts.locked)
+          ? lockouts.locked.map((entry) => {
+              const row = asRecord(entry)
+              return { key: asText(row.key), until: asCount(row.until, 0) }
+            })
+          : [],
+      },
+      posture: asPostureChecks(security.posture),
+    },
+    activity: Array.isArray(doc.activity)
+      ? doc.activity.map((entry, index) => {
+          const row = asRecord(entry)
+          return {
+            id: asText(row.id).trim() || `activity-${index}`,
+            label: asText(row.label).trim() || 'Console action',
+            at: coerceIsoTimestamp(row.at) ?? '',
+            tone: asText(row.tone).trim() || 'neutral',
+          }
+        })
+      : [],
+    maintenance: {
+      enabled: maintenance.enabled === true,
+      title: asText(maintenance.title).trim() || 'Maintenance',
+      message: asText(maintenance.message).trim(),
+      estimatedEnd: coerceIsoTimestamp(maintenance.estimatedEnd),
+      mode: asText(maintenance.mode).trim() || 'banner',
+      ...(asText(maintenance.updatedBy).trim() ? { updatedBy: asText(maintenance.updatedBy).trim() } : {}),
+      updatedAt: coerceIsoTimestamp(maintenance.updatedAt),
+    },
+    maintenanceStatus: {
+      active: maintenanceStatus.active === true,
+      bannerOnly: maintenanceStatus.bannerOnly === true,
+      retryAfterSec: asCount(maintenanceStatus.retryAfterSec, 0),
+      remainingMs: asNullableCount(maintenanceStatus.remainingMs),
+    },
+    generatedAt: coerceIsoTimestamp(doc.generatedAt) ?? new Date(0).toISOString(),
+  }
 }
 
 // ─── Bearer sessions: what a verified ID token is allowed to become ──────────

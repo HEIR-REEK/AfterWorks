@@ -18,6 +18,9 @@ import { useCallback, useEffect, useState } from 'react'
 import { apiFetch, describeError } from '@/lib/client-api'
 import {
   adminUserDetailFromDoc,
+  adminUserRowsFromPayload,
+  normalisePlatformStats,
+  type AdminPlatformStats,
   type AdminUserDetailModel,
   type AdminUserRowModel,
 } from '@/lib/admin-domain'
@@ -227,8 +230,43 @@ export async function terminateAdminSession(): Promise<void> {
 
 // ─── Console data calls (all server-gated) ───────────────────────────────────
 
+/**
+ * The Auth half of a directory row, coerced to what the console renders.
+ *
+ * Only the server can read the credential store, so this is carried across from the response rather
+ * than recomputed — but it is still validated, because a row whose `auth.providers` is not an array
+ * would throw in the drawer exactly the way an unprojected `wallet` throws in the table. `undefined`
+ * means "no Auth summary on this row", which the UI already distinguishes from "no such account".
+ */
+function normaliseAuthState(value: unknown): AdminUserRow['auth'] | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const record = value as Record<string, unknown>
+  return {
+    exists: record.exists === true,
+    disabled: record.disabled === true,
+    emailVerified: record.emailVerified === true,
+    createdAt: typeof record.createdAt === 'string' ? record.createdAt : null,
+    lastSignInAt: typeof record.lastSignInAt === 'string' ? record.lastSignInAt : null,
+    providers: Array.isArray(record.providers) ? record.providers.filter((p): p is string => typeof p === 'string') : [],
+    ...(record.orphaned === true ? { orphaned: true } : {}),
+  }
+}
+
 export const adminApi = {
-  stats: (refresh = false) => apiFetch<Record<string, unknown>>('/api/admin', { query: refresh ? { refresh: 1 } : undefined, timeoutMs: 30_000 }),
+  /**
+   * Console overview snapshot.
+   *
+   * Normalised on the way in (`normalisePlatformStats`): the overview reads nested groups
+   * (`stats.money.availableUsd`, `stats.security.lockouts.locked.length`), so a payload missing one
+   * group used to be a render crash on the console's front page rather than a zero.
+   */
+  stats: async (refresh = false): Promise<AdminPlatformStats> =>
+    normalisePlatformStats(
+      await apiFetch<Record<string, unknown>>('/api/admin', {
+        query: refresh ? { refresh: 1 } : undefined,
+        timeoutMs: 30_000,
+      }),
+    ),
   operatorAction: (body: Record<string, unknown>) =>
     apiFetch<{ ok: boolean; note?: string; removed?: number; revoked?: string; self?: boolean }>('/api/admin', { method: 'PATCH', body }),
   maintenance: () =>
@@ -244,8 +282,42 @@ export const adminApi = {
       '/api/admin/maintenance',
       { method: 'DELETE' },
     ),
-  users: (query: { pageSize?: number; cursor?: string | null; search?: string; state?: string }) =>
-    apiFetch<{ ok: boolean; rows: AdminUserRow[]; nextCursor: string | null; hasMore: boolean; degraded?: string }>('/api/admin/users', { query }),
+  /**
+   * One page of the member directory.
+   *
+   * Rows are projected again here, in the browser, even though the server already projected them:
+   * the table renders `row.wallet.availableUsd`, and a rolling deploy, a cached response or a
+   * partial payload is enough for `row.wallet` to be missing — which is the
+   * "Cannot read properties of undefined (reading 'availableUsd')" crash that used to replace the
+   * whole console with the error boundary. The Auth enrichment is carried across rather than
+   * recomputed, because only the server can see the credential store.
+   */
+  users: async (query: {
+    pageSize?: number
+    cursor?: string | null
+    search?: string
+    state?: string
+  }): Promise<{ ok: boolean; rows: AdminUserRow[]; nextCursor: string | null; hasMore: boolean; degraded?: string }> => {
+    const data = await apiFetch<{
+      ok?: boolean
+      rows?: unknown
+      nextCursor?: string | null
+      hasMore?: boolean
+      degraded?: string
+    }>('/api/admin/users', { query })
+    const wire = Array.isArray(data.rows) ? data.rows : []
+    const rows: AdminUserRow[] = adminUserRowsFromPayload(wire).map((row, index) => {
+      const auth = normaliseAuthState((wire[index] as { auth?: unknown } | null | undefined)?.auth)
+      return auth ? { ...row, auth } : row
+    })
+    return {
+      ok: data.ok === true,
+      rows,
+      nextCursor: typeof data.nextCursor === 'string' ? data.nextCursor : null,
+      hasMore: data.hasMore === true,
+      ...(typeof data.degraded === 'string' ? { degraded: data.degraded } : {}),
+    }
+  },
   /**
    * One member's detail payload.
    *

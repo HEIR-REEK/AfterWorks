@@ -283,6 +283,59 @@ test('a referrer who is no longer in good standing is not paid', async () => {
   assert.equal(db.read('wallet_ledger/referral_bonus_u1'), undefined)
 })
 
+// The decline above used to be completely silent: no ledger row, no notification, and the referral
+// document left looking exactly like one still waiting on the referred member's profile. The
+// referrer's panel then said "awaiting profile" forever, with nothing on the site naming the thing
+// that was actually holding the money — their own unfinished verification.
+test('a decline is recorded on the referral so the panel can name the blocker', async () => {
+  const db = new FakeFirestore({
+    ...REFERRAL_SEED,
+    'users/ref-1': { uid: 'ref-1', accountState: 'active', kycVerified: false, wallet: { pendingUsd: 2 } },
+  })
+  const result = await saveMemberProfile('u1', COMPLETING_SAVE, { db: asDb(db) })
+
+  assert.equal(result.releasedReferral, null)
+  assert.equal((db.read('users/ref-1')?.wallet as Doc).pendingUsd, 2)
+  assert.equal(db.read('wallet_ledger/referral_bonus_u1'), undefined)
+  // Still pending — but no longer unexplained.
+  assert.equal(db.read('referrals/u1')?.status, 'pending')
+  const heldReason = String(db.read('referrals/u1')?.heldReason ?? '')
+  assert.match(heldReason, /identity verification/i)
+  // The referred member's own profile save still succeeded; only the referrer's money is held.
+  assert.equal(result.completion.complete, true)
+})
+
+test('a restricted referrer is told which state is holding the money', async () => {
+  const db = new FakeFirestore({
+    ...REFERRAL_SEED,
+    'users/ref-1': { uid: 'ref-1', accountState: 'on_hold', kycVerified: true, wallet: { pendingUsd: 2 } },
+  })
+  await saveMemberProfile('u1', COMPLETING_SAVE, { db: asDb(db) })
+
+  const heldReason = String(db.read('referrals/u1')?.heldReason ?? '')
+  assert.match(heldReason, /on hold/i)
+  assert.doesNotMatch(heldReason, /undefined|NaN/)
+})
+
+test('a released bonus clears the note a declined release left behind', async () => {
+  const db = new FakeFirestore({
+    ...REFERRAL_SEED,
+    'users/ref-1': { uid: 'ref-1', accountState: 'active', kycVerified: false, wallet: { pendingUsd: 2 } },
+    'referrals/u1': { ...REFERRAL_SEED['referrals/u1'], heldReason: 'Waiting on your identity verification.' },
+  })
+  // First save: declined, note recorded.
+  await saveMemberProfile('u1', COMPLETING_SAVE, { db: asDb(db) })
+  assert.match(String(db.read('referrals/u1')?.heldReason ?? ''), /identity verification/i)
+
+  // The referrer verifies; the next save for the same referred member releases the bonus.
+  db.docs.set('users/ref-1', { uid: 'ref-1', accountState: 'active', kycVerified: true, wallet: { pendingUsd: 2 } })
+  const result = await saveMemberProfile('u1', { bio: 'A small edit to trigger the release.' }, { db: asDb(db) })
+
+  assert.deepEqual(result.releasedReferral, { referrerName: 'Amina Otieno', bonusUsd: 3 })
+  assert.equal(db.read('referrals/u1')?.status, 'qualified')
+  assert.equal(db.read('referrals/u1')?.heldReason, null)
+})
+
 // ─── The rule, for every other transaction in the codebase ───────────────────
 
 test('no transaction in the codebase reads after it writes', () => {

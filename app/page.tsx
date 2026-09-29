@@ -12,6 +12,7 @@ import { useAfterWorks } from '@/components/afterworks-provider'
 import { JobCard } from '@/components/job-card'
 import { StatusBadge } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
+import { BalanceToggle, MaskedValue } from '@/components/balance-privacy'
 import {
   APPLICATION_LABELS,
   APPLICATION_TONE,
@@ -37,6 +38,8 @@ export default function DashboardPage() {
       value: formatUsd(payouts.withdrawableUsd),
       sub: payouts.heldUsd > 0 ? `${formatUsd(payouts.heldUsd)} held by a request` : `≈ ${formatKes(payouts.withdrawableUsd)}`,
       icon: WalletIcon,
+      money: true,
+      subMoney: true,
     },
     {
       label: 'Pending (clearing)',
@@ -45,12 +48,16 @@ export default function DashboardPage() {
         ? `Next clears ${new Date(walletMeta.nextClearingAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}`
         : `Clears after ${walletMeta.clearingHours}h`,
       icon: CheckCircle2,
+      money: true,
+      subMoney: false,
     },
     {
       label: 'Quality score',
       value: `${worker.qualityScore}`,
       sub: 'Good standing',
       icon: Star,
+      money: false,
+      subMoney: false,
     },
   ]
 
@@ -111,21 +118,32 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            {stats.map((s) => {
-              const Icon = s.icon
-              return (
-                <div
-                  key={s.label}
-                  className="rounded-xl bg-primary-foreground/10 p-4 backdrop-blur first:col-span-2"
-                >
-                  <Icon className="size-5 text-primary-foreground/70" />
-                  <p className="mt-3 font-mono text-2xl font-semibold">{s.value}</p>
-                  <p className="text-xs text-primary-foreground/70">{s.label}</p>
-                  <p className="mt-0.5 text-xs text-primary-foreground/60">{s.sub}</p>
-                </div>
-              )
-            })}
+          <div className="flex flex-col gap-3">
+            {/* The switch that hides every balance on the site, so the numbers can be covered
+                without hunting for it in a menu. */}
+            <div className="flex justify-end">
+              <BalanceToggle className="bg-primary-foreground/10 text-primary-foreground hover:bg-primary-foreground/20 hover:text-primary-foreground" />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              {stats.map((s) => {
+                const Icon = s.icon
+                return (
+                  <div
+                    key={s.label}
+                    className="rounded-xl bg-primary-foreground/10 p-4 backdrop-blur first:col-span-2"
+                  >
+                    <Icon className="size-5 text-primary-foreground/70" />
+                    <p className="mt-3 font-mono text-2xl font-semibold">
+                      {s.money ? <MaskedValue value={s.value} /> : s.value}
+                    </p>
+                    <p className="text-xs text-primary-foreground/70">{s.label}</p>
+                    <p className="mt-0.5 text-xs text-primary-foreground/60">
+                      {s.subMoney ? <MaskedValue value={s.sub} /> : s.sub}
+                    </p>
+                  </div>
+                )
+              })}
+            </div>
           </div>
         </div>
       </section>

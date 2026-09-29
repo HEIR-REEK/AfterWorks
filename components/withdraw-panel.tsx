@@ -31,6 +31,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { StatusBadge } from '@/components/status-badge'
 import { useAfterWorks } from '@/components/afterworks-provider'
+import { KesMoney, Money } from '@/components/balance-privacy'
 import { formatKesValue, formatUsd } from '@/lib/afterworks-data'
 import {
   PAYOUT_STATUS_SHORT,
@@ -53,7 +54,7 @@ function formatWhen(iso: string | null | undefined): string {
 export function WithdrawPanel() {
   const { wallet, walletMeta, payouts, requestPayout, cancelPayout, pending, mode, refreshPayouts } = useAfterWorks()
   const [amount, setAmount] = useState('')
-  const [notice, setNotice] = useState<{ tone: 'success' | 'error' | 'info'; text: string } | null>(null)
+  const [notice, setNotice] = useState<{ tone: 'success' | 'error' | 'info'; text: React.ReactNode } | null>(null)
 
   const quote = useMemo(
     () =>
@@ -101,7 +102,11 @@ export function WithdrawPanel() {
       setAmount('')
       setNotice({
         tone: 'success',
-        text: `Request received for ${formatUsd(validation.amountUsd)}. The amount is held until it is paid out.`,
+        text: (
+          <>
+            Request received for <Money value={validation.amountUsd} />. The amount is held until it is paid out.
+          </>
+        ),
       })
     } else {
       setNotice({ tone: 'error', text: result.error || 'The request could not be submitted.' })
@@ -135,8 +140,12 @@ export function WithdrawPanel() {
         </div>
         <div className="text-right">
           <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Ready to withdraw</p>
-          <p className="font-mono text-xl font-semibold tabular-nums">{formatUsd(quote.withdrawableUsd)}</p>
-          <p className="text-[11px] text-muted-foreground">≈ {formatKesValue(quote.withdrawableKes)}</p>
+          <p className="font-mono text-xl font-semibold tabular-nums">
+            <Money value={quote.withdrawableUsd} />
+          </p>
+          <p className="text-[11px] text-muted-foreground">
+            ≈ <KesMoney value={quote.withdrawableKes} />
+          </p>
         </div>
       </header>
 
@@ -148,19 +157,25 @@ export function WithdrawPanel() {
               <p className="flex items-center justify-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                 <Hourglass className="size-3" /> Pending
               </p>
-              <p className="mt-1 font-mono text-sm font-semibold tabular-nums">{formatUsd(wallet.pendingUsd)}</p>
+              <p className="mt-1 font-mono text-sm font-semibold tabular-nums">
+                <Money value={wallet.pendingUsd} />
+              </p>
             </div>
             <div className="rounded-xl border border-border bg-muted/25 p-2.5">
               <p className="flex items-center justify-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                 <Clock className="size-3" /> Held
               </p>
-              <p className="mt-1 font-mono text-sm font-semibold tabular-nums">{formatUsd(quote.heldUsd)}</p>
+              <p className="mt-1 font-mono text-sm font-semibold tabular-nums">
+                <Money value={quote.heldUsd} />
+              </p>
             </div>
             <div className="rounded-xl border border-primary/30 bg-primary/[0.06] p-2.5">
               <p className="flex items-center justify-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-primary">
                 <CheckCircle2 className="size-3" /> Available
               </p>
-              <p className="mt-1 font-mono text-sm font-semibold tabular-nums">{formatUsd(quote.withdrawableUsd)}</p>
+              <p className="mt-1 font-mono text-sm font-semibold tabular-nums">
+                <Money value={quote.withdrawableUsd} />
+              </p>
             </div>
           </div>
 
@@ -193,9 +208,15 @@ export function WithdrawPanel() {
               </Button>
             </div>
             <span id="withdraw-help" className="mt-1 block text-[11px] text-muted-foreground">
-              {amount && validation.ok
-                ? `≈ ${formatKesValue(quote.amountKes)} at today's rate (${quote.usdToKes.toFixed(2)} KES/USD).`
-                : `Minimum ${formatUsd(minUsd)}. You can request up to ${formatUsd(quote.withdrawableUsd)} right now.`}
+              {amount && validation.ok ? (
+                <>
+                  ≈ <KesMoney value={quote.amountKes} /> at today&apos;s rate ({quote.usdToKes.toFixed(2)} KES/USD).
+                </>
+              ) : (
+                <>
+                  Minimum {formatUsd(minUsd)}. You can request up to <Money value={quote.withdrawableUsd} /> right now.
+                </>
+              )}
             </span>
           </label>
 
@@ -262,7 +283,9 @@ export function WithdrawPanel() {
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <p className="text-xs font-semibold">Open request</p>
-                  <p className="mt-0.5 font-mono text-lg font-semibold tabular-nums">{formatUsd(openPayout.amountUsd)}</p>
+                  <p className="mt-0.5 font-mono text-lg font-semibold tabular-nums">
+                    <Money value={openPayout.amountUsd} />
+                  </p>
                   <p className="text-[11px] text-muted-foreground">
                     ≈ {formatKesValue(openPayout.amountKes)} · requested {formatWhen(openPayout.requestedAt)}
                   </p>
@@ -309,7 +332,9 @@ export function WithdrawPanel() {
               {payouts.requests.map((row) => (
                 <li key={row.id} className="flex items-center justify-between gap-3 p-3">
                   <div className="min-w-0">
-                    <p className="font-mono text-sm font-semibold tabular-nums">{formatUsd(row.amountUsd)}</p>
+                    <p className="font-mono text-sm font-semibold tabular-nums">
+                      <Money value={row.amountUsd} />
+                    </p>
                     <p className="truncate text-[11px] text-muted-foreground">
                       {formatWhen(row.requestedAt)}
                       {row.payoutReference ? ` · ref ${row.payoutReference}` : ''}

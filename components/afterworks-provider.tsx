@@ -34,6 +34,7 @@ import {
   getJobSnapshot,
 } from '@/lib/firestore'
 import { profileCompletion, type ProfileCompletion } from '@/lib/profile-completion'
+import { walletBalancesChanged } from '@/lib/wallet-sync'
 import { guessCountryFromE164 } from '@/lib/countries'
 import type { PayoutDestinationState, PayoutRequestRow, WalletEntry, WelcomeBonusState } from '@/lib/payouts'
 import {
@@ -414,6 +415,19 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
   )
 
   // ── Profile + wallet ────────────────────────────────────────────────────────────
+
+  /**
+   * The live listener keeps `wallet` in step with the raw Firestore document, but the numbers the
+   * UI actually leads with — withdrawable, held, next clearing, statement lines — are *derived* by
+   * `/api/wallet`, which is also the only place that runs the settlement pass. So whenever the
+   * document's own balances move, the snapshot has to be rebuilt rather than trusted: a referral
+   * bonus, a staff grant or a matured clearing entry all land in Firestore first and are only
+   * reflected in the dashboard once this re-read happens.
+   */
+  const refreshWalletRef = useRef<() => Promise<void>>(() => Promise.resolve())
+  const lastWalletRef = useRef<{ pendingUsd: number; availableUsd: number } | null>(null)
+  const walletResyncTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
   useEffect(() => {
     if (!user) {
       setWorker(seedWorker())
@@ -425,6 +439,7 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
       setPromptDismissed(false)
       setReward(null)
       setProfileLoaded(true)
+      lastWalletRef.current = null
       return
     }
 
@@ -435,6 +450,22 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
         setWallet(userDoc.wallet)
         setProfileDoc(userDoc.raw)
         setPaidTrainings((prev) => Array.from(new Set([...prev, ...userDoc.paidTrainings])))
+
+        const nextWallet = { pendingUsd: userDoc.wallet.pendingUsd, availableUsd: userDoc.wallet.availableUsd }
+        const previousWallet = lastWalletRef.current
+        lastWalletRef.current = nextWallet
+        // `walletBalancesChanged` also holds the baseline rule: the first observation only records
+        // where we started, otherwise every mount would fire a second wallet read on top of the one
+        // the snapshot effect already issues.
+        if (walletBalancesChanged(previousWallet, nextWallet)) {
+          if (walletResyncTimer.current) clearTimeout(walletResyncTimer.current)
+          // Debounced: a single save can move both figures, and a burst of edits should not
+          // turn into a burst of wallet reads.
+          walletResyncTimer.current = setTimeout(() => {
+            walletResyncTimer.current = null
+            void refreshWalletRef.current()
+          }, 350)
+        }
       }
       setProfileLoaded(true)
     }
@@ -448,7 +479,13 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
       .then((doc) => mapUserDoc(doc, user).then(applyDocument))
       .catch(() => setProfileLoaded(true))
 
-    return () => unsubscribe()
+    return () => {
+      unsubscribe()
+      if (walletResyncTimer.current) {
+        clearTimeout(walletResyncTimer.current)
+        walletResyncTimer.current = null
+      }
+    }
   }, [user])
 
   // ── Wallet snapshot (server-derived) ────────────────────────────────────────────
@@ -502,6 +539,9 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
       console.warn('[wallet] refresh failed:', describeError(err))
     }
   }, [user, configured])
+
+  // Keeps the live-listener effect above pointed at the current closure without re-subscribing.
+  refreshWalletRef.current = refreshWallet
 
   useEffect(() => {
     void refreshWallet()

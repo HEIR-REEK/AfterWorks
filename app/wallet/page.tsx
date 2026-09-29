@@ -16,7 +16,8 @@ import { ArrowDownLeft, ArrowUpRight, Banknote, CircleDollarSign, Clock, Hourgla
 import { WithdrawPanel } from '@/components/withdraw-panel'
 import { useAfterWorks } from '@/components/afterworks-provider'
 import { Button } from '@/components/ui/button'
-import { formatKesValue, formatUsd } from '@/lib/afterworks-data'
+import { BalanceToggle, Money } from '@/components/balance-privacy'
+import { formatUsd } from '@/lib/afterworks-data'
 import { site } from '@/lib/site'
 import { cn } from '@/lib/utils'
 
@@ -47,6 +48,8 @@ export default function WalletPage() {
             Earnings, clearing, withdrawals and your payout destination — all in one place.
           </p>
         </div>
+        {/* Same switch as the dashboard: one preference covers every balance on the site. */}
+        <BalanceToggle />
         {worker.kycVerified ? (
           <span className="inline-flex items-center gap-1.5 rounded-full bg-success/12 px-3 py-1 text-xs font-medium text-success">
             <ShieldCheck className="size-3.5" />
@@ -77,15 +80,19 @@ export default function WalletPage() {
             <CircleDollarSign className="size-3.5" />
             Withdrawable
           </p>
-          <p className="mt-1.5 font-mono text-2xl font-semibold tabular-nums">{formatUsd(payouts.withdrawableUsd)}</p>
-          <p className="mt-0.5 text-[11px] text-muted-foreground">≈ {formatKesValue(payouts.withdrawableKes)}</p>
+          <p className="mt-1.5 font-mono text-2xl font-semibold tabular-nums">
+            <Money value={payouts.withdrawableUsd} />
+          </p>
+          <p className="mt-0.5 text-[11px] text-muted-foreground">≈ <Money value={payouts.withdrawableKes} /></p>
         </div>
         <div className="rounded-2xl border border-border bg-card p-4">
           <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
             <Hourglass className="size-3.5" />
             Pending (clearing)
           </p>
-          <p className="mt-1.5 font-mono text-2xl font-semibold tabular-nums">{formatUsd(wallet.pendingUsd)}</p>
+          <p className="mt-1.5 font-mono text-2xl font-semibold tabular-nums">
+            <Money value={wallet.pendingUsd} />
+          </p>
           <p className="mt-0.5 text-[11px] text-muted-foreground">
             {walletMeta.nextClearingAt ? `Next clears ${new Date(walletMeta.nextClearingAt).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}` : `Clears after ${walletMeta.clearingHours}h`}
           </p>
@@ -95,7 +102,9 @@ export default function WalletPage() {
             <Clock className="size-3.5" />
             Held by a request
           </p>
-          <p className="mt-1.5 font-mono text-2xl font-semibold tabular-nums">{formatUsd(payouts.heldUsd)}</p>
+          <p className="mt-1.5 font-mono text-2xl font-semibold tabular-nums">
+            <Money value={payouts.heldUsd} />
+          </p>
           <p className="mt-0.5 text-[11px] text-muted-foreground">
             {payouts.openPayout ? 'Claimed by your open payout request' : 'Nothing is held right now'}
           </p>
@@ -106,7 +115,7 @@ export default function WalletPage() {
             Welcome reward
           </p>
           <p className={cn('mt-1.5 font-mono text-2xl font-semibold tabular-nums', bonusGranted && 'text-success')}>
-            {bonusGranted ? formatUsd(payouts.welcomeBonus.amountUsd) : '—'}
+            {bonusGranted ? <Money value={payouts.welcomeBonus.amountUsd} /> : '—'}
           </p>
           <p className="mt-0.5 text-[11px] text-muted-foreground">
             {bonusGranted
@@ -124,7 +133,7 @@ export default function WalletPage() {
             <Sparkles className="mt-0.5 size-4 shrink-0 text-primary" />
             <div>
               <p className="text-sm font-semibold">
-                {formatUsd(payouts.welcomeBonus.amountUsd)} waiting for a 100% profile
+                <Money value={payouts.welcomeBonus.amountUsd} /> waiting for a 100% profile
               </p>
               <p className="mt-0.5 text-xs text-muted-foreground">
                 Still missing: {onboarding.completion.missingLabels.join(', ')}.
@@ -195,7 +204,7 @@ export default function WalletPage() {
                   <div className="shrink-0 text-right">
                     <p className={cn('font-mono text-sm font-semibold tabular-nums', outgoing ? 'text-foreground' : 'text-success')}>
                       {outgoing ? '−' : '+'}
-                      {formatUsd(entry.amountUsd)}
+                      <Money value={entry.amountUsd} />
                     </p>
                     <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{entry.status}</p>
                   </div>

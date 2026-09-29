@@ -31,6 +31,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { StatusBadge } from '@/components/status-badge'
 import { useAuth } from '@/components/firebase-auth-provider'
+import { BalanceToggle, Money } from '@/components/balance-privacy'
 import { formatUsd } from '@/lib/afterworks-data'
 import { authedFetch, describeError } from '@/lib/client-api'
 import { site } from '@/lib/site'
@@ -61,6 +62,21 @@ function ReferralRowItem({ row }: { row: ReferralRow }) {
           Signed up {when(row.createdAt)}
           {qualified ? ` · qualified ${when(row.qualifiedAt)}` : ' · has not finished their profile'}
         </p>
+        {/* A pending row that is *not* waiting on the referred member's profile. Saying so is the
+            whole point: the release path records the blocker when it declines, so the panel can name
+            it instead of repeating "awaiting profile" forever. */}
+        {!qualified && row.heldReason && (
+          <p className="mt-1.5 flex items-start gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-[11px] leading-relaxed text-amber-900 dark:border-amber-700 dark:bg-amber-950/50 dark:text-amber-200">
+            <AlertCircle className="mt-0.5 size-3 shrink-0" />
+            <span>
+              {row.heldReason}{' '}
+              <Link href="/profile" className="font-medium underline underline-offset-2">
+                Fix it here
+              </Link>
+              .
+            </span>
+          </p>
+        )}
       </div>
       <div className="flex shrink-0 items-center gap-2.5">
         <StatusBadge tone={qualified ? 'success' : 'warning'}>{REFERRAL_STATUS_LABEL[row.status]}</StatusBadge>
@@ -201,7 +217,7 @@ export default function ReferralsPage() {
             <div className="text-right">
               <p className="text-xs text-muted-foreground">Earned to date</p>
               <p className="text-2xl font-semibold tabular-nums text-success sm:text-3xl">
-                {formatUsd(data.stats.earnedUsd)}
+                <Money value={data.stats.earnedUsd} />
               </p>
             </div>
           </div>
@@ -245,15 +261,40 @@ export default function ReferralsPage() {
         <Stat label="Awaiting profile" value={data.stats.pending} icon={Clock} tone="warning" />
         <Stat
           label="Still to earn"
-          value={formatUsd(data.stats.pendingUsd)}
+          value={<Money value={data.stats.pendingUsd} />}
           icon={Gift}
-          hint={`${data.stats.pending} × ${formatUsd(data.bonusUsd)}`}
+          hint={
+            <>
+              {data.stats.pending} × <Money value={data.bonusUsd} />
+            </>
+          }
         />
       </section>
 
-      {/* ── History ──────────────────────────────────────────────────────────── */}
+      {/* Where a paid bonus actually shows up. Members look for referral money in their
+          withdrawable balance; by design it arrives in the pending one first, and the panel
+          should say so rather than leave them wondering whether it ever arrived. */}
+      <p className="flex items-start gap-2 rounded-xl border border-border bg-muted/40 px-3.5 py-2.5 text-xs leading-relaxed text-muted-foreground">
+        <Info className="mt-0.5 size-3.5 shrink-0 text-primary" />
+        <span>
+          A paid bonus is credited to your{' '}
+          <span className="font-medium text-foreground">Pending (clearing)</span> balance and joins your other
+          earnings there. It becomes withdrawable{' '}
+          {data.clearingWindowHours ? `after the ${data.clearingWindowHours}-hour clearing window` : 'once it clears'}
+          {' — '}
+          <Link href="/wallet" className="font-medium text-primary hover:underline">
+            see it in your wallet
+          </Link>
+          .
+        </span>
+      </p>
+
+      {/* ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ */}
       <section className="rounded-2xl border border-border bg-card p-5 shadow-sm">
-        <h2 className="text-base font-semibold tracking-tight">Your referrals</h2>
+        <div className="flex items-start justify-between gap-3">
+          <h2 className="text-base font-semibold tracking-tight">Your referrals</h2>
+          <BalanceToggle />
+        </div>
         <p className="mt-0.5 text-xs text-muted-foreground">
           {REFERRAL_STATUS_HINT.pending}
         </p>
@@ -263,7 +304,7 @@ export default function ReferralsPage() {
             <p className="mt-2 text-sm font-medium">Nobody has used your link yet</p>
             <p className="mx-auto mt-1 max-w-sm text-xs text-muted-foreground">
               Share it with people who would be good at this work. When they sign up with your code and
-              finish their profile, {formatUsd(data.bonusUsd)} lands in your pending balance.
+              finish their profile, <Money value={data.bonusUsd} /> lands in your pending balance.
             </p>
           </div>
         ) : (
@@ -310,10 +351,10 @@ function Stat({
   hint,
 }: {
   label: string
-  value: string | number
+  value: React.ReactNode
   icon: typeof Users
   tone?: 'neutral' | 'success' | 'warning'
-  hint?: string
+  hint?: React.ReactNode
 }) {
   return (
     <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">

@@ -134,6 +134,15 @@ export type ReferralRow = {
   qualifiedAt: string | null
   /** Ledger row that holds the money, so a duplicate release is a no-op rather than a second credit. */
   ledgerId: string | null
+  /**
+   * Why a still-pending row has not paid out, in the referrer's words, or null.
+   *
+   * Set by the release path when the referred profile *is* complete but the bonus could not be
+   * credited — the referrer was not verified or their account was restricted at that moment.
+   * Without it the panel would keep saying "awaiting profile" forever, which is simply untrue and
+   * leaves the referrer with no way to know what to fix.
+   */
+  heldReason: string | null
 }
 
 export type ReferralStats = {
@@ -170,6 +179,11 @@ export type ReferralDashboard = {
   /** Why the code cannot be shared yet, phrased for the member. Null when it is ready to use. */
   blockedReason: string | null
   canShare: boolean
+  /**
+   * How long a qualified bonus sits in the pending balance before it becomes withdrawable. Shown
+   * next to the totals so "where is my money" has an answer that is not "wait and see".
+   */
+  clearingWindowHours: number
   asOf: string
 }
 

@@ -266,6 +266,16 @@ export type StagedReferralBonus = {
   applied: boolean
   referrerUid: string | null
   referrerName: string
+  /**
+   * Why the bonus was *not* released, in the referrer's words, or null when it was (or when there
+   * is nothing to report).
+   *
+   * The decline used to be silent: `applied: false`, no ledger row, no notification, and the
+   * referral document left looking exactly like one that is still waiting on the referred member's
+   * profile. A referrer who had not finished their own verification would watch "awaiting profile"
+   * forever with no way to learn that their own KYC was the thing holding the money.
+   */
+  heldReason: string | null
   /** Empty unless the bonus is being released by this call. */
   writes: StagedWrite[]
 }
@@ -301,26 +311,63 @@ export async function stageReferralBonusForCompletedProfile(
   // transaction instead of needing a second one.
   const referralRef = db.collection('referrals').doc(referredUid)
   const referralSnap = await tx.get(referralRef)
-  if (!referralSnap.exists) return { applied: false, referrerUid: null, referrerName: '', writes: [] }
+  if (!referralSnap.exists) return { applied: false, referrerUid: null, referrerName: '', heldReason: null, writes: [] }
 
   const referral = (referralSnap.data() ?? {}) as Record<string, unknown>
   const referrerName = String(referral.referrerName ?? '')
   // Already qualified. Re-running the save must not pay twice.
   if (referral.status === 'qualified') {
-    return { applied: false, referrerUid: String(referral.referrerUid ?? ''), referrerName, writes: [] }
+    return {
+      applied: false,
+      referrerUid: String(referral.referrerUid ?? ''),
+      referrerName,
+      heldReason: null,
+      writes: [],
+    }
   }
 
   const referrerUid = String(referral.referrerUid ?? '')
-  if (!referrerUid || referrerUid === referredUid) return { applied: false, referrerUid: null, referrerName, writes: [] }
+  if (!referrerUid || referrerUid === referredUid) {
+    return { applied: false, referrerUid: null, referrerName, heldReason: null, writes: [] }
+  }
 
   // The referrer must still exist and still be in good standing at the moment of release. A
   // referrer suspended after the signup does not get paid for it.
   const referrerRef = db.collection('users').doc(referrerUid)
   const referrerSnap = await tx.get(referrerRef)
-  if (!referrerSnap.exists) return { applied: false, referrerUid: null, referrerName, writes: [] }
+  if (!referrerSnap.exists) return { applied: false, referrerUid: null, referrerName, heldReason: null, writes: [] }
   const referrer = (referrerSnap.data() ?? {}) as Record<string, unknown>
-  if (String(referrer.accountState ?? 'active') !== 'active') return { applied: false, referrerUid: null, referrerName, writes: [] }
-  if (referrer.kycVerified !== true) return { applied: false, referrerUid: null, referrerName, writes: [] }
+
+  // The referred member's profile *is* complete at this point — the caller only reaches here when
+  // it is. So a decline here is the referrer's own state, and it has to be said out loud rather
+  // than folded into "awaiting profile".
+  if (String(referrer.accountState ?? 'active') !== 'active') {
+    const state = String(referrer.accountState ?? 'restricted').replace(/_/g, ' ')
+    return {
+      applied: false,
+      referrerUid: null,
+      referrerName,
+      heldReason: `This bonus is on hold: your account is ${state}, so no referral credit can be paid out right now.`,
+      writes: [
+        {
+          ref: referralRef,
+          data: { heldReason: `This bonus is on hold: your account is ${state}, so no referral credit can be paid out right now.`, heldAt: new Date().toISOString() },
+          options: { merge: true },
+        },
+      ],
+    }
+  }
+  if (referrer.kycVerified !== true) {
+    const reason =
+      'This bonus is waiting on you, not on them: your own identity verification has to be complete before referral credit can be paid.'
+    return {
+      applied: false,
+      referrerUid: null,
+      referrerName,
+      heldReason: reason,
+      writes: [{ ref: referralRef, data: { heldReason: reason, heldAt: new Date().toISOString() }, options: { merge: true } }],
+    }
+  }
 
   const wallet = asRecord(referrer.wallet)
   const now = new Date().toISOString()
@@ -332,6 +379,7 @@ export async function stageReferralBonusForCompletedProfile(
     applied: true,
     referrerUid,
     referrerName,
+    heldReason: null,
     writes: [
       // 1. The referrer's pending balance.
       {
@@ -370,6 +418,9 @@ export async function stageReferralBonusForCompletedProfile(
           bonusUsd: bonus,
           qualifiedAt: now,
           ledgerId,
+          // Clears the "waiting on your verification" note left by an earlier declined release.
+          heldReason: null,
+          heldAt: null,
         },
         options: { merge: true },
       },
@@ -399,6 +450,9 @@ function mapReferral(id: string, data: Record<string, unknown>): ReferralRow {
     createdAt: String(data.createdAt ?? ''),
     qualifiedAt: data.qualifiedAt ? String(data.qualifiedAt) : null,
     ledgerId: data.ledgerId ? String(data.ledgerId) : null,
+    // Only meaningful while the row is still pending: a qualified row keeps whatever note was last
+    // written, and showing it would contradict the badge next to it.
+    heldReason: status === 'pending' && data.heldReason ? String(data.heldReason) : null,
   }
 }
 
@@ -443,6 +497,7 @@ export async function getReferralDashboard(uid: string): Promise<ReferralDashboa
     rows,
     blockedReason: blocked.reason,
     canShare: blocked.reason === null,
+    clearingWindowHours: site.clearingWindowHours,
     asOf: new Date().toISOString(),
   }
 }

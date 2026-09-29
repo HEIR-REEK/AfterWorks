@@ -512,7 +512,7 @@ function UsersPageInner() {
                     Grant welcome reward
                   </Button>
                 ) : null}
-                {(isOwner || account?.disabled) && (
+                {(isOwner || account?.disabled) && account?.exists !== false && (
                   <Button size="sm" variant="outline" className="gap-1.5" disabled={busy || account === null} onClick={() => setConfirm({
                     action: account?.disabled ? 'credential-enable' : 'credential-disable',
                     title: account?.disabled ? 'Re-enable sign-in' : 'Disable sign-in credential',
@@ -527,17 +527,19 @@ function UsersPageInner() {
                     {account?.disabled ? 'Enable sign-in' : 'Disable sign-in'}
                   </Button>
                 )}
-                <Button size="sm" variant="outline" className="gap-1.5" disabled={busy} onClick={() => setConfirm({
-                  action: 'temp-password',
-                  title: 'Issue a temporary password',
-                  description: 'For a locked-out member who cannot receive a reset email. The password is shown once, is never stored, and this action is audited. Members who can still read their inbox should use "Forgot password" on the sign-in page instead.',
-                  confirmLabel: 'Generate password',
-                  tone: 'destructive',
-                  minReasonLength: 4,
-                })}>
-                  <KeyRound className="size-3.5" />
-                  Temporary password
-                </Button>
+                {account?.exists !== false && (
+                  <Button size="sm" variant="outline" className="gap-1.5" disabled={busy} onClick={() => setConfirm({
+                    action: 'temp-password',
+                    title: 'Issue a temporary password',
+                    description: 'For a locked-out member who cannot receive a reset email. The password is shown once, is never stored, and this action is audited. Members who can still read their inbox should use "Forgot password" on the sign-in page instead.',
+                    confirmLabel: 'Generate password',
+                    tone: 'destructive',
+                    minReasonLength: 4,
+                  })}>
+                    <KeyRound className="size-3.5" />
+                    Temporary password
+                  </Button>
+                )}
                 <Button size="sm" variant="outline" className="gap-1.5" disabled={busy} onClick={() => setConfirm({
                   action: 'clear-lockout',
                   title: 'Clear sign-in lockouts',
@@ -582,9 +584,9 @@ function UsersPageInner() {
                   </Button>
                 )}
                 {isOwner && (
-                  <Button size="sm" variant="ghost" className="gap-1.5" disabled={busy} onClick={() => setConfirm({ action: 'restrict', title: 'Mark under review', description: 'Keeps the account signed in but holds it for manual review; use instead of suspending when you are still gathering facts.', confirmLabel: 'Set under review', tone: 'destructive' })}>
+                  <Button size="sm" variant="ghost" className="gap-1.5" disabled={busy} onClick={() => setConfirm({ action: 'restrict', title: 'Hold for review', description: 'Keeps the account signed in but holds it for manual review; use instead of suspending when you are still gathering facts.', confirmLabel: 'Hold for review', tone: 'destructive' })}>
                     <CircleSlash className="size-3.5" />
-                    Under review
+                    Hold for review
                   </Button>
                 )}
               </div>
@@ -626,7 +628,11 @@ function UsersPageInner() {
             case 'restore':
               return act({ ...base, action: 'moderate', payload: { accountState: 'active' } })
             case 'restrict':
-              return act({ ...base, action: 'moderate', payload: { accountState: 'under_review' } })
+              // `kyc_on_hold` is the account state that means "held for manual review, still signed
+              // in" — `STATE_HINTS` says so. `under_review` is the *application* status vocabulary
+              // (see ACTION_TO_STATUS in lib/admin-domain.ts); it is not an account state, so
+              // sending it made this button fail with 400 "Unknown account state." every time.
+              return act({ ...base, action: 'moderate', payload: { accountState: 'kyc_on_hold' } })
             case 'delete':
               return act({ ...base, action: 'delete' })
             case 'credential-disable':

@@ -1154,8 +1154,16 @@ export async function listUsersPage(opts: {
     let ref: Query = db.collection('users')
     if (search) {
       ref = ref.orderBy('email').startAt(search).endAt(`${search}\uf8ff`)
-    } else if (state === 'staff') {
+    } else if (state === 'staff' || state === 'admins') {
+      // The console spells this filter "Admins" (`value="admins"` on the users page, and
+      // `state: 'admins'` on the staff page's legacy-grant list); the server used to accept only
+      // 'staff'. The mismatch fell through to the `accountState == state` branch below, which
+      // matched nothing and answered with an empty table and no explanation.
       ref = ref.where('role', '==', 'admin').orderBy(FieldPath.documentId(), 'asc')
+    } else if (state === 'kyc_pending') {
+      ref = ref.where('kycVerified', '==', false).orderBy(FieldPath.documentId(), 'asc')
+    } else if (state === 'restricted') {
+      ref = ref.where('accountState', 'in', ['suspended', 'banned', 'kyc_on_hold']).orderBy(FieldPath.documentId(), 'asc')
     } else if (state && state !== 'all') {
       ref = ref.where('accountState', '==', state).orderBy(FieldPath.documentId(), 'asc')
     } else {
@@ -1184,10 +1192,20 @@ export async function listUsersPage(opts: {
       if (opts.cursor) ref = ref.startAfter(opts.cursor)
       const snap = await ref.get()
       const docs = snap.docs.slice(0, pageSize)
+      // The fallback cannot express the filter server-side, so it has to apply it here. Without
+      // this a degraded read silently served *unfiltered* rows: the operator picked "Admins" and
+      // got everybody, which is worse than the empty table the broken filter used to return.
+      const matchesState = (row: AdminUserRow): boolean => {
+        if (!state || state === 'all') return true
+        if (state === 'staff' || state === 'admins') return row.role === 'admin'
+        if (state === 'kyc_pending') return !row.kycVerified
+        if (state === 'restricted') return ['suspended', 'banned', 'kyc_on_hold'].includes(row.accountState)
+        return row.accountState === state
+      }
       return {
         rows: docs
           .map((d) => toRow(d.id, (d.data() ?? {}) as Record<string, unknown>))
-          .filter((row) => (!search ? true : row.email.toLowerCase().includes(search))),
+          .filter((row) => (!search ? true : row.email.toLowerCase().includes(search)) && matchesState(row)),
         nextCursor: docs.length === pageSize && snap.size > pageSize ? docs[docs.length - 1].id : null,
         hasMore: snap.size > pageSize,
         pageSize,
@@ -1220,7 +1238,7 @@ export async function getUserDetail(uid: string): Promise<AdminUserDetail | null
   return adminUserDetailFromDoc({ ...(snap.data() ?? {}), uid: snap.id }) as AdminUserDetail
 }
 
-const ADMIN_MUTABLE_USER_FIELDS = new Set([
+export const ADMIN_MUTABLE_USER_FIELDS = new Set([
   'name',
   'location',
   'qualityScore',
@@ -1234,6 +1252,13 @@ const ADMIN_MUTABLE_USER_FIELDS = new Set([
   'isAdmin',
   'kycStatus',
   'kycRejectionReason',
+  // Written by the console's moderation and deletion actions (`PATCH /api/admin/users`) and read
+  // straight back by the detail drawer's "Moderation note" banner and the retention job's
+  // `deletedAt` stamp. Both were absent here, so `adminUpdateUser` dropped them without a word:
+  // the operator typed a reason, the member was notified with it, the audit log carried it — and
+  // the profile it was meant to explain kept none of it.
+  'moderationReason',
+  'deletedAt',
 ])
 
 export async function adminUpdateUser(
@@ -1318,6 +1343,34 @@ function authOrNull(): Auth | null {
     console.warn('[FirestoreAdmin] Firebase Auth unavailable:', err instanceof Error ? err.message : err)
     return null
   }
+}
+
+/**
+ * "There is no such Firebase Auth account" — read from the error *code*, never from the prose.
+ *
+ * This is the fix for a whole family of wrong answers. The old checks matched the message against
+ * `/USER_NOT_FOUND|no such user|uid-not-found/`, but Firebase's real message is
+ * "There is no user record corresponding to the provided identifier." (or "...the provided
+ * email.") — which contains none of those strings. So a credential that simply does not exist was
+ * classified as a generic `auth_write_failed`, which the console surfaces as
+ * **502 "The account state could not be changed."** — a Bad Gateway for what is really a 404.
+ *
+ * The consequence was worse than the status code. `hardDeleteAccount()` deleted the profile
+ * document *before* the credential, so erasing one of the stub profiles this module itself
+ * documents ("a phone claim, a terms acceptance, an interrupted write") reported
+ * `partial_delete` → 502, while the profile was already gone. Every retry then answered
+ * 404 "No such user." and the orphaned credential could never be reached from the console again.
+ *
+ * `err.code` is the stable contract (`auth/user-not-found`, `auth/email-not-found`); the message
+ * is kept as a fallback for transports that only carry prose.
+ */
+export function authAccountMissing(err: unknown): boolean {
+  const code = (err as { code?: unknown } | null | undefined)?.code
+  if (typeof code === 'string') {
+    if (code === 'auth/user-not-found' || code === 'auth/email-not-found') return true
+  }
+  const message = err instanceof Error ? err.message : String(err ?? '')
+  return /user-not-found|email-not-found/i.test(message) || /no user record corresponding/i.test(message)
 }
 
 export type AuthAccountSummary = {
@@ -1426,8 +1479,7 @@ export async function getAuthAccountStateForUid(uid: string): Promise<AuthAccoun
       providers: (rec.providerData ?? []).map((p: UserInfo) => p.providerId),
     }
   } catch (err) {
-    const message = err instanceof Error ? err.message : ''
-    if (/USER_NOT_FOUND|no such user/i.test(message)) return { exists: false, disabled: false, emailVerified: false, createdAt: null, lastSignInAt: null, providers: [], orphaned: true }
+    if (authAccountMissing(err)) return { exists: false, disabled: false, emailVerified: false, createdAt: null, lastSignInAt: null, providers: [], orphaned: true }
     return null
   }
 }
@@ -1469,8 +1521,7 @@ export async function setAccountEnabled(uid: string, enabled: boolean, actorEmai
   try {
     await auth.updateUser(uid, { disabled: !enabled })
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Unknown error'
-    if (/uid-not-found|USER_NOT_FOUND|no such user/i.test(message)) {
+    if (authAccountMissing(err)) {
       return { ok: false, error: 'No Firebase Auth account for this profile.', code: 'account_missing' }
     }
     return { ok: false, error: 'The account state could not be changed.', code: 'auth_write_failed' }
@@ -1491,7 +1542,9 @@ export async function setTemporaryPassword(uid: string, actorEmail: string): Pro
   try {
     await auth.updateUser(uid, { password: secret })
   } catch (err) {
-    void err
+    if (authAccountMissing(err)) {
+      return { ok: false, error: 'No Firebase Auth account for this profile, so there is no credential to reset.', code: 'account_missing' }
+    }
     return { ok: false, error: 'The password could not be reset.', code: 'auth_write_failed' }
   }
   await createAuditEntry('ACCOUNT_PASSWORD_RESET', { uid, actor: actorEmail }, actorEmail)
@@ -1539,7 +1592,7 @@ export async function findPasswordResetTarget(email: string): Promise<PasswordRe
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : ''
-    if (/user-not-found|USER_NOT_FOUND|no user record/i.test(message)) return null
+    if (authAccountMissing(err)) return null
     console.warn('[FirestoreAdmin] password reset lookup failed:', message)
     return null
   }
@@ -1558,7 +1611,7 @@ export async function completePasswordReset(uid: string, newPassword: string): P
     await auth.revokeRefreshTokens(uid)
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error'
-    if (/uid-not-found|USER_NOT_FOUND|no such user/i.test(message)) {
+    if (authAccountMissing(err)) {
       return { ok: false, error: 'That account no longer exists.', code: 'account_missing' }
     }
     if (/invalid-password|WEAK_PASSWORD|at least 6/i.test(message)) {
@@ -1585,8 +1638,7 @@ export async function issueEmailVerificationLink(email: string, actorEmail: stri
     await createAuditEntry('ACCOUNT_VERIFICATION_LINK_ISSUED', { email: email.trim().toLowerCase() }, actorEmail)
     return { ok: true, link, note: 'Link is valid for one hour. Send it from your own channel.' }
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Unknown error'
-    if (/EMAIL_NOT_FOUND/i.test(message)) return { ok: false, error: 'No account uses that address.', code: 'account_missing' }
+    if (authAccountMissing(err)) return { ok: false, error: 'No account uses that address.', code: 'account_missing' }
     return { ok: false, error: 'A verification link could not be generated for this address.', code: 'auth_write_failed' }
   }
 }
@@ -1828,6 +1880,31 @@ export async function hardDeleteAccount(
       db.collection('wallet_ledger').where('uid', '==', uid).limit(400).get().catch(() => null),
       db.collection('notifications').where('uid', '==', uid).limit(400).get().catch(() => null),
     ])
+
+    // 1. The credential goes FIRST, and "already gone" counts as done.
+    //
+    // This order used to be the other way round — profile deleted, then `auth.deleteUser()` — and
+    // that is precisely what produced the console's 502-then-404-forever. A stub profile (a phone
+    // claim, a terms acceptance, an interrupted write) has no credential, so the last step threw
+    // `auth/user-not-found` *after* the profile was already gone: the endpoint answered
+    // 502 "Deletion stopped part-way", and every retry then answered 404 "No such user." because
+    // the document it needed no longer existed. The account could never be finished, and the
+    // orphaned credential was invisible to the directory that would have listed it.
+    //
+    // Deleting the credential first means the destructive half either completes or leaves the
+    // credential in place — never a half-erased account. A missing credential is the desired end
+    // state, so it is recorded as removed rather than treated as a failure, which also makes an
+    // interrupted erase safely retryable.
+    if (auth) {
+      try {
+        await auth.deleteUser(uid)
+        removed.auth = 1
+      } catch (err) {
+        if (!authAccountMissing(err)) throw err
+        removed.auth = 1
+      }
+    }
+
     if (profile.exists) {
       await profile.ref.delete()
       removed.profile = 1
@@ -1855,10 +1932,6 @@ export async function hardDeleteAccount(
     removed.ledger = ledger?.size ?? 0
     removed.notifications = notes?.size ?? 0
 
-    if (auth) {
-      await auth.deleteUser(uid)
-      removed.auth = 1
-    }
     invalidateGuardCaches?.(uid)
     await createAuditEntry(
       'ACCOUNT_HARD_DELETED',

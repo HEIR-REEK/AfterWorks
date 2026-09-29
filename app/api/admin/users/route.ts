@@ -152,7 +152,16 @@ export async function PATCH(req: NextRequest) {
         // Direct credential control, for when Auth and the profile have drifted apart.
         const enable = payload.enable === true
         const result = await firestore.setAccountEnabled(uid, enable, guard.value.email)
-        if (!result.ok) return fail(502, result.error ?? 'The credential could not be updated.', { code: result.code ?? 'auth_write_failed' })
+        // A profile with no credential is a 404, not a Bad Gateway: the thing being asked for
+        // does not exist, so telling the operator "a partner service is not responding, retry"
+        // sends them round a loop that can never succeed. The drawer already labels this case
+        // ("No Auth account for this uid") — this is the server agreeing with it.
+        if (!result.ok) {
+          const missing = result.code === 'account_missing'
+          return fail(missing ? 404 : 502, result.error ?? 'The credential could not be updated.', {
+            code: result.code ?? 'auth_write_failed',
+          })
+        }
         await firestore.adminUpdateUser(uid, { accountState: enable ? 'active' : 'suspended' }, guard.value.email, 'ACCOUNT_CREDENTIAL_UPDATED')
         return json({ ok: true, note: result.note })
       }
@@ -160,7 +169,12 @@ export async function PATCH(req: NextRequest) {
       case 'temp-password': {
         if (reason.length < 4) return fail(400, 'Say why the credential is being reset.', { code: 'reason_required' })
         const result = await firestore.setTemporaryPassword(uid, guard.value.email)
-        if (!result.ok) return fail(502, result.error ?? 'The password could not be reset.', { code: result.code ?? 'auth_write_failed' })
+        if (!result.ok) {
+          const missing = result.code === 'account_missing'
+          return fail(missing ? 404 : 502, result.error ?? 'The password could not be reset.', {
+            code: result.code ?? 'auth_write_failed',
+          })
+        }
         await audit({ action: 'ADMIN_PASSWORD_RESET', actorEmail: guard.value.email, details: { uid, reason }, req })
         // One chance to read it: the value is never stored, only relayed by the operator.
         return json({ ok: true, temporaryPassword: result.secret, note: result.note })
@@ -170,7 +184,12 @@ export async function PATCH(req: NextRequest) {
         const email = String(payload.email ?? detail_email(payload) ?? '').trim()
         if (!email) return fail(400, 'An email address is required to mint a verification link.', { code: 'bad_request' })
         const result = await firestore.issueEmailVerificationLink(email, guard.value.email)
-        if (!result.ok) return fail(502, result.error ?? 'No link could be generated.', { code: result.code ?? 'auth_write_failed' })
+        if (!result.ok) {
+          const missing = result.code === 'account_missing'
+          return fail(missing ? 404 : 502, result.error ?? 'No link could be generated.', {
+            code: result.code ?? 'auth_write_failed',
+          })
+        }
         return json({ ok: true, link: result.link, note: result.note })
       }
 
@@ -187,7 +206,13 @@ export async function PATCH(req: NextRequest) {
           reason,
           eraseLedger: payload.eraseLedger === true,
         })
-        if (!result.ok) return fail(502, result.error ?? 'Deletion failed.', { code: result.code ?? 'auth_write_failed', details: result.removed })
+        if (!result.ok) {
+          // `storage_unavailable` means nothing was touched, so a retry is meaningful and the
+          // status should say "unavailable" rather than "bad gateway". A genuine `partial_delete`
+          // is a 502: something is left behind that only a human can reconcile.
+          const status = result.code === 'storage_unavailable' ? 503 : 502
+          return fail(status, result.error ?? 'Deletion failed.', { code: result.code ?? 'auth_write_failed', details: result.removed })
+        }
         await audit({ action: 'USER_HARD_DELETED', actorEmail: guard.value.email, details: { uid, reason, removed: result.removed }, req })
         return json({ ok: true, removed: result.removed, note: result.note })
       }

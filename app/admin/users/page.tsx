@@ -512,8 +512,8 @@ function UsersPageInner() {
                     Grant welcome reward
                   </Button>
                 ) : null}
-                {(isOwner || account?.disabled) && (
-                  <Button size="sm" variant="outline" className="gap-1.5" disabled={busy || account === null} onClick={() => setConfirm({
+                {(isOwner || account?.disabled) && account?.exists === true && (
+                  <Button size="sm" variant="outline" className="gap-1.5" disabled={busy} onClick={() => setConfirm({
                     action: account?.disabled ? 'credential-enable' : 'credential-disable',
                     title: account?.disabled ? 'Re-enable sign-in' : 'Disable sign-in credential',
                     description: account?.disabled
@@ -527,7 +527,7 @@ function UsersPageInner() {
                     {account?.disabled ? 'Enable sign-in' : 'Disable sign-in'}
                   </Button>
                 )}
-                <Button size="sm" variant="outline" className="gap-1.5" disabled={busy} onClick={() => setConfirm({
+                <Button size="sm" variant="outline" className="gap-1.5" disabled={busy || account?.exists !== true} title={account?.exists === false ? 'This profile has no Firebase Auth credential.' : undefined} onClick={() => setConfirm({
                   action: 'temp-password',
                   title: 'Issue a temporary password',
                   description: 'For a locked-out member who cannot receive a reset email. The password is shown once, is never stored, and this action is audited. Members who can still read their inbox should use "Forgot password" on the sign-in page instead.',
@@ -626,7 +626,7 @@ function UsersPageInner() {
             case 'restore':
               return act({ ...base, action: 'moderate', payload: { accountState: 'active' } })
             case 'restrict':
-              return act({ ...base, action: 'moderate', payload: { accountState: 'under_review' } })
+              return act({ ...base, action: 'moderate', payload: { accountState: 'kyc_on_hold' } })
             case 'delete':
               return act({ ...base, action: 'delete' })
             case 'credential-disable':

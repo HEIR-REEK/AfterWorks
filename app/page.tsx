@@ -1,10 +1,13 @@
 'use client'
 
+import { useState } from 'react'
 import Link from 'next/link'
 import {
   ArrowRight,
   Banknote,
   CheckCircle2,
+  Eye,
+  EyeOff,
   Star,
   Wallet as WalletIcon,
 } from 'lucide-react'
@@ -21,6 +24,7 @@ import {
 
 export default function DashboardPage() {
   const { worker, wallet, walletMeta, payouts, onboarding, jobs, applications, getJob } = useAfterWorks()
+  const [balanceHidden, setBalanceHidden] = useState(false)
   // Completion and the reward are server-scored (`lib/profile-completion.ts`) and celebrated by the
   // shared reward dialog, so this page never has to guess — or store — whether the $5 was paid.
   const profileCompletion = onboarding.completion.percent
@@ -37,6 +41,8 @@ export default function DashboardPage() {
       value: formatUsd(payouts.withdrawableUsd),
       sub: payouts.heldUsd > 0 ? `${formatUsd(payouts.heldUsd)} held by a request` : `≈ ${formatKes(payouts.withdrawableUsd)}`,
       icon: WalletIcon,
+      sensitive: true,
+      moneySub: true,
     },
     {
       label: 'Pending (clearing)',
@@ -45,12 +51,16 @@ export default function DashboardPage() {
         ? `Next clears ${new Date(walletMeta.nextClearingAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}`
         : `Clears after ${walletMeta.clearingHours}h`,
       icon: CheckCircle2,
+      sensitive: true,
+      moneySub: false,
     },
     {
       label: 'Quality score',
       value: `${worker.qualityScore}`,
       sub: 'Good standing',
       icon: Star,
+      sensitive: false,
+      moneySub: false,
     },
   ]
 
@@ -112,6 +122,18 @@ export default function DashboardPage() {
           </div>
 
           <div className="grid grid-cols-2 gap-3">
+            <div className="col-span-2 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setBalanceHidden((hidden) => !hidden)}
+                aria-label={balanceHidden ? 'Show balances' : 'Hide balances'}
+                aria-pressed={balanceHidden}
+                className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-primary-foreground/80 transition-colors hover:bg-primary-foreground/10 hover:text-primary-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-foreground/70"
+              >
+                {balanceHidden ? <Eye className="size-4" /> : <EyeOff className="size-4" />}
+                {balanceHidden ? 'Show balances' : 'Hide balances'}
+              </button>
+            </div>
             {stats.map((s) => {
               const Icon = s.icon
               return (
@@ -120,9 +142,18 @@ export default function DashboardPage() {
                   className="rounded-xl bg-primary-foreground/10 p-4 backdrop-blur first:col-span-2"
                 >
                   <Icon className="size-5 text-primary-foreground/70" />
-                  <p className="mt-3 font-mono text-2xl font-semibold">{s.value}</p>
+                  <p className="mt-3 font-mono text-2xl font-semibold">
+                    {s.sensitive && balanceHidden ? (
+                      <>
+                        <span aria-hidden="true" className="select-none blur-[7px] transition-all duration-150">{s.value}</span>
+                        <span className="sr-only">Balance hidden</span>
+                      </>
+                    ) : s.value}
+                  </p>
                   <p className="text-xs text-primary-foreground/70">{s.label}</p>
-                  <p className="mt-0.5 text-xs text-primary-foreground/60">{s.sub}</p>
+                  <p className="mt-0.5 text-xs text-primary-foreground/60">
+                    {balanceHidden && s.moneySub ? 'Balance hidden' : s.sub}
+                  </p>
                 </div>
               )
             })}

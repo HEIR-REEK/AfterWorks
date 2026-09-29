@@ -137,7 +137,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
               <Activity className="size-3.5" />
               <span className="hidden lg:inline">Status</span>
             </Button>
-            <Button onClick={() => void session.signOut()} variant="outline" size="sm" className="gap-1.5">
+            <Button onClick={() => void session.signOut()} variant="outline" size="sm" className="gap-1.5 md:hidden">
               <LogOut className="size-3.5" />
               <span className="hidden sm:inline">Sign out</span>
             </Button>
@@ -159,7 +159,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           </div>
         )}
 
-        <nav className="no-scrollbar -mx-1 flex gap-1.5 overflow-x-auto border-b border-border px-1 pb-2.5 sm:gap-2" aria-label="Console sections">
+        <div className="flex min-w-0 flex-1 flex-col gap-5 md:flex-row">
+        <nav className="no-scrollbar -mx-1 flex gap-1.5 overflow-x-auto border-b border-border px-1 pb-2.5 sm:gap-2 md:sticky md:top-[4.5rem] md:mx-0 md:h-[calc(100dvh-5.5rem)] md:w-56 md:shrink-0 md:flex-col md:overflow-visible md:border-b-0 md:border-r md:px-0 md:pb-0 md:pr-4" aria-label="Console sections">
           {adminNavItems.filter((item) => !item.ownerOnly || session.role === 'owner').map((item) => {
             const Icon = item.icon
             const active = item.exact ? pathname === item.href : pathname.startsWith(item.href)
@@ -169,7 +170,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                 href={item.href}
                 aria-current={active ? 'page' : undefined}
                 className={cn(
-                  'inline-flex shrink-0 items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-semibold transition-all sm:text-sm',
+                  'inline-flex shrink-0 items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-semibold transition-all sm:text-sm md:w-full md:justify-start md:px-3',
                   active
                     ? 'bg-primary text-primary-foreground shadow-sm'
                     : 'border border-border/70 bg-card text-muted-foreground hover:bg-muted hover:text-foreground',
@@ -180,9 +181,16 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
               </Link>
             )
           })}
+          <div className="mt-auto hidden border-t border-border pt-4 md:block">
+            <Button onClick={() => void session.signOut()} variant="ghost" size="sm" className="w-full justify-start gap-2 text-muted-foreground hover:text-destructive">
+              <LogOut className="size-4" />
+              Sign out
+            </Button>
+          </div>
         </nav>
 
         <div className="min-w-0 flex-1">{children}</div>
+        </div>
       </main>
     </div>
   )

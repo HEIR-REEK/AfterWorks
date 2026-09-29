@@ -1289,16 +1289,25 @@ async function syncAdminClaimForUid(db: Firestore, uid: string, isAdmin: boolean
   void db
 }
 
+export async function setUserAdminFlagByUid(uid: string, isAdmin: boolean, actorEmail: string): Promise<boolean> {
+  const db = adminDb()
+  const userRef = db.collection('users').doc(uid)
+  const snap = await userRef.get()
+  if (!snap.exists) return false
+  const email = String((snap.data() ?? {}).email ?? '').trim().toLowerCase()
+  await userRef.set({ isAdmin, role: isAdmin ? 'admin' : 'user', updatedAt: new Date().toISOString() }, { merge: true })
+  await syncAdminClaimForUid(db, uid, isAdmin)
+  await createAuditEntry(isAdmin ? 'ADMIN_ROLE_GRANTED' : 'ADMIN_ROLE_REVOKED', { uid, email }, actorEmail)
+  return true
+}
+
+/** Legacy helper retained for scripts that have only an email (console actions use the stable uid). */
 export async function setUserAdminFlagByEmail(email: string, isAdmin: boolean, actorEmail: string): Promise<boolean> {
   const db = adminDb()
   const clean = email.trim().toLowerCase()
   const snap = await db.collection('users').where('email', '==', clean).limit(1).get()
   if (snap.empty) return false
-  const doc = snap.docs[0]
-  await doc.ref.set({ isAdmin, role: isAdmin ? 'admin' : 'user', updatedAt: new Date().toISOString() }, { merge: true })
-  await syncAdminClaimForUid(db, doc.id, isAdmin)
-  await createAuditEntry(isAdmin ? 'ADMIN_ROLE_GRANTED' : 'ADMIN_ROLE_REVOKED', { email: clean }, actorEmail)
-  return true
+  return setUserAdminFlagByUid(snap.docs[0].id, isAdmin, actorEmail)
 }
 
 // ─── Firebase Auth: the account side of the directory ────────────────────────
@@ -1459,6 +1468,12 @@ export async function attachAuthAccountState(rows: AdminUserRow[]): Promise<void
 
 export type AccountActionResult = { ok: boolean; error?: string; code?: string; note?: string; secret?: string; link?: string }
 
+function isMissingAuthUser(err: unknown): boolean {
+  const code = err && typeof err === 'object' && 'code' in err ? String((err as { code: unknown }).code) : ''
+  const message = err instanceof Error ? err.message : String(err ?? '')
+  return /user-not-found|uid-not-found|USER_NOT_FOUND/i.test(`${code} ${message}`) || /no user record corresponding/i.test(message)
+}
+
 /**
  * Disables or enables the *credential*, not just the profile. `accountState: 'banned'` alone leaves a
  * worker able to sign in and read their data, which is the difference between a moderation and a note.
@@ -1469,8 +1484,7 @@ export async function setAccountEnabled(uid: string, enabled: boolean, actorEmai
   try {
     await auth.updateUser(uid, { disabled: !enabled })
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Unknown error'
-    if (/uid-not-found|USER_NOT_FOUND|no such user/i.test(message)) {
+    if (isMissingAuthUser(err)) {
       return { ok: false, error: 'No Firebase Auth account for this profile.', code: 'account_missing' }
     }
     return { ok: false, error: 'The account state could not be changed.', code: 'auth_write_failed' }
@@ -1491,7 +1505,9 @@ export async function setTemporaryPassword(uid: string, actorEmail: string): Pro
   try {
     await auth.updateUser(uid, { password: secret })
   } catch (err) {
-    void err
+    if (isMissingAuthUser(err)) {
+      return { ok: false, error: 'No Firebase Auth account for this profile.', code: 'account_missing' }
+    }
     return { ok: false, error: 'The password could not be reset.', code: 'auth_write_failed' }
   }
   await createAuditEntry('ACCOUNT_PASSWORD_RESET', { uid, actor: actorEmail }, actorEmail)

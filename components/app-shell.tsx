@@ -84,31 +84,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <div className="mx-auto flex h-14 w-full max-w-6xl items-center gap-4 px-4 sm:h-16 sm:gap-6 sm:px-6">
           <BrandLink href="/" label={site.name} size={40} wordmarkClass="sm:text-base" />
 
-          {/* Desktop nav */}
-          <nav className="hidden items-center gap-1 md:flex" aria-label="Primary">
-            {nav.map((item) => {
-              const Icon = item.icon
-              const active = isActive(item.href)
-
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  aria-current={active ? 'page' : undefined}
-                  className={cn(
-                    'flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
-                    active
-                      ? 'bg-secondary text-foreground'
-                      : 'text-muted-foreground hover:bg-secondary hover:text-foreground',
-                  )}
-                >
-                  <Icon className="size-4" />
-                  {item.label}
-                </Link>
-              )
-            })}
-          </nav>
-
           <div className="ml-auto flex items-center gap-2 sm:gap-3">
             {worker?.kycVerified && worker?.phone && worker?.country && (
               <span className="hidden items-center gap-1.5 rounded-full bg-success/12 px-2.5 py-1 text-xs font-medium text-success sm:inline-flex">
@@ -127,7 +102,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <button
               type="button"
               onClick={handleSignOut}
-              className="flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground sm:px-2.5 sm:py-2"
+              className="flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground sm:px-2.5 sm:py-2 md:hidden"
             >
               <LogOut className="size-4" />
               <span className="hidden sm:inline">Sign out</span>
@@ -159,8 +134,51 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       )}
 
-      {/* Page content — extra bottom padding on mobile to clear the bottom nav */}
-      <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-4 px-4 py-5 pb-24 sm:px-6 sm:py-8 md:pb-8 sm:pb-8">
+      {/* Desktop navigation lives in a persistent left rail; mobile keeps the compact bottom bar. */}
+      <div className="mx-auto flex w-full max-w-[90rem] flex-1">
+        <aside className="sticky top-16 hidden h-[calc(100dvh-4rem)] w-60 shrink-0 flex-col border-r border-border bg-card/30 px-3 py-5 md:flex">
+          <p className="px-3 pb-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Workspace</p>
+          <nav className="flex flex-col gap-1" aria-label="Primary">
+            {nav.map((item) => {
+              const Icon = item.icon
+              const active = isActive(item.href)
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  aria-current={active ? 'page' : undefined}
+                  className={cn(
+                    'flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors',
+                    active ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:bg-secondary hover:text-foreground',
+                  )}
+                >
+                  <Icon className="size-4 shrink-0" />
+                  {item.label}
+                </Link>
+              )
+            })}
+          </nav>
+          <div className="mt-auto border-t border-border pt-4">
+            <Link href="/profile" className="mb-3 flex min-w-0 items-center gap-2.5 rounded-xl px-3 py-2 hover:bg-secondary">
+              <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-accent text-xs font-semibold text-accent-foreground">{avatar}</span>
+              <span className="min-w-0">
+                <span className="block truncate text-xs font-semibold">{displayName}</span>
+                <span className="block text-[10px] text-muted-foreground">Your profile</span>
+              </span>
+            </Link>
+            <button
+              type="button"
+              onClick={handleSignOut}
+              className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+            >
+              <LogOut className="size-4" />
+              Sign out
+            </button>
+          </div>
+        </aside>
+
+        {/* Page content — extra bottom padding on mobile to clear the bottom nav */}
+        <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-4 px-4 py-5 pb-24 sm:px-6 sm:py-8 md:pb-8 sm:pb-8">
         {mode === 'demo' && (
           <div className="flex items-start gap-2.5 rounded-xl border border-border bg-muted/40 px-3.5 py-2.5 text-xs text-muted-foreground">
             <Info className="mt-0.5 size-3.5 shrink-0 text-primary" />
@@ -171,7 +189,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
         )}
         {children}
-      </main>
+        </main>
+      </div>
 
       {/* Desktop / tablet footer */}
       <footer className="mt-auto hidden border-t border-border/60 bg-card/40 py-6 md:block">

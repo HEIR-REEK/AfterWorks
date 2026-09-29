@@ -38,6 +38,7 @@ import { site } from '@/lib/site'
 import { sanitizeLine } from '@/lib/security-core'
 import {
   REFERRAL_BONUS_USD,
+  REFERRAL_SIGNUP_WEEKLY_LIMIT,
   REFERRAL_SIGNUP_WEEK_MS,
   evaluateReferralClaim,
   generateReferralCode,
@@ -140,14 +141,24 @@ export async function resolveReferralCode(code: string): Promise<{ uid: string; 
 /**
  * Attaches a signup to the referrer whose code was used.
  *
- * Called once, immediately after the account is created and while the session is still fresh.
- * It is *best effort by design*: a referral is a promotion, not a precondition for an account,
- * so a failure here is audited and swallowed rather than rolled back into a sign-up error. A
- * member must never be locked out because a referral write timed out.
+ * Called once, immediately after the account is created and while the session is still fresh —
+ * and again, cheaply and idempotently, from `reconcileReferralAttribution` at the checkpoints of
+ * the journey (email verification, profile save, KYC approval, opening the referrals panel), so a
+ * claim that failed once is retried rather than lost. It is *best effort by design*: a referral is
+ * a promotion, not a precondition for an account, so a failure here is audited and swallowed
+ * rather than rolled back into a sign-up error. A member must never be locked out because a
+ * referral write timed out.
  *
- * Every rejection is a decision, not a crash: an invalid code, a self-referral, a referrer who
- * has not verified their identity, a restricted referrer and a rate-limited referrer all answer
- * with a reason the sign-up form can show, and none of them create a document.
+ * The code itself is stored on the referred account (`referredByCode`) the moment it is seen, even
+ * when the claim cannot complete right now — that durable copy is what survives the email
+ * verification link opening in another tab, a referrer who has not finished KYC yet, or a plain
+ * network failure at the worst possible second.
+ *
+ * Every rejection is a decision, not a crash: an invalid code, a self-referral and a rate-limited
+ * referrer all answer with a reason the form can show, and none of them create a document. An
+ * unverified or restricted *referrer* no longer refuses the record — it defers the money (the
+ * release-time checks re-read both), so signups are never silently thrown away over somebody
+ * else's unfinished KYC.
  */
 export async function claimReferralForSignup(input: {
   referredUid: string
@@ -155,19 +166,24 @@ export async function claimReferralForSignup(input: {
   referredName: string
   rawCode: string
   emailVerified: boolean
-}): Promise<{ attached: boolean; code: string; reason?: string; codeName?: string }> {
+}): Promise<{ attached: boolean; code: string; reason?: string; codeName?: string; deferred?: boolean }> {
   const db = dbOrNull()
-  const normalised = normaliseReferralCode(input.rawCode)
-  if (!db || !normalised) return { attached: false, code: '', reason: 'invalid_referral_code' }
+  if (!db) return { attached: false, code: '', reason: 'invalid_referral_code' }
 
   try {
-    const resolved = await resolveReferralCode(normalised)
-    if (!resolved) return { attached: false, code: normalised, reason: 'unknown_referral_code' }
+    // The referred account's document, read once: it may already carry a captured code (first
+    // touch wins), and its existence decides whether the durable copy may be written — a stub
+    // created here would make the sign-up bootstrap skip writing the real document.
+    const referredRef = db.collection('users').doc(input.referredUid)
+    const referredSnap = await referredRef.get().catch(() => null)
+    const referredDocExists = referredSnap?.exists === true
+    const referredDoc = (referredDocExists ? (referredSnap!.data() ?? {}) : {}) as Record<string, unknown>
 
-    const referrerRef = db.collection('users').doc(resolved.uid)
-    const referrerSnap = await referrerRef.get()
-    if (!referrerSnap.exists) return { attached: false, code: normalised, reason: 'unknown_referral_code' }
-    const referrer = (referrerSnap.data() ?? {}) as Record<string, unknown>
+    // First touch wins: a code captured at signup binds this account, and a different code posted
+    // later cannot steal it.
+    const storedCode = normaliseReferralCode(referredDoc.referredByCode)
+    const normalised = storedCode ?? normaliseReferralCode(input.rawCode)
+    if (!normalised) return { attached: false, code: '', reason: 'invalid_referral_code' }
 
     // One account, one referrer, forever. The document is keyed by the referred uid, so this
     // read is also the check that no *other* code already owns this account's referral.
@@ -176,6 +192,29 @@ export async function claimReferralForSignup(input: {
     if (existing?.exists) {
       return { attached: false, code: normalised, reason: 'already_referred' }
     }
+
+    const resolved = await resolveReferralCode(normalised)
+    const referrerSnap = resolved ? await db.collection('users').doc(resolved.uid).get().catch(() => null) : null
+    const referrer = referrerSnap?.exists ? ((referrerSnap.data() ?? {}) as Record<string, unknown>) : null
+
+    // Keep the code on the account so a checkpoint can retry a claim this request cannot finish
+    // (an unresolvable code, a referrer mid-verification, a transient failure). A self-referral
+    // can never attach, so it is not worth remembering.
+    const selfReferral =
+      (resolved !== null && resolved.uid === input.referredUid) ||
+      (referrer !== null &&
+        String(referrer.email ?? '').trim().toLowerCase() === input.referredEmail.trim().toLowerCase())
+    if (!selfReferral && !referredDoc.referredByCode) {
+      try {
+        if (referredDocExists) {
+          await referredRef.set({ referredByCode: normalised, referredByCodeAt: new Date().toISOString() }, { merge: true })
+        }
+      } catch (err) {
+        console.warn('[referrals] intent store skipped:', err instanceof Error ? err.message : err)
+      }
+    }
+
+    if (!resolved || !referrer) return { attached: false, code: normalised, reason: 'unknown_referral_code' }
 
     const cutoff = new Date(Date.now() - REFERRAL_SIGNUP_WEEK_MS).toISOString()
     let recentSignups = 0
@@ -187,11 +226,24 @@ export async function claimReferralForSignup(input: {
         .limit(50)
         .get()
       recentSignups = recent.size
-    } catch (err) {
-      // Without the rolling index the cap cannot be measured. Fail closed: a limit we cannot
-      // enforce is not a limit, and the alternative is an unmetered signup faucet.
-      console.warn('[referrals] weekly count unavailable, refusing attribution:', err instanceof Error ? err.message : err)
-      return { attached: false, code: normalised, reason: 'rate_limit_unavailable' }
+    } catch {
+      // The composite (referrerUid + createdAt) index may not be deployed yet. Rather than let a
+      // missing index silently kill every attribution, fall back to an equality-only read (always
+      // indexed) and count the window in memory — the cap is enforced a little less precisely, and
+      // deploying firestore.indexes.json restores the exact count.
+      try {
+        const recent = await db
+          .collection('referrals')
+          .where('referrerUid', '==', resolved.uid)
+          .limit(REFERRAL_SIGNUP_WEEKLY_LIMIT + 50)
+          .get()
+        recentSignups = recent.docs.filter((doc) => String((doc.data() ?? {}).createdAt ?? '') >= cutoff).length
+      } catch (err2) {
+        // Both reads failed: the cap cannot be measured at all. Fail closed — a limit we cannot
+        // enforce is not a limit, and the alternative is an unmetered signup faucet.
+        console.warn('[referrals] weekly count unavailable, refusing attribution:', err2 instanceof Error ? err2.message : err2)
+        return { attached: false, code: normalised, reason: 'rate_limit_unavailable' }
+      }
     }
 
     const decision = evaluateReferralClaim({
@@ -237,10 +289,16 @@ export async function claimReferralForSignup(input: {
     // attribution (for example after a retried signup callback) cannot leave an already-complete
     // profile permanently pending.
     await reconcileCompletedReferral(input.referredUid)
-    return { attached: true, code: normalised, codeName: String(referrer.name ?? '') }
+    return {
+      attached: true,
+      code: normalised,
+      codeName: String(referrer.name ?? ''),
+      // The record exists but the money is waiting on the referrer's own verification/standing.
+      ...(decision.deferred ? { deferred: true as const } : {}),
+    }
   } catch (err) {
     console.warn('[referrals] attribution skipped:', err instanceof Error ? err.message : err)
-    return { attached: false, code: normalised, reason: 'attribution_failed' }
+    return { attached: false, code: normaliseReferralCode(input.rawCode) ?? '', reason: 'attribution_failed' }
   }
 }
 
@@ -416,6 +474,86 @@ export async function reconcileCompletedReferral(referredUid: string): Promise<b
   }
 }
 
+/**
+ * Retries the signup attribution from the code stored on the account.
+ *
+ * The durable copy (`users/<uid>.referredByCode`) is written the moment a code is seen — even
+ * when the claim cannot complete at signup — precisely because the journey breaks the original
+ * tab: the verification link opens a second tab (with its own empty storage), the member may sign
+ * in days later on another device, and the referrer's own KYC may only clear after the people
+ * they referred have finished everything. Each checkpoint calls this, and the first one to find
+ * the claim possible attaches it. Idempotent: a referral document that already exists ends it.
+ */
+export async function reconcileReferralAttribution(referredUid: string): Promise<boolean> {
+  const db = dbOrNull()
+  if (!db || !referredUid) return false
+  try {
+    const referralSnap = await db.collection('referrals').doc(referredUid).get()
+    if (referralSnap.exists) return true
+
+    const userSnap = await db.collection('users').doc(referredUid).get()
+    if (!userSnap.exists) return false
+    const user = (userSnap.data() ?? {}) as Record<string, unknown>
+    const code = normaliseReferralCode(user.referredByCode)
+    if (!code) return false
+
+    const result = await claimReferralForSignup({
+      referredUid,
+      referredEmail: String(user.email ?? ''),
+      referredName: String(user.name ?? ''),
+      rawCode: code,
+      emailVerified: user.emailVerified === true,
+    })
+    return result.attached
+  } catch (err) {
+    console.warn('[referrals] attribution reconciliation skipped:', err instanceof Error ? err.message : err)
+    return false
+  }
+}
+
+/**
+ * Releases every bonus this member is owed by the people *they* referred.
+ *
+ * The normal release happens inside the referred person's profile save. This covers the other
+ * order: the referrals finished their profiles while this member's own identity verification (or
+ * standing) was still pending — the bonus was correctly withheld at the time, and this is what
+ * pays it once the reason no longer applies. Runs after KYC approval and on panel reads.
+ */
+export async function reconcileReferralsForReferrer(referrerUid: string): Promise<number> {
+  const db = dbOrNull()
+  if (!db || !referrerUid) return 0
+  try {
+    const snap = await db.collection('referrals').where('referrerUid', '==', referrerUid).limit(200).get()
+    let released = 0
+    for (const doc of snap.docs) {
+      const data = (doc.data() ?? {}) as Record<string, unknown>
+      if (data.status === 'qualified') continue
+      if (await reconcileCompletedReferral(doc.id)) released++
+    }
+    return released
+  } catch (err) {
+    console.warn('[referrals] referrer-side reconciliation skipped:', err instanceof Error ? err.message : err)
+    return 0
+  }
+}
+
+/**
+ * Every referral repair one account can need, in the order that matters:
+ *  1. a code captured at signup that has not become a record yet attaches now if it can;
+ *  2. this account's own referral bonus releases if their profile is complete;
+ *  3. bonuses owed to them by members they referred release if those have completed.
+ *
+ * Called at the moments the journey changes state — email verification consumed, profile saved,
+ * KYC approved — and when the referrals panel is opened. All three steps are idempotent, so
+ * calling it more often than strictly necessary is safe.
+ */
+export async function reconcileReferralsForUser(uid: string): Promise<void> {
+  if (!uid) return
+  await reconcileReferralAttribution(uid)
+  await reconcileCompletedReferral(uid)
+  await reconcileReferralsForReferrer(uid)
+}
+
 function round2(value: number): number {
   return Math.round(value * 100) / 100
 }
@@ -441,17 +579,30 @@ function mapReferral(id: string, data: Record<string, unknown>): ReferralRow {
   }
 }
 
-/** The referral panel's entire payload, computed in one place. */
-export async function getReferralDashboard(uid: string): Promise<ReferralDashboard | null> {
+/**
+ * The referral panel's entire payload, computed in one place.
+ *
+ * `baseUrl` is the origin the share link should carry. The route passes the *request's* public
+ * origin (see `publicAppOrigin`) rather than trusting `site.url` alone: when `NEXT_PUBLIC_APP_URL`
+ * / `APP_URL` are unset, `site.url` falls back to `http://localhost:3000`, and a share link built
+ * from that is a link nobody can open — the code inside it never reaches a single signup. The
+ * verification emails already inferred the origin this way; the share link now does too.
+ */
+export async function getReferralDashboard(uid: string, baseUrl?: string): Promise<ReferralDashboard | null> {
   const db = dbOrNull()
   if (!db) return null
+
+  // Self-healing read: a code captured at signup that never attached attaches now, and anything
+  // that is due (either direction) settles — the member opening this panel is precisely the person
+  // who would otherwise be staring at "0 referrals" with no explanation.
+  await reconcileReferralsForUser(uid)
 
   const userRef = db.collection('users').doc(uid)
   const userSnap = await userRef.get()
   const user = (userSnap.exists ? userSnap.data() : {}) as Record<string, unknown>
 
   const code = await getOrCreateReferralCode(uid)
-  const shareUrl = referralShareUrl(site.url, code)
+  const shareUrl = referralShareUrl(baseUrl || site.url, code)
 
   let rows: ReferralRow[] = []
   try {

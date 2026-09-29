@@ -42,19 +42,25 @@ service cloud.firestore {
     // used to make "grant yourself admin" and "mark your work as completed" possible from the
     // browser console.
     //
-    // `phoneKey` and `referralCode` joined the list with the referral work for one reason each:
+    // `phoneKey`, `referralCode` and `referredByCode` joined the list with the referral work for one
+    // reason each:
     //  • `phoneKey` is the value "one phone number, one account" is enforced against. If a member
     //    could write it, the only field protecting that rule would be the member's own.
     //  • `termsAcceptedAt` / `termsVersion` / `privacyAcceptedAt` are the acceptance record. Its
     //    whole value is that the *server* wrote it at a time the server chose, so a client that
     //    could write it would be fabricating the one document we would ever want to be able to
     //    prove. (`/api/auth/terms` writes it; the sign-up form cannot.)
+    //  • `referralCode` is the member's own share code (minted by the server), and
+    //    `referredByCode` / `referredByCodeAt` are the referral link this account was created
+    //    through — captured at creation and never changeable, because "one account, one referrer,
+    //    forever" is only a fact if the member cannot re-point their own attribution afterwards.
     function privilegedKeys() {
       return ['role', 'isAdmin', 'kycVerified', 'kycStatus', 'kycVerifiedAt', 'kycRejectedAt',
               'kycOnHoldAt', 'kycProvider', 'kycLevel', 'kycRejectionReason', 'kycFailedChecks',
               'accountState', 'qualityScore', 'jobsCompleted', 'wallet', 'paidTrainings',
               'moderationReason', 'deletedAt', 'lastModifiedBy', 'phoneVerified', 'identityHash',
               'emailVerified', 'emailVerifiedAt', 'phoneKey', 'referralCode', 'referralCodeCreatedAt',
+              'referredByCode', 'referredByCodeAt',
               'termsAcceptedAt', 'termsVersion', 'privacyAcceptedAt', 'privacyVersion',
               'termsAcceptedEmail'];
     }
@@ -75,11 +81,15 @@ service cloud.firestore {
       allow list: if isStaff();
 
       // Sign-up bootstrap: an account may create its own document, but only in the inert state.
+      // `emailVerified` may carry the *truth* (a Google sign-up arrives with an address the
+      // provider has already proven; writing `false` here left the document permanently
+      // disagreeing with the Auth record). It is privileged above, so it can never be changed
+      // afterwards, and every gate that matters reads the ID token claim — not this field.
       allow create: if isSelf(userId)
         && request.resource.data.role == 'user'
         && request.resource.data.isAdmin == false
         && request.resource.data.kycVerified == false
-        && request.resource.data.get('emailVerified', false) == false
+        && request.resource.data.get('emailVerified', false) in [false, true]
         && request.resource.data.accountState == 'active'
         && request.resource.data.wallet.pendingUsd == 0
         && request.resource.data.wallet.availableUsd == 0

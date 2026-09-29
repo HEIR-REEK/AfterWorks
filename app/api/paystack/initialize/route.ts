@@ -174,8 +174,8 @@ async function jobTrainingGate(jobId: string): Promise<{ missing: boolean; requi
   try {
     const snap = await db.collection('jobs').doc(jobId).get()
     if (!snap.exists) {
-      // Seeded/demo jobs are not in Firestore; do not block a payment for a catalogue entry the
-      // public site can still render, but do not invent a price either.
+      // A job row the checkout cannot find is not a reason to block the payment — the fee falls
+      // back to the configured one — and it is not a reason to invent a price either.
       return { missing: false, requiresTraining: true }
     }
     const data = snap.data() as Record<string, unknown> | undefined

@@ -12,16 +12,7 @@ import { IdleSessionGuard } from '@/components/idle-session-guard'
 import { useAdminSession } from '@/lib/admin'
 import { matchesBlockedPath } from '@/lib/maintenance-shared'
 import { isPublicRoute } from '@/lib/public-routes'
-import { ConfigurationRequired, DemoModeBanner, demoModeAllowed } from '@/components/app-mode-notices'
-
-/**
- * Sample-data mode is opt-in, and never a production default.
- *
- * Read statically so Next inlines it into the client bundle. With it off, a deployment that is
- * missing its Firebase config shows the configuration wall instead of a dashboard built from
- * `seedWorker()` — see `components/app-mode-notices.tsx` for the report that prompted this.
- */
-const ALLOW_DEMO_MODE = demoModeAllowed(process.env.NEXT_PUBLIC_ALLOW_DEMO_MODE)
+import { ConfigurationRequired } from '@/components/app-mode-notices'
 
 /**
  * The application gate: auth requirement, maintenance interception and chrome selection.
@@ -66,8 +57,9 @@ function Gate({ children }: { children: React.ReactNode }) {
   const isAdminRoute = pathname.startsWith('/admin') || pathname.startsWith('/api/admin')
   // Nothing below the gate can show a real account when there is no Firebase, and the console brings
   // its own (server-side) session. Public routes still render — they explain the situation themselves.
+  // There is no sample-data escape hatch: unconfigured is always the wall for private screens.
   const unconfigured = configured === false
-  const wallOff = unconfigured && !ALLOW_DEMO_MODE && !isPublic && !isAdminRoute
+  const wallOff = unconfigured && !isPublic && !isAdminRoute
   // A full blackout replaces the whole app, including /sign-in. A scoped one (`sections`) replaces
   // only the affected route, so a payout run does not take the job board down with it.
   const blackoutAll = view.blocking && view.blocksAll && !bypassed && admin.status !== 'authorized'
@@ -140,7 +132,7 @@ function Gate({ children }: { children: React.ReactNode }) {
 
   return (
     <AfterWorksProvider>
-      <AppShell>{ALLOW_DEMO_MODE && unconfigured ? <DemoModeBanner /> : null}{children}</AppShell>
+      <AppShell>{children}</AppShell>
     </AfterWorksProvider>
   )
 }

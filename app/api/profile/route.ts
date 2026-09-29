@@ -91,6 +91,16 @@ export async function PATCH(req: NextRequest) {
   if (Object.keys(patch).length === 0) return fail(400, 'Nothing to save — send at least one profile field.', { code: 'empty_patch' })
 
   try {
+    // A profile save can be the moment a referred member's profile reaches 100% — and the bonus
+    // release inside the transaction below needs the attribution record to already exist. If the
+    // signup-time claim failed (another tab, a referrer mid-verification, a network blip), this
+    // attaches it now, so "finished my profile" can never happen with the referral silently gone.
+    try {
+      const { reconcileReferralAttribution } = await import('@/lib/referral-server')
+      await reconcileReferralAttribution(guard.value.uid)
+    } catch (err) {
+      console.warn('[referrals] pre-save attribution skipped:', err instanceof Error ? err.message : err)
+    }
     const result = await saveMemberProfile(guard.value.uid, patch, { actorEmail: `member:${guard.value.uid}` })
     return json({
       ok: true,

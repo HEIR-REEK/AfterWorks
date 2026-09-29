@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import { consumeBucket, json, maintenanceBlockForApi, requireUser, routeError } from '@/lib/guards'
 import { getReferralDashboard } from '@/lib/referral-server'
+import { publicAppOrigin } from '@/lib/email-verification'
 import { REFERRAL_BONUS_USD, REFERRAL_TERMS } from '@/lib/referrals'
 
 /**
@@ -30,7 +31,10 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const dashboard = await getReferralDashboard(guard.value.uid)
+    // The share link carries the origin this request actually arrived on (with the configured
+    // public URL preferred when one exists), never a localhost fallback — a link the member
+    // cannot share is a referral program that records nothing.
+    const dashboard = await getReferralDashboard(guard.value.uid, publicAppOrigin(req))
     if (!dashboard) {
       return json({
         ok: false,

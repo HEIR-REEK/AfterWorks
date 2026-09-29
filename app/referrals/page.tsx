@@ -38,6 +38,7 @@ import { cn } from '@/lib/utils'
 import {
   REFERRAL_STATUS_HINT,
   REFERRAL_STATUS_LABEL,
+  referralShareUrl,
   type ReferralDashboard,
   type ReferralRow,
 } from '@/lib/referrals'
@@ -123,10 +124,20 @@ export default function ReferralsPage() {
     }
   }, [user, configured, load])
 
+  /**
+   * The link the member actually shares, built from the origin this page is being viewed on.
+   *
+   * The server's copy is only the fallback: if the deployment never configured a public URL, that
+   * copy can carry a `http://localhost:3000` origin nobody can open — and a referral link that
+   * does not open is a referral program that records nothing. The member is standing on the real
+   * site, so their browser's origin is the one truth that cannot be misconfigured.
+   */
+  const shareUrl = data ? referralShareUrl(typeof window !== 'undefined' ? window.location.origin : site.url, data.code) : ''
+
   async function copyLink() {
     if (!data) return
     try {
-      await navigator.clipboard.writeText(data.shareUrl)
+      await navigator.clipboard.writeText(shareUrl)
       setCopied(true)
       setTimeout(() => setCopied(false), 2500)
     } catch {
@@ -140,8 +151,8 @@ export default function ReferralsPage() {
     if (!data) return
     const payload = {
       title: `Earn on AfterWorks with me`,
-      text: `Join me on AfterWorks — paid microwork, paid to your mobile money. Use my link and we both get started: ${data.shareUrl}`,
-      url: data.shareUrl,
+      text: `Join me on AfterWorks — paid microwork, paid to your mobile money. Use my link and we both get started: ${shareUrl}`,
+      url: shareUrl,
     }
     try {
       if (navigator.share) {
@@ -227,7 +238,7 @@ export default function ReferralsPage() {
 
         <div className="flex flex-col gap-3 p-5">
           <div className="flex items-center gap-2 rounded-lg border border-input bg-muted/40 px-3 py-2.5">
-            <code className="min-w-0 flex-1 truncate text-sm text-muted-foreground">{data.shareUrl}</code>
+            <code className="min-w-0 flex-1 truncate text-sm text-muted-foreground">{shareUrl}</code>
             <Button size="sm" variant="ghost" onClick={copyLink} className="shrink-0 gap-1.5">
               {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
               {copied ? 'Copied' : 'Copy'}

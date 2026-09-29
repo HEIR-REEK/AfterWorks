@@ -51,7 +51,7 @@ function formatWhen(iso: string | null | undefined): string {
 }
 
 export function WithdrawPanel() {
-  const { wallet, walletMeta, payouts, requestPayout, cancelPayout, pending, mode, refreshPayouts } = useAfterWorks()
+  const { wallet, walletMeta, payouts, requestPayout, cancelPayout, pending, refreshPayouts } = useAfterWorks()
   const [amount, setAmount] = useState('')
   const [notice, setNotice] = useState<{ tone: 'success' | 'error' | 'info'; text: string } | null>(null)
 
@@ -70,7 +70,6 @@ export function WithdrawPanel() {
   const minUsd = quote.minWithdrawalUsd
   const openPayout = payouts.openPayout
   const busy = Boolean(pending['payout:new'])
-  const demo = mode === 'demo'
 
   const validation = amount
     ? validateWithdrawalAmount(Number(amount), quote.withdrawableUsd, minUsd)
@@ -177,7 +176,7 @@ export function WithdrawPanel() {
                   value={amount}
                   onChange={(event) => setAmount(event.target.value)}
                   placeholder={minUsd.toFixed(2)}
-                  disabled={Boolean(openPayout) || busy || demo}
+                  disabled={Boolean(openPayout) || busy}
                   aria-describedby="withdraw-help"
                   className="h-11 w-full rounded-xl border border-input bg-background pl-7 pr-3 text-sm font-medium tabular-nums outline-none focus:ring-2 focus:ring-primary disabled:opacity-60"
                 />
@@ -186,7 +185,7 @@ export function WithdrawPanel() {
                 type="button"
                 variant="outline"
                 className="h-11"
-                disabled={quote.withdrawableUsd <= 0 || Boolean(openPayout) || demo}
+                disabled={quote.withdrawableUsd <= 0 || Boolean(openPayout)}
                 onClick={() => setAmount(quote.withdrawableUsd.toFixed(2))}
               >
                 Max
@@ -243,16 +242,10 @@ export function WithdrawPanel() {
             </p>
           ) : null}
 
-          <Button type="submit" className="gap-2" disabled={busy || demo || Boolean(openPayout) || blockers.length > 0 || !amount}>
+          <Button type="submit" className="gap-2" disabled={busy || Boolean(openPayout) || blockers.length > 0 || !amount}>
             {busy ? <Loader2 className="size-4 animate-spin" /> : <Banknote className="size-4" />}
             {busy ? 'Submitting…' : 'Request withdrawal'}
           </Button>
-
-          {demo ? (
-            <p className="text-[11px] text-muted-foreground">
-              Preview — withdrawals are switched off on this site, so a request cannot be sent.
-            </p>
-          ) : null}
         </form>
 
         {/* ── Current + recent requests ─────────────────────────────────────── */}

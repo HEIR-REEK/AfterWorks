@@ -76,6 +76,17 @@ export async function POST(req: NextRequest) {
       req,
     })
 
+    // The verification link routinely opens in a browser tab that knows nothing about the signup
+    // (different tab, different device). The referral code was stored on the account at creation,
+    // so this is where the attribution that could not finish at signup now does — and anything
+    // already complete (profile, KYC) settles with it.
+    try {
+      const { reconcileReferralsForUser } = await import('@/lib/referral-server')
+      await reconcileReferralsForUser(result.uid)
+    } catch (err) {
+      console.warn('[referrals] post-verify reconciliation skipped:', err instanceof Error ? err.message : err)
+    }
+
     // Read the session *after* consuming, so a member who verified in another tab still gets an
     // accurate "sign in as this address" instruction rather than a page claiming the account they
     // happen to be holding is the one that was just verified.

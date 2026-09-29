@@ -175,12 +175,17 @@ function currentMonthYear(): string {
  * document permanently disagreeing with the Auth record: the console showed the member as
  * unverified, support chased an inbox that was never in doubt, and the "emailVerified" column
  * could not be trusted as a record of anything.
+ *
+ * `referredByCode` is the referral link this account was created through, captured at creation so
+ * the attribution survives the rest of the journey (the verification link opening in another tab,
+ * a referrer who has not finished KYC yet). It is written once, here, and the server refuses to
+ * let it change afterwards (see `privilegedKeys` in firestore.rules) — first touch wins.
  */
 export async function createUserDocument(
   uid: string,
   name: string,
   email: string,
-  opts: { emailVerified?: boolean } = {},
+  opts: { emailVerified?: boolean; referredByCode?: string | null } = {},
 ): Promise<void> {
   const db = getDB()
   if (!db) return
@@ -190,6 +195,7 @@ export async function createUserDocument(
     if ((await getDoc(userRef)).exists()) return
 
     const emailVerified = opts.emailVerified === true
+    const referredByCode = String(opts.referredByCode ?? '').trim().toUpperCase() || null
 
     await setDoc(
       userRef,
@@ -205,6 +211,7 @@ export async function createUserDocument(
         // Only a verified inbox has a verification *time*; leaving it set on an unverified
         // account is how "verified since" starts meaning "signed up on".
         ...(emailVerified ? { emailVerifiedAt: new Date().toISOString() } : {}),
+        ...(referredByCode ? { referredByCode, referredByCodeAt: new Date().toISOString() } : {}),
         accountState: 'active',
         role: 'user',
         isAdmin: false,

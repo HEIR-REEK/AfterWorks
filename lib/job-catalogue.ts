@@ -197,9 +197,9 @@ export function mergeCatalogueAdditive(current: Job[], incoming: Job[]): Job[] {
 /** What the board currently knows: the rows, whether they are real, and when they last synced. */
 export type CatalogueState = {
   jobs: Job[]
-  /** True once real catalogue rows have been applied in this session. */
+  /** True once a live read has been applied in this session. */
   live: boolean
-  /** When the board last matched Firestore; null while only sample cards are on screen. */
+  /** When the board last matched Firestore; null until the first authoritative read. */
   syncedAt: string | null
 }
 
@@ -211,8 +211,6 @@ export type CatalogueSnapshot = {
    * authoritative snapshot may take cards off the board.
    */
   authoritative: boolean
-  /** Built-in sample cards, used while the deployment has no live catalogue to show. */
-  sample: () => Job[]
   /** Timestamp to record; injected so the reducer stays a pure function in tests. */
   at: string
 }
@@ -227,10 +225,9 @@ export const EMPTY_CATALOGUE: CatalogueState = { jobs: [], live: false, syncedAt
  *  • an empty read that proved nothing (failure, offline cache) → change nothing, so a blip never
  *    empties a board the worker can still use;
  *  • an empty read that succeeded → the console really has no cards (or emptied them), so show an
- *    empty board rather than silently back-filling sample data over a live deployment.
+ *    empty board. There is no built-in fallback catalogue: a deployment with no rows shows none.
  *
- * Sample cards are only ever a first-run fallback: once anything live has been seen they never
- * come back. The same object is returned when nothing changed, so polls do not re-render the grid.
+ * The same object is returned when nothing changed, so polls do not re-render the grid.
  */
 export function applyCatalogueSnapshot(state: CatalogueState, snapshot: CatalogueSnapshot): CatalogueState {
   if (snapshot.jobs.length > 0) {
@@ -240,12 +237,8 @@ export function applyCatalogueSnapshot(state: CatalogueState, snapshot: Catalogu
     return { jobs, live: true, syncedAt: snapshot.authoritative ? snapshot.at : state.syncedAt }
   }
 
-  if (!snapshot.authoritative) {
-    if (state.live || state.jobs.length > 0) return state
-    return { jobs: snapshot.sample(), live: false, syncedAt: null }
-  }
+  if (!snapshot.authoritative) return state
 
-  if (state.live) return { jobs: [], live: true, syncedAt: snapshot.at }
-  if (state.jobs.length > 0) return state
-  return { jobs: snapshot.sample(), live: false, syncedAt: null }
+  if (state.jobs.length === 0) return state.live && state.syncedAt === snapshot.at ? state : { jobs: [], live: true, syncedAt: snapshot.at }
+  return { jobs: [], live: true, syncedAt: snapshot.at }
 }

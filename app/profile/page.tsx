@@ -54,7 +54,7 @@ function initialPhoneCountry(storedCountry: string | undefined | null, storedPho
 }
 
 function ProfilePageContent() {
-  const { worker, wallet, applications, getJob, saveProfile, claimWelcomeBonus, payouts, onboarding, refreshWallet, pending, mode } = useAfterWorks()
+  const { worker, wallet, applications, getJob, saveProfile, claimWelcomeBonus, payouts, onboarding, refreshWallet, pending } = useAfterWorks()
   const { user } = useAuth()
   const searchParams = useSearchParams()
   const [isEditing, setIsEditing] = useState(false)
@@ -391,7 +391,7 @@ function ProfilePageContent() {
               <Button
                 size="sm"
                 className="shrink-0 gap-1.5"
-                disabled={pending['bonus'] === true || mode === 'demo'}
+                disabled={pending['bonus'] === true}
                 onClick={async () => {
                   const result = await claimWelcomeBonus()
                   setToastMessage(

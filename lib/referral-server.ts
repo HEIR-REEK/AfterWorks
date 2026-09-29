@@ -233,6 +233,10 @@ export async function claimReferralForSignup(input: {
     }
 
     await createAuditEntry('REFERRAL_ATTRIBUTED', { referralId: input.referredUid, referrerUid: resolved.uid, code: normalised }, `member:${input.referredUid}`)
+    // Signup attribution normally precedes profile completion. Reconcile here as well so a late
+    // attribution (for example after a retried signup callback) cannot leave an already-complete
+    // profile permanently pending.
+    await reconcileCompletedReferral(input.referredUid)
     return { attached: true, code: normalised, codeName: String(referrer.name ?? '') }
   } catch (err) {
     console.warn('[referrals] attribution skipped:', err instanceof Error ? err.message : err)
@@ -273,8 +277,9 @@ export type StagedReferralBonus = {
 /**
  * Credits the referrer when the referred person's profile reaches 100%.
  *
- * **Called from inside the `saveMemberProfile` transaction.** It takes a transaction handle and
- * returns writes to be applied, rather than doing its own reads and writes, for two reasons:
+ * **Called from a Firestore transaction** (normally `saveMemberProfile`, and also the idempotent
+ * reconciliation path). It takes a transaction handle and returns writes to be applied, rather than
+ * doing its own reads and writes, for two reasons:
  *
  *  1. The whole point is atomicity: "the profile is complete" and "the referral is credited" must
  *     become true together, or not at all. A member who closes the tab mid-save must not end up
@@ -374,6 +379,40 @@ export async function stageReferralBonusForCompletedProfile(
         options: { merge: true },
       },
     ],
+  }
+}
+
+/**
+ * Repairs a missed referral release for an already-complete profile.
+ *
+ * Profile PATCH remains the normal, atomic trigger. This narrower reconciliation is also called
+ * after referral attribution and KYC approval, covering out-of-order callbacks and retries without
+ * making either external flow responsible for minting money. The deterministic ledger id and the
+ * referral status check keep concurrent/replayed calls idempotent.
+ */
+export async function reconcileCompletedReferral(referredUid: string): Promise<boolean> {
+  const db = dbOrNull()
+  if (!db || !referredUid) return false
+
+  try {
+    const userRef = db.collection('users').doc(referredUid)
+    const applied = await db.runTransaction(async (tx) => {
+      const userSnap = await tx.get(userRef)
+      if (!userSnap.exists || !profileCompletion((userSnap.data() ?? {}) as Record<string, unknown>).complete) return false
+
+      // This stages all reads (referral + referrer) before any writes, then commits the three
+      // financial/attribution records together.
+      const staged = await stageReferralBonusForCompletedProfile(tx, referredUid)
+      if (!staged.applied || staged.writes.length === 0) return false
+      applyStagedWrites(tx, staged.writes)
+      return true
+    })
+
+    if (applied) await notifyReferralQualified(referredUid)
+    return applied
+  } catch (err) {
+    console.warn('[referrals] completion reconciliation skipped:', err instanceof Error ? err.message : err)
+    return false
   }
 }
 

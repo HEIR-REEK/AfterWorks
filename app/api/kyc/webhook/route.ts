@@ -37,6 +37,7 @@ import {
   type DiditSessionStatus,
 } from '@/lib/didit'
 import { updateUserProfile, saveKycRecord } from '@/lib/firestore-admin'
+import { reconcileCompletedReferral } from '@/lib/referral-server'
 
 export async function POST(req: NextRequest) {
   let rawBody: string
@@ -131,6 +132,9 @@ export async function POST(req: NextRequest) {
         kycFailedChecks: null,
       })
       console.log(`[KYC webhook] ✅ uid=${userId} marked as KYC verified at ${nowIso}.`)
+      // A referral can be attributed or completed before Didit calls back. Re-check after approval
+      // so webhook order cannot strand a completed referral in the pending state.
+      await reconcileCompletedReferral(userId)
       break
     }
 

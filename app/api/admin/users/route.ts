@@ -152,7 +152,10 @@ export async function PATCH(req: NextRequest) {
         // Direct credential control, for when Auth and the profile have drifted apart.
         const enable = payload.enable === true
         const result = await firestore.setAccountEnabled(uid, enable, guard.value.email)
-        if (!result.ok) return fail(502, result.error ?? 'The credential could not be updated.', { code: result.code ?? 'auth_write_failed' })
+        if (!result.ok) {
+          const status = result.code === 'account_missing' ? 404 : result.code === 'auth_unavailable' ? 503 : 502
+          return fail(status, result.error ?? 'The credential could not be updated.', { code: result.code ?? 'auth_write_failed' })
+        }
         await firestore.adminUpdateUser(uid, { accountState: enable ? 'active' : 'suspended' }, guard.value.email, 'ACCOUNT_CREDENTIAL_UPDATED')
         return json({ ok: true, note: result.note })
       }
@@ -160,7 +163,10 @@ export async function PATCH(req: NextRequest) {
       case 'temp-password': {
         if (reason.length < 4) return fail(400, 'Say why the credential is being reset.', { code: 'reason_required' })
         const result = await firestore.setTemporaryPassword(uid, guard.value.email)
-        if (!result.ok) return fail(502, result.error ?? 'The password could not be reset.', { code: result.code ?? 'auth_write_failed' })
+        if (!result.ok) {
+          const status = result.code === 'account_missing' ? 404 : result.code === 'auth_unavailable' ? 503 : 502
+          return fail(status, result.error ?? 'The password could not be reset.', { code: result.code ?? 'auth_write_failed' })
+        }
         await audit({ action: 'ADMIN_PASSWORD_RESET', actorEmail: guard.value.email, details: { uid, reason }, req })
         // One chance to read it: the value is never stored, only relayed by the operator.
         return json({ ok: true, temporaryPassword: result.secret, note: result.note })
@@ -202,19 +208,23 @@ export async function PATCH(req: NextRequest) {
 
       case 'role': {
         const isAdmin = payload.isAdmin === true
-        const targetEmail = typeof payload.email === 'string' ? payload.email.trim().toLowerCase() : ''
-        if (!targetEmail) return fail(400, 'Provide the account email whose role is changing.', { code: 'missing_email' })
-        if (guard.value.email === targetEmail && !isAdmin) {
+        // The row's uid is the canonical identity. Looking it up again by email was case-sensitive
+        // in Firestore, so a valid profile with a differently-cased legacy email could return 404.
+        const target = await firestore.getUserDetail(uid)
+        if (!target) return fail(404, 'No such user.', { code: 'user_not_found' })
+        const targetEmail = String(target.email ?? '').trim().toLowerCase()
+        if (!targetEmail) return fail(409, 'This profile has no email address, so its role cannot be changed.', { code: 'missing_email' })
+        if (guard.value.email.toLowerCase() === targetEmail && !isAdmin) {
           return fail(409, 'You cannot revoke your own admin role from this console.', { code: 'self_demotion' })
         }
-        const ok = await firestore.setUserAdminFlagByEmail(targetEmail, isAdmin, guard.value.email)
-        if (!ok) return fail(404, 'No user document matches that email.', { code: 'user_not_found' })
+        const ok = await firestore.setUserAdminFlagByUid(uid, isAdmin, guard.value.email)
+        if (!ok) return fail(404, 'No such user.', { code: 'user_not_found' })
         const { invalidateAdminCache } = await import('@/lib/guards')
-        invalidateAdminCache(targetEmail.toLowerCase())
+        invalidateAdminCache(targetEmail)
         await audit({
           action: isAdmin ? 'ADMIN_ROLE_GRANTED' : 'ADMIN_ROLE_REVOKED',
           actorEmail: guard.value.email,
-          details: { target: targetEmail, reason },
+          details: { uid, target: targetEmail, reason },
           req,
         })
         return json({ ok: true, isAdmin })

@@ -84,12 +84,12 @@ export default function ReferralsPage() {
   const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (quiet = false) => {
     if (!user || !configured) {
       setLoading(false)
       return
     }
-    setLoading(true)
+    if (!quiet) setLoading(true)
     try {
       const res = await authedFetch<DashboardResponse>('/api/referrals')
       setData(res)
@@ -97,13 +97,31 @@ export default function ReferralsPage() {
     } catch (err) {
       setError(describeError(err))
     } finally {
-      setLoading(false)
+      if (!quiet) setLoading(false)
     }
   }, [user, configured])
 
   useEffect(() => {
     void load()
   }, [load])
+
+  // Referral qualification and wallet credits are written server-side. Refresh this summary when
+  // the member returns to the tab and periodically while it stays open so a completed referral is
+  // reflected without requiring a manual reload.
+  useEffect(() => {
+    if (!user || !configured) return
+    const sync = () => {
+      if (typeof document === 'undefined' || document.visibilityState === 'visible') void load(true)
+    }
+    const timer = setInterval(sync, 45_000)
+    if (typeof window !== 'undefined') window.addEventListener('focus', sync)
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', sync)
+    return () => {
+      clearInterval(timer)
+      if (typeof window !== 'undefined') window.removeEventListener('focus', sync)
+      if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', sync)
+    }
+  }, [user, configured, load])
 
   async function copyLink() {
     if (!data) return

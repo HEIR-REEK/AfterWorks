@@ -91,21 +91,12 @@ export async function POST(req: NextRequest) {
       rawStatus: session.status,
     })
 
-    console.log(
-      `[KYC submit] Created session ${session.session_id} for uid=${userId}` +
-        (session.is_demo ? ' [DEMO]' : ''),
-    )
+    console.log(`[KYC submit] Created session ${session.session_id} for uid=${userId}`)
 
-    return NextResponse.json({
-      sessionId: session.session_id,
-      sessionToken: session.session_token,
-      verificationUrl: session.verification_url,
-      isDemo: !!session.is_demo,
-    })
     await audit({
       action: 'KYC_SESSION_CREATED',
       actorEmail: userId, // uid is the stable identifier; the token's email is re-checked by the webhook anyway
-      details: { sessionId: session.session_id, isMobile, demo: Boolean(session.is_demo) },
+      details: { sessionId: session.session_id, isMobile },
       req,
     })
 
@@ -113,7 +104,6 @@ export async function POST(req: NextRequest) {
       sessionId: session.session_id,
       sessionToken: session.session_token,
       verificationUrl: session.verification_url,
-      isDemo: !!session.is_demo,
     })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error'

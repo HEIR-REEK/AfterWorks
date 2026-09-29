@@ -1,34 +1,28 @@
 'use client'
 
 import Link from 'next/link'
-import { AlertTriangle, FlaskConical, LifeBuoy, ShieldAlert } from 'lucide-react'
+import { AlertTriangle, LifeBuoy, ShieldAlert } from 'lucide-react'
 import { site } from '@/lib/site'
 import { BrandMark } from '@/components/brand'
 
 /**
- * Notices for the two states where the app must not pretend to be somebody's account.
+ * Notices for the state where the app must not pretend to be somebody's account.
  *
- * Both exist because of a real report: *"I closed Chrome and opened it again and the dashboards are
- * still displaying without even a login process."* One of the ways that happens is not a session at
- * all — `FirebaseAuthProvider.configured` is false when the deployment's Firebase web config is
- * missing or incomplete, and the app used to treat exactly that state as "carry on": the gate
- * skipped its sign-in redirect, `AfterWorksProvider` filled the screens with `seedWorker()` and the
- * sample catalogue, and so a misconfigured deployment served a complete, fake, logged-in-looking
- * dashboard to anybody who opened it.
+ * This exists because of a real report: *"I closed Chrome and opened it again and the dashboards
+ * are still displaying without even a login process."* One of the ways that happens is not a
+ * session at all — `FirebaseAuthProvider.configured` is false when the deployment's Firebase web
+ * config is missing or incomplete, and the app used to treat exactly that state as "carry on": the
+ * gate skipped its sign-in redirect and `AfterWorksProvider` filled the screens with sample data,
+ * so a misconfigured deployment served a complete, fake, logged-in-looking dashboard to anybody
+ * who opened it.
  *
- * So: unconfigured is now a wall, unless a developer has explicitly asked for the demo
- * (`NEXT_PUBLIC_ALLOW_DEMO_MODE=true`), and a demo says out loud that it is one.
+ * So: unconfigured is a wall. No sample-data mode exists to soften it — a blank-but-honest answer
+ * beats a convincing one made of example rows.
  */
 
-/** Is the sample-data mode allowed on this deployment? Read statically so Next inlines it. */
-export function demoModeAllowed(raw: string | undefined | null = null): boolean {
-  const value = String(raw ?? '').trim().toLowerCase()
-  return value === '1' || value === 'true' || value === 'yes' || value === 'on'
-}
-
 /**
- * The wall. Shown instead of any private screen when Firebase is not configured and the demo is not
- * explicitly enabled — a blank-but-honest answer beats a convincing one made of sample data.
+ * The wall. Shown instead of any private screen when Firebase is not configured — there is nothing
+ * real to show, and nothing a visitor enters would be saved.
  */
 export function ConfigurationRequired() {
   return (
@@ -60,21 +54,6 @@ export function ConfigurationRequired() {
         <a href={`mailto:${site.supportEmail}`} className="text-xs font-medium text-primary hover:underline">
           {site.supportEmail}
         </a>
-      </div>
-    </div>
-  )
-}
-
-/** A permanent, unmissable band across a demo session — sample data is never mistaken for money. */
-export function DemoModeBanner() {
-  return (
-    <div className="border-b border-warning/40 bg-warning/10 px-4 py-2 text-[11px] text-warning-foreground sm:px-6">
-      <div className="mx-auto flex w-full max-w-7xl items-center gap-2">
-        <FlaskConical className="size-3.5 shrink-0" />
-        <span>
-          <strong className="font-semibold">Preview</strong> — the jobs, applications and balances on screen are
-          examples, not your account. Nothing here is saved and no payments can be made.
-        </span>
       </div>
     </div>
   )

@@ -37,7 +37,7 @@ import {
   type DiditSessionStatus,
 } from '@/lib/didit'
 import { updateUserProfile, saveKycRecord } from '@/lib/firestore-admin'
-import { reconcileCompletedReferral } from '@/lib/referral-server'
+import { reconcileReferralsForUser } from '@/lib/referral-server'
 
 export async function POST(req: NextRequest) {
   let rawBody: string
@@ -132,9 +132,15 @@ export async function POST(req: NextRequest) {
         kycFailedChecks: null,
       })
       console.log(`[KYC webhook] ✅ uid=${userId} marked as KYC verified at ${nowIso}.`)
-      // A referral can be attributed or completed before Didit calls back. Re-check after approval
-      // so webhook order cannot strand a completed referral in the pending state.
-      await reconcileCompletedReferral(userId)
+      // Approval changes both sides of the referral book, so both sides are re-checked:
+      //  • this account may be a referred member whose profile is complete — release their
+      //    referrer's bonus;
+      //  • this account may be a *referrer* whose code was deferred at signup because their own
+      //    verification was not done — now the bonuses held for that reason release;
+      //  • a code captured at signup that has not attached yet attaches now.
+      // Without this, webhook order (or a signup that raced the KYC callback) could strand a
+      // completed referral in the pending state forever.
+      await reconcileReferralsForUser(userId)
       break
     }
 

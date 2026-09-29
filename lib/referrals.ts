@@ -24,9 +24,16 @@
  * server-side and none of them client-side:
  *   • a member cannot refer themselves, by uid or by email;
  *   • a referred account is bound to one referrer, permanently;
- *   • a referrer's own KYC must be complete before their code works (a rejected identity account
- *     must not be able to farm signups);
+ *   • a referrer's own KYC must be complete before their code *pays* (a rejected identity account
+ *     must not be able to farm signups) — the attribution itself is still recorded while the
+ *     referrer is unverified, and the money gate is re-checked at the moment of release;
  *   • signups per referrer are capped per week.
+ *
+ * Why attribution and payment are decided separately: the signup claim used to refuse outright
+ * when the *referrer* had not finished KYC, and the refusal was final — the code died with the
+ * tab, no record existed, and when the referrer later passed KYC those signups were gone. Now a
+ * valid code always leaves a `pending` record (what the panel shows), and the $3 is released only
+ * when the release-time checks pass — which can be later than the signup.
  */
 
 import { formatUsd } from '@/lib/afterworks-data'
@@ -93,6 +100,16 @@ export function referralShareUrl(baseUrl: string, code: string): string {
   return `${origin}/sign-up?ref=${encodeURIComponent(clean)}`
 }
 
+/**
+ * Where the browser stashes an incoming `?ref=` for the rest of the tab's session.
+ *
+ * The code is captured the moment the sign-up page opens with `?ref=`, not only at submit, because
+ * a member can wander the site (or lose the query string to a redirect) before creating the
+ * account. The server keeps its own durable copy on the user document at signup — this is only
+ * the same-tab convenience layer.
+ */
+export const REFERRAL_STORAGE_KEY = 'afterworks:ref'
+
 // ─── Lifecycle ───────────────────────────────────────────────────────────────
 
 /**
@@ -113,7 +130,8 @@ export const REFERRAL_STATUS_LABEL: Record<ReferralStatus, string> = {
 }
 
 export const REFERRAL_STATUS_HINT: Record<ReferralStatus, string> = {
-  pending: 'They still need to finish their profile. The bonus is released the moment they do.',
+  pending:
+    'They still need to finish their profile — or, if they already have, the bonus is waiting on your own identity verification and releases the moment that clears.',
   qualified: 'Their profile is complete, so the bonus is in your pending balance and clears with your other earnings.',
 }
 
@@ -223,14 +241,26 @@ export const REFERRAL_TERMS: readonly { title: string; body: string }[] = [
 // ─── Guards (shared by the route and the tests) ──────────────────────────────
 
 export type ReferralClaimDecision =
-  | { ok: true }
+  /** Attach the signup to this referrer now, and the bonus is payable as soon as it qualifies. */
+  | { ok: true; deferred: false }
+  /**
+   * Attach the signup, but the bonus will not pay until the referrer clears — their identity is
+   * not verified yet, or their account is restricted. The release-time checks re-read both, so a
+   * refused-at-signup referrer who is approved later still pays for signups recorded here.
+   */
+  | { ok: true; deferred: true; code: 'referrer_unverified' | 'referrer_restricted'; message: string }
+  /** Do not attach, and do not retry: invalid code, self-referral, or the weekly cap. */
   | { ok: false; code: string; message: string }
 
 /**
- * Whether a signup may attach this code.
+ * Whether a signup may attach this code, and whether the bonus is payable immediately.
  *
  * `sameEmail` is compared in the canonical form, so `Amina@Example.com` and `amina@example.com`
  * are one person — which is the whole point of the check.
+ *
+ * The referrer's own verification and standing no longer refuse the attachment — they defer the
+ * money (see the decision type). A refusal here is therefore only for claims that must never
+ * become a record at all.
  */
 export function evaluateReferralClaim(input: {
   code: string | null
@@ -253,20 +283,6 @@ export function evaluateReferralClaim(input: {
   if (input.referrerEmail.trim().toLowerCase() === input.referredEmail.trim().toLowerCase()) {
     return { ok: false, code: 'self_referral', message: 'You cannot refer yourself.' }
   }
-  if (!input.referrerKycVerified) {
-    return {
-      ok: false,
-      code: 'referrer_unverified',
-      message: 'That referral code is not active yet — its owner has not completed identity verification.',
-    }
-  }
-  if (input.referrerAccountState && input.referrerAccountState !== 'active') {
-    return {
-      ok: false,
-      code: 'referrer_restricted',
-      message: 'That referral code is not active because the account that owns it is restricted.',
-    }
-  }
   if (input.recentSignups >= REFERRAL_SIGNUP_WEEKLY_LIMIT) {
     return {
       ok: false,
@@ -274,5 +290,21 @@ export function evaluateReferralClaim(input: {
       message: 'That account has reached its weekly referral limit. Try again next week.',
     }
   }
-  return { ok: true }
+  if (!input.referrerKycVerified) {
+    return {
+      ok: true,
+      deferred: true,
+      code: 'referrer_unverified',
+      message: 'The bonus for this signup will only be released once the account that owns the code completes identity verification.',
+    }
+  }
+  if (input.referrerAccountState && input.referrerAccountState !== 'active') {
+    return {
+      ok: true,
+      deferred: true,
+      code: 'referrer_restricted',
+      message: 'The bonus for this signup will only be released if the account that owns the code returns to good standing.',
+    }
+  }
+  return { ok: true, deferred: false }
 }

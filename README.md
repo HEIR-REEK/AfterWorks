@@ -12,13 +12,13 @@ separate Express/Prisma backend — the API routes in `app/api/**` *are* the ser
 
 ```bash
 npm install
-cp .env.example .env.local     # fill in Firebase; the app degrades to demo mode without it
+cp .env.example .env.local     # fill in Firebase to sign in
 npm run dev                    # http://localhost:3000
 npm run typecheck              # tsc --noEmit — the gate used before every commit
 ```
 
-With no Firebase configuration the site still renders in **demo mode**: job cards come from
-`lib/afterworks-data.ts`, a strip in the app shell says so, and nothing is written anywhere. Sign-in,
+With no Firebase configuration the site shows a **configuration notice** instead of any private
+screen — there is no sample-data mode. Nothing a visitor enters is written anywhere; sign-in,
 payments and the console stay disabled rather than pretending to work.
 
 ### Make Firebase sign-in actually work

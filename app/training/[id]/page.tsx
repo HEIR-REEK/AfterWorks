@@ -442,7 +442,7 @@ function TrainingPageInner({ params }: { params: Promise<{ id: string }> }) {
           if (cancelled) return
         }
       } catch {
-        /* demo mode / storage offline — the checkout below still works normally */
+        /* the pending-reference read failed (offline / storage unreachable) — the checkout below still works normally */
       }
     })()
     return () => {

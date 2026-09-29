@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, Suspense } from 'react'
+import { useEffect, useState, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import {
@@ -18,7 +18,7 @@ import { Button } from './ui/button'
 import { useAuth } from './firebase-auth-provider'
 import { BrandLockup } from '@/components/brand'
 import { validateEmailAddress } from '@/lib/email-validation'
-import { REFERRAL_BONUS_LABEL, normaliseReferralCode } from '@/lib/referrals'
+import { REFERRAL_BONUS_LABEL, REFERRAL_STORAGE_KEY, normaliseReferralCode } from '@/lib/referrals'
 import { TERMS_VERSION, privacyHref, termsHref } from '@/lib/terms'
 import { cn } from '@/lib/utils'
 
@@ -124,6 +124,19 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
   // The referral code is in the URL when somebody shared their link with this member. Shown here
   // so nobody is surprised later that a name is attached to their signup.
   const incomingReferral = normaliseReferralCode(searchParams.get('ref'))
+
+  // Capture the code the moment this page opens, not at submit. A member reads the page, wanders
+  // off to the terms, comes back — and the query string may be gone by then. Session storage keeps
+  // it for the tab; the server keeps its own copy on the account once the signup happens.
+  useEffect(() => {
+    const raw = searchParams.get('ref')
+    if (!raw) return
+    try {
+      window.sessionStorage.setItem(REFERRAL_STORAGE_KEY, raw)
+    } catch {
+      /* storage blocked — the submit path still reads the URL directly */
+    }
+  }, [searchParams])
   // Show a success banner on sign-in page when coming from sign-up or after verifying
   const justRegistered = !isSignUp && searchParams.get('registered') === '1'
 

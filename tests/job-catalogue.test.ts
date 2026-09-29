@@ -215,10 +215,8 @@ import { applyCatalogueSnapshot, EMPTY_CATALOGUE, type CatalogueSnapshot } from 
 const AT = '2026-01-15T12:00:01.000Z'
 
 function snapshot(overrides: Partial<CatalogueSnapshot> = {}): CatalogueSnapshot {
-  return { jobs: [], authoritative: true, sample: () => SAMPLE, at: AT, ...overrides }
+  return { jobs: [], authoritative: true, at: AT, ...overrides }
 }
-
-const SAMPLE: Job[] = [normaliseJobRecord('job-sample', document({ id: 'job-sample', title: 'Sample card' }))!]
 
 test('a snapshot with rows turns the board live and stamps the sync time', () => {
   const rows = [normaliseJobRecord('job-a', document())!]
@@ -253,7 +251,7 @@ test('a failed read or an offline-cache replay leaves the board exactly as it wa
   assert.deepEqual(authoritative.jobs.map((job) => job.id), ['job-a'])
 })
 
-test('an empty catalogue that the console really emptied clears the board instead of re-showing samples', () => {
+test('an empty catalogue that the console really emptied clears the board instead of keeping stale rows', () => {
   const live = applyCatalogueSnapshot(EMPTY_CATALOGUE, snapshot({ jobs: [normaliseJobRecord('job-a', document())!] }))
   const emptied = applyCatalogueSnapshot(live, snapshot())
   assert.deepEqual(emptied.jobs, [])
@@ -261,15 +259,17 @@ test('an empty catalogue that the console really emptied clears the board instea
   assert.equal(emptied.syncedAt, AT)
 })
 
-test('sample cards are a first-run fallback only, and a poll never re-renders a stable board', () => {
+test('the board starts empty — there is no built-in fallback catalogue', () => {
+  // The whole point of removing the sample subsystem: a deployment with no authored jobs shows
+  // no jobs, rather than a plausible-looking board of examples.
   const first = applyCatalogueSnapshot(EMPTY_CATALOGUE, snapshot())
-  assert.deepEqual(first.jobs.map((job) => job.id), ['job-sample'])
-  assert.equal(first.live, false)
-  assert.equal(first.syncedAt, null)
+  assert.deepEqual(first.jobs, [])
+  assert.equal(first.live, true)
+  assert.equal(first.syncedAt, AT)
 
-  // A failed first read on a fresh deployment still leaves something explorable on screen.
+  // A failed first read shows nothing too — an empty honest board beats example cards.
   const offline = applyCatalogueSnapshot(EMPTY_CATALOGUE, snapshot({ authoritative: false }))
-  assert.deepEqual(offline.jobs.map((job) => job.id), ['job-sample'])
+  assert.equal(offline, EMPTY_CATALOGUE)
 
   // Nothing new from a repeated read: the same object, so React does not re-render the grid.
   assert.equal(applyCatalogueSnapshot(first, snapshot()), first)

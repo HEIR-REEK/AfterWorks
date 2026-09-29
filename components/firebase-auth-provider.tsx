@@ -27,6 +27,7 @@ import {
   type User,
 } from 'firebase/auth'
 import { createUserDocument } from '@/lib/firestore'
+import { REFERRAL_STORAGE_KEY } from '@/lib/referrals'
 import {
   clearAuthSessionMarker,
   hasAuthSessionMarker,
@@ -77,9 +78,6 @@ type AuthContextValue = {
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
-
-/** Where a `?ref=` code waits between page loads. Session-scoped: it dies with the tab. */
-const REFERRAL_STORAGE_KEY = 'afterworks:ref'
 
 /**
  * How long this device remembers a signed-in member.
@@ -327,6 +325,12 @@ export function FirebaseAuthProvider({
         // Publish the session *before* the network round trip below, or the app gate sees a null
         // user for its duration and bounces a perfectly good sign-in to /sign-in.
         setUser(cred.user)
+        // A code sitting in this tab was captured from a referral link that was actually opened,
+        // and the server binds it only if this account has no referral yet (first touch wins, and
+        // self-referral is refused there). Running this on sign-in as well as signup is what makes
+        // "open the referral link and sign in again" repair a claim that was lost the first time —
+        // to the verification link opening in another tab, say. Best effort; never fails a sign-in.
+        await attachReferral(cred.user)
         // A returning member who verified on another device must not be sent back to
         // /verify-email by a stale flag, and an unverified one must still be held at the gate.
         const verified = await isEmailVerifiedNow(cred.user)
@@ -355,7 +359,9 @@ export function FirebaseAuthProvider({
         const cred = await createUserWithEmailAndPassword(authRef.current, email, password)
         markAuthSession()
         if (name) await updateProfile(cred.user, { displayName: name })
-        await createUserDocument(cred.user.uid, name || email.split('@')[0], email)
+        // The referral code (if any) is captured *on the account document at creation* — the
+        // durable copy that survives the verification link opening in another tab later.
+        await createUserDocument(cred.user.uid, name || email.split('@')[0], email, { referredByCode: readReferralCode() })
         setUser(cred.user)
         try {
           const token = await cred.user.getIdToken()
@@ -422,6 +428,15 @@ export function FirebaseAuthProvider({
             /* storage blocked */
           }
           return code
+        }
+        if (data.reason === 'already_referred') {
+          // This account already belongs to a referrer (first touch won). The code has done all
+          // it ever will — drop it so it cannot haunt later attempts.
+          try {
+            window.sessionStorage.removeItem(REFERRAL_STORAGE_KEY)
+          } catch {
+            /* storage blocked */
+          }
         }
         if (data.reason && data.reason !== 'no_referral_code') {
           console.info('[referral] not attached:', data.reason)
@@ -496,18 +511,20 @@ export function FirebaseAuthProvider({
         // Ask Auth *before* writing the profile: Google has normally already proven the address,
         // and the document must record what is true rather than a blanket "not yet".
         const googleVerified = await isEmailVerifiedNow(cred.user)
-        await createUserDocument(cred.user.uid, name, cred.user.email || '', { emailVerified: googleVerified })
+        await createUserDocument(cred.user.uid, name, cred.user.email || '', {
+          emailVerified: googleVerified,
+          referredByCode: additionalInfo?.isNewUser ? readReferralCode() : null,
+        })
         setUser(cred.user)
-        // Only for an account that did not exist a moment ago. `additionalInfo.isNewUser` is
-        // Firebase's own answer to "was this a sign-up or a sign-in", and it matters here in a way
-        // it does not elsewhere: this branch also runs for returning members, and replaying the
-        // terms call for them would rewrite the acceptance timestamp every time they signed in,
-        // turning "the moment this person accepted" into "the last time they logged in". It would
-        // also let a returning member claim a referral link that happened to be in the session.
+        // A Google sign-up through somebody's referral link is still a referral, and a returning
+        // member who opens the link and signs in again is repairing a lost claim — the server
+        // binds the code only if this account has no referral yet. Best effort; never fails the
+        // sign-in. The *terms* call stays strictly for new accounts: `additionalInfo.isNewUser` is
+        // Firebase's own answer to "was this a sign-up or a sign-in", and replaying the terms call
+        // for returning members would rewrite the acceptance timestamp every time they logged in,
+        // turning "the moment this person accepted" into "the last time they logged in".
+        await attachReferral(cred.user)
         if (additionalInfo?.isNewUser) {
-          // A Google sign-up through somebody's referral link is still a referral. Best effort —
-          // never fails the sign-in.
-          await attachReferral(cred.user)
           await recordTermsAcceptance(cred.user)
         }
         // Google has already proven the address it vouched for, so the *record* almost always

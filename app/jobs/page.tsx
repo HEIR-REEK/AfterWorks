@@ -20,7 +20,7 @@ const categories: (JobCategory | 'All')[] = [
 ]
 
 export default function JobsPage() {
-  const { jobs, worker, profileLoaded, mode, catalogueLive, catalogueSyncedAt, refreshJobs } = useAfterWorks()
+  const { jobs, worker, profileLoaded, catalogueLive, catalogueSyncedAt, refreshJobs } = useAfterWorks()
   const [category, setCategory] = useState<(typeof categories)[number]>('All')
   const [hideFull, setHideFull] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
@@ -71,20 +71,13 @@ export default function JobsPage() {
               </span>
               Live{syncedLabel ? ` · updated ${syncedLabel}` : ''}
             </span>
-          ) : (
-            <span
-              className="inline-flex items-center rounded-full border border-border bg-card px-2.5 py-1 text-[11px] font-medium text-muted-foreground"
-              title="These are example jobs — the live listings are not on this site yet."
-            >
-              Sample jobs
-            </span>
-          )}
+          ) : null}
           <Button
             type="button"
             variant="outline"
             size="sm"
             className="h-8 gap-1.5 text-xs"
-            disabled={refreshing || mode !== 'live'}
+            disabled={refreshing}
             onClick={() => void onRefresh()}
           >
             <RefreshCw className={cn('size-3.5', refreshing && 'animate-spin')} />

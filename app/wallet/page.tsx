@@ -12,7 +12,7 @@
  */
 
 import Link from 'next/link'
-import { ArrowDownLeft, ArrowUpRight, Banknote, CircleDollarSign, Clock, Hourglass, Info, ShieldCheck, Sparkles, Wallet } from 'lucide-react'
+import { ArrowDownLeft, ArrowUpRight, Banknote, CircleDollarSign, Clock, Hourglass, ShieldCheck, Sparkles, Wallet } from 'lucide-react'
 import { WithdrawPanel } from '@/components/withdraw-panel'
 import { useAfterWorks } from '@/components/afterworks-provider'
 import { Button } from '@/components/ui/button'
@@ -29,8 +29,7 @@ const ENTRY_LABELS: Record<string, string> = {
 }
 
 export default function WalletPage() {
-  const { worker, wallet, walletMeta, payouts, mode, onboarding } = useAfterWorks()
-  const demo = mode === 'demo'
+  const { worker, wallet, walletMeta, payouts, onboarding } = useAfterWorks()
 
   const entries = walletMeta.entries
   const bonusGranted = payouts.welcomeBonus.granted
@@ -59,16 +58,6 @@ export default function WalletPage() {
           </Button>
         )}
       </section>
-
-      {demo ? (
-        <div className="flex items-start gap-2.5 rounded-xl border border-border bg-muted/40 px-3.5 py-2.5 text-xs text-muted-foreground">
-          <Info className="mt-0.5 size-3.5 shrink-0 text-primary" />
-          <span>
-            Preview — the balances on this page are examples and withdrawals are switched off, so you cannot send a
-            request from here.
-          </span>
-        </div>
-      ) : null}
 
       {/* Balance breakdown */}
       <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">

@@ -5,7 +5,6 @@ import {
   resolveAuthPersistence,
   shouldEndRestoredSession,
 } from '@/lib/auth-policy'
-import { demoModeAllowed } from '@/components/app-mode-notices'
 
 /**
  * How long a session lives, and what the app does when it has no session at all.
@@ -16,8 +15,9 @@ import { demoModeAllowed } from '@/components/app-mode-notices'
  *
  *  1. the member app never chose a Firebase persistence mode, so the SDK's default (durable,
  *     survives a browser restart) applied;
- *  2. a deployment with no Firebase config rendered the *seeded* worker and catalogue with no
- *     sign-in required, because the gate skipped its redirect when `configured === false`;
+ *  2. a deployment with no Firebase config rendered sample data with no sign-in required, because
+ *     the gate skipped its redirect when `configured === false`. There is now no sample-data mode
+ *     at all — unconfigured is always the wall — and that rule is asserted below;
  *  3. the console's cookie carried a `Max-Age`, so it outlived the browser.
  *
  * (3) is asserted end to end in `tests/admin-auth-gate.test.ts`-style probing; the cookie option
@@ -83,38 +83,26 @@ test('reloading the same tab keeps the session; only a new browser session needs
 
 // ─── An unconfigured deployment must not serve a fake dashboard ──────────────
 
-test('demo mode is off unless it is explicitly switched on', () => {
-  for (const raw of [undefined, null, '', '   ', 'false', 'no', '0', 'off', 'disabled']) {
-    assert.equal(demoModeAllowed(raw), false, `${String(raw)} must not enable demo mode`)
-  }
-  for (const raw of ['1', 'true', 'TRUE', 'yes', 'on', ' on ']) {
-    assert.equal(demoModeAllowed(raw), true, `${String(raw)} should enable demo mode`)
-  }
-})
-
-test('the gate fails closed: no Firebase config, no private screen, no seeded data', () => {
-  // The predicate the gate uses, restated here so the rule is visible in one place.
+test('the gate fails closed: no Firebase config, no private screen, no sample data', () => {
+  // The predicate the gate uses, restated here so the rule is visible in one place. There is no
+  // demo escape hatch — the removal of the sample-data subsystem is exactly this shape.
   const wallOff = ({
     configured,
-    allowDemo,
     isPublic,
     isAdminRoute,
   }: {
     configured: boolean
-    allowDemo: boolean
     isPublic: boolean
     isAdminRoute: boolean
-  }) => configured === false && !allowDemo && !isPublic && !isAdminRoute
+  }) => configured === false && !isPublic && !isAdminRoute
 
   // The reported symptom: nothing configured, a private dashboard requested → the wall, not a
-  // dashboard built from seedWorker().
-  assert.equal(wallOff({ configured: false, allowDemo: false, isPublic: false, isAdminRoute: false }), true)
+  // dashboard built from sample rows.
+  assert.equal(wallOff({ configured: false, isPublic: false, isAdminRoute: false }), true)
   // Public pages still render (the sign-in form explains the situation itself).
-  assert.equal(wallOff({ configured: false, allowDemo: false, isPublic: true, isAdminRoute: false }), false)
+  assert.equal(wallOff({ configured: false, isPublic: true, isAdminRoute: false }), false)
   // The console brings its own server-side session and is never gated by this rule.
-  assert.equal(wallOff({ configured: false, allowDemo: false, isPublic: false, isAdminRoute: true }), false)
+  assert.equal(wallOff({ configured: false, isPublic: false, isAdminRoute: true }), false)
   // A configured deployment behaves exactly as before.
-  assert.equal(wallOff({ configured: true, allowDemo: false, isPublic: false, isAdminRoute: false }), false)
-  // A developer who asked for the demo gets the demo (loudly, via DemoModeBanner).
-  assert.equal(wallOff({ configured: false, allowDemo: true, isPublic: false, isAdminRoute: false }), false)
+  assert.equal(wallOff({ configured: true, isPublic: false, isAdminRoute: false }), false)
 })

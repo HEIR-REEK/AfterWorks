@@ -76,7 +76,10 @@ test('a profile document records the verification state that is actually true', 
   assert.match(firestore, /const emailVerified = opts\.emailVerified === true/)
 
   const provider = await readFile(PROVIDER, 'utf8')
-  assert.match(provider, /createUserDocument\(cred\.user\.uid, name, cred\.user\.email \|\| '', \{ emailVerified: googleVerified \}\)/)
+  assert.match(
+    provider,
+    /createUserDocument\(cred\.user\.uid, name, cred\.user\.email \|\| '', \{[\s\S]*?emailVerified: googleVerified[\s\S]*?\}\)/,
+  )
 })
 
 test('"is this inbox verified" is asked of Auth, not of the credential snapshot', async () => {

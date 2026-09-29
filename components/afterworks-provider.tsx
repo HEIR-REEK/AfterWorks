@@ -13,14 +13,13 @@
  * Now the server owns every decision. Reads come from `/api/applications` and the member's own
  * Firestore document; writes go through routes that re-check eligibility (KYC, account state,
  * training entitlement, slot capacity, ownership). Where the platform is not configured — a fresh
- * clone, or an offline demo — `mode` reports `'demo'` and the UI says so, instead of inventing
- * balances and a fake "Applied" history.
+ * clone with no Firebase project — the app gate shows the configuration wall; nothing here
+ * invents balances or a fake "Applied" history.
  */
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
-  seedJobs,
-  seedWorker,
+  blankWorker,
   type Application,
   type Job,
   type Wallet,
@@ -118,8 +117,7 @@ type AfterWorksContextValue = {
   applications: Application[]
   paidTrainings: string[]
   profileLoaded: boolean
-  mode: 'live' | 'demo'
-  /** True when the cards on screen are real catalogue rows (not the sample catalogue). */
+  /** True when a live catalogue read has been applied in this session. */
   catalogueLive: boolean
   /** When the worker-side catalogue last matched Firestore (ISO). null until the first live read. */
   catalogueSyncedAt: string | null
@@ -241,7 +239,7 @@ type PendingApplication = Application & { _pending?: boolean }
 export function AfterWorksProvider({ children }: { children: ReactNode }) {
   const { user, configured } = useAuth()
   const uid = user?.uid ?? null
-  const [worker, setWorker] = useState<WorkerProfile>(() => seedWorker())
+  const [worker, setWorker] = useState<WorkerProfile>(() => blankWorker())
   const [wallet, setWallet] = useState<Wallet>(BLANK_WALLET)
   const [walletMeta, setWalletMeta] = useState<WalletMeta>(BLANK_META)
   const [payouts, setPayouts] = useState<PayoutState>(BLANK_PAYOUTS)
@@ -282,7 +280,7 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
     })
   }, [])
 
-  // ── Catalogue: live from Firestore, seeded demo data otherwise ────────────────
+  // ── Catalogue: live from Firestore ─────────────────────────────────────────
   //
   // The board used to be read once per session, so anything the console changed afterwards — the
   // training price most visibly — stayed invisible on an open dashboard until a hard reload. Three
@@ -293,14 +291,13 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
   //   3. focus/visibility refresh, which covers the everyday "I changed it in the console and
   //      switched back to this tab" flow without waiting for either of the above.
   //
-  // The rules for folding a snapshot into the board (which read may remove a card, when sample
-  // cards are allowed) live in `applyCatalogueSnapshot`; the ref mirrors the state so the callbacks
-  // below — which do not re-create on every render — always read the current board.
+  // The rules for folding a snapshot into the board (which read may remove a card) live in
+  // `applyCatalogueSnapshot`; the ref mirrors the state so the callbacks below — which do not
+  // re-create on every render — always read the current board.
   const applyLiveJobs = useCallback((incoming: Job[], authoritative: boolean) => {
     const next = applyCatalogueSnapshot(catalogueRef.current, {
       jobs: incoming,
       authoritative,
-      sample: seedJobs,
       at: new Date().toISOString(),
     })
     if (next === catalogueRef.current) return
@@ -346,8 +343,8 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
     if (typeof window !== 'undefined') window.addEventListener('focus', sync)
     if (typeof document !== 'undefined') document.addEventListener('visibilitychange', sync)
 
-    // The first read: a project with no catalogue yet stays explorable with the sample cards (the
-    // reducer decides that), and an admin edit made while this tab was closed is picked up here.
+    // The first read: an admin edit made while this tab was closed is picked up here, and a
+    // project with no catalogue yet shows an empty board (the reducer decides that).
     void refreshJobs()
 
     return () => {
@@ -416,7 +413,7 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
   // ── Profile + wallet ────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!user) {
-      setWorker(seedWorker())
+      setWorker(blankWorker())
       setWallet(BLANK_WALLET)
       setProfileDoc(null)
       setPayouts(BLANK_PAYOUTS)
@@ -679,10 +676,7 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
   const saveProfile = useCallback(
     async (fields: Record<string, unknown>): Promise<ProfileSaveResult> => {
       if (!user || !configured) {
-        // Demo mode keeps the UI honest: the fields stay on screen for the session and the member is
-        // told nothing was stored, instead of pretending a write happened.
-        setWorker((prev) => ({ ...prev, ...(fields as Partial<WorkerProfile>) }))
-        return { ok: false, error: 'Preview — profile changes are not saved on this site.' }
+        return { ok: false, error: 'Sign in to save your profile.' }
       }
       setBusy('profile', true)
       try {
@@ -798,8 +792,8 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
   const completion = useMemo<ProfileCompletion>(() => profileCompletion(profileDoc), [profileDoc])
 
   // The prompt appears once the session is settled and a profile is genuinely owed. It stays away
-  // when: the member is in demo mode, the inbox is unproven (the app gate owns that conversation),
-  // the profile is complete, or the member already dismissed it *this session*.
+  // when: the inbox is unproven (the app gate owns that conversation), the profile is complete,
+  // or the member already dismissed it *this session*.
   const promptOpen =
     Boolean(configured && user) &&
     profileLoaded &&
@@ -832,7 +826,6 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
       applications,
       paidTrainings,
       profileLoaded,
-      mode: configured && user ? 'live' : 'demo',
       catalogueLive: catalogue.live,
       catalogueSyncedAt: catalogue.syncedAt,
       pending,

@@ -100,15 +100,27 @@ test('a member cannot refer themselves, by uid or by email', () => {
   assert.equal(byEmail.ok === false && byEmail.code, 'self_referral')
 })
 
-test('an unverified or restricted referrer cannot pay anyone', () => {
+test('an unverified or restricted referrer still attaches — but the bonus waits', () => {
+  // A signup must never be silently thrown away over somebody else's unfinished KYC: the record
+  // is kept (the panel shows it as awaiting), and the money gate is re-checked at release time —
+  // which is what pays these out once the referrer is approved later.
   const unverified = evaluateReferralClaim({ ...goodClaim, referrerKycVerified: false })
-  assert.equal(unverified.ok === false && unverified.code, 'referrer_unverified')
+  assert.equal(unverified.ok, true)
+  assert.equal(unverified.ok === true && unverified.deferred, true)
+  assert.equal(unverified.ok === true && unverified.deferred ? unverified.code : '', 'referrer_unverified')
 
   const suspended = evaluateReferralClaim({ ...goodClaim, referrerAccountState: 'suspended' })
-  assert.equal(suspended.ok === false && suspended.code, 'referrer_restricted')
+  assert.equal(suspended.ok, true)
+  assert.equal(suspended.ok === true && suspended.deferred ? suspended.code : '', 'referrer_restricted')
 
   const banned = evaluateReferralClaim({ ...goodClaim, referrerAccountState: 'banned' })
-  assert.equal(banned.ok === false && banned.code, 'referrer_restricted')
+  assert.equal(banned.ok, true)
+  assert.equal(banned.ok === true && banned.deferred ? banned.code : '', 'referrer_restricted')
+
+  // A clean claim attaches and pays without deferral.
+  const clean = evaluateReferralClaim(goodClaim)
+  assert.equal(clean.ok, true)
+  assert.equal(clean.ok === true ? clean.deferred : true, false)
 })
 
 test('the weekly cap is enforced at the limit, not above it', () => {
@@ -120,19 +132,21 @@ test('the weekly cap is enforced at the limit, not above it', () => {
   assert.equal(over.ok === false && over.code, 'referral_rate_limited')
 })
 
-test('every rejection carries a message a member can be shown', () => {
-  for (const claim of [
-    { ...goodClaim, code: 'nope' },
-    { ...goodClaim, referredUid: 'ref-1' },
-    { ...goodClaim, referrerKycVerified: false },
-    { ...goodClaim, recentSignups: 999 },
-  ]) {
+test('every rejection and every deferral carries a message a member can be shown', () => {
+  const cases: Array<{ claim: Parameters<typeof evaluateReferralClaim>[0]; outcome: 'refuse' | 'defer' }> = [
+    { claim: { ...goodClaim, code: 'nope' }, outcome: 'refuse' },
+    { claim: { ...goodClaim, referredUid: 'ref-1' }, outcome: 'refuse' },
+    { claim: { ...goodClaim, recentSignups: 999 }, outcome: 'refuse' },
+    { claim: { ...goodClaim, referrerKycVerified: false }, outcome: 'defer' },
+    { claim: { ...goodClaim, referrerAccountState: 'suspended' }, outcome: 'defer' },
+  ]
+  for (const { claim, outcome } of cases) {
     const decision = evaluateReferralClaim(claim)
-    assert.equal(decision.ok, false)
-    if (!decision.ok) {
-      assert.ok(decision.message.length > 10, `copy for ${decision.code} is too thin`)
-      assert.doesNotMatch(decision.message, /undefined|NaN|\[object/)
-    }
+    if (outcome === 'refuse') assert.equal(decision.ok, false)
+    else assert.equal(decision.ok === true && decision.deferred, true)
+    const message = decision.ok ? (decision.deferred ? decision.message : '') : decision.message
+    assert.ok(message.length > 10, 'the member-facing copy is too thin')
+    assert.doesNotMatch(message, /undefined|NaN|\[object/)
   }
 })
 

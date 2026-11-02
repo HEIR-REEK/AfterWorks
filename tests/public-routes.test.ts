@@ -192,3 +192,11 @@ test('a training fee may be paid before KYC, but training and the assessment may
   assert.match(terms, /unlocked only after your identity verification is approved/)
   assert.match(terms, /paying does not bypass that check/)
 })
+
+test('admin member actions reach a PATCH handler on the users route', () => {
+  const route = readFileSync(join(ROOT, 'app/api/admin/users/route.ts'), 'utf8')
+  assert.match(route, /export async function PATCH\b/, 'the console calls PATCH /api/admin/users — the route must export PATCH')
+  assert.match(route, /export const runtime = 'nodejs'/, 'firebase-admin routes must stay on the Node runtime')
+  const client = readFileSync(join(ROOT, 'lib/admin.ts'), 'utf8')
+  assert.match(client, /userAction:[\s\S]{0,400}\/api\/admin\/users[\s\S]{0,120}method: 'PATCH'/, 'the admin client must send member actions to the PATCH route')
+})

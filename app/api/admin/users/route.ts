@@ -20,6 +20,9 @@ import { ADMIN_MUTABLE_STATES, isStateTransitionAllowed, staffUserActionVerdict 
  */
 
 export const dynamic = 'force-dynamic'
+// firebase-admin needs Node APIs; keeping this explicit prevents a future edge/proxy rewrite from
+// turning PATCH into a route Next cannot execute.
+export const runtime = 'nodejs'
 
 export async function GET(req: NextRequest) {
   const guard = await requireAdmin(req)

@@ -24,6 +24,7 @@ import { Button } from '@/components/ui/button'
 import { StatusBadge } from '@/components/status-badge'
 import { formatUsd } from '@/lib/afterworks-data'
 import { STATE_LABELS, type AdminMutableState } from '@/lib/admin-domain'
+import { describeError, errorStatus } from '@/lib/client-api'
 import { cn } from '@/lib/utils'
 
 /**
@@ -110,7 +111,7 @@ function UsersPageInner() {
       setDegraded(data.degraded as string | undefined)
       setError(null)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not load the directory.')
+      setError(describeError(err))
     } finally {
       setLoading(false)
     }
@@ -130,7 +131,7 @@ function UsersPageInner() {
       setSelected(data.user)
       setAccount((data.account as NonNullable<AdminUserRow['auth']> | undefined) ?? { exists: false, disabled: false, emailVerified: false, createdAt: null, lastSignInAt: null, providers: [], orphaned: true })
     } catch (err) {
-      push('error', err instanceof Error ? err.message : 'Could not load that profile.')
+      push('error', describeError(err))
     } finally {
       setBusy(false)
     }
@@ -161,7 +162,16 @@ function UsersPageInner() {
       setAccount(null)
       await load(cursors[cursors.length - 1] ?? null)
     } catch (err) {
-      push('error', err instanceof Error ? err.message : 'The action failed; nothing was changed.')
+      push('error', describeError(err))
+      // A 404 means the drawer's uid is no longer in the directory (hard-deleted, or the row was
+      // read during a deploy that has since replaced the record). Close the stale drawer and
+      // re-read the page rather than leaving the operator clicking an action that cannot succeed.
+      if (errorStatus(err) === 404) {
+        setConfirm(null)
+        setSelected(null)
+        setAccount(null)
+        await load(cursors[cursors.length - 1] ?? null)
+      }
     } finally {
       setBusy(false)
     }
@@ -197,7 +207,7 @@ function UsersPageInner() {
       push('success', result.note)
       await load(cursors[cursors.length - 1] ?? null)
     } catch (err) {
-      push('error', err instanceof Error ? err.message : 'The account could not be created.')
+      push('error', describeError(err))
     } finally {
       setAddBusy(false)
     }
@@ -212,7 +222,7 @@ function UsersPageInner() {
       push(result.removed ? 'success' : 'info', result.note ?? 'Lockouts cleared.')
       setConfirm(null)
     } catch (err) {
-      push('error', err instanceof Error ? err.message : 'The lockout could not be cleared.')
+      push('error', describeError(err))
     } finally {
       setBusy(false)
     }

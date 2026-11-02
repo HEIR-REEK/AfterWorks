@@ -77,16 +77,22 @@ export async function PUT(req: NextRequest) {
         // normalised by sanitizeJob() — the browser never gets to decide the real bounds.
         trainingFeeUsd: body.trainingFeeUsd === undefined ? undefined : Number(body.trainingFeeUsd),
         trainingNotes: Array.isArray(body.trainingNotes)
-          ? (body.trainingNotes as { title?: unknown; content?: unknown }[]).map((section) => ({
+          ? (body.trainingNotes as Record<string, unknown>[]).map((section) => ({
               title: String(section?.title ?? ''),
               content: String(section?.content ?? ''),
+              image: String(section?.image ?? ''),
+              imageAlt: String(section?.imageAlt ?? ''),
+              imageCaption: String(section?.imageCaption ?? ''),
             }))
           : [],
         assessmentQuestions: Array.isArray(body.assessmentQuestions)
-          ? (body.assessmentQuestions as { question?: unknown; options?: unknown; correctIndex?: unknown }[]).map((question) => ({
+          ? (body.assessmentQuestions as Record<string, unknown>[]).map((question) => ({
               question: String(question?.question ?? ''),
               options: Array.isArray(question?.options) ? (question.options as unknown[]).map(String) : [],
               correctIndex: Number(question?.correctIndex ?? 0),
+              image: String(question?.image ?? ''),
+              imageAlt: String(question?.imageAlt ?? ''),
+              explanation: String(question?.explanation ?? ''),
             }))
           : [],
         requiresVerified: body.requiresVerified !== false,

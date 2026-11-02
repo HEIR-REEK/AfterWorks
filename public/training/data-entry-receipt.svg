@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 540" width="960" height="540" role="img">
+<title>Reading a receipt without “fixing” it</title>
+<desc>The document is the authority. Your job is a faithful, typed representation of it.</desc>
+<defs>
+  <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M 0 0 L 10 5 L 0 10 z" fill="#2f5bd3"/>
+  </marker>
+</defs>
+<rect width="960" height="540" fill="#f4f7fb"/>
+<circle cx="900" cy="20" r="150" fill="#2f5bd3" opacity="0.06"/>
+<circle cx="60" cy="530" r="120" fill="#0f9d6b" opacity="0.06"/>
+<rect x="40" y="26" width="190" height="24" rx="12.0" fill="#e8eefc" stroke="none" stroke-width="1.5" /><text x="135.0" y="41.6" font-family="Inter, system-ui, sans-serif" font-size="10" font-weight="700" fill="#1e3f9e" text-anchor="middle">AFTERWORKS · TRAINING</text>
+<text x="40" y="74" font-family="Inter, system-ui, sans-serif" font-size="27" font-weight="700" fill="#0f172a" text-anchor="start">Reading a receipt without “fixing” it</text>
+<text x="40" y="101" font-family="Inter, system-ui, sans-serif" font-size="14" font-weight="500" fill="#64748b" text-anchor="start">The document is the authority. Your job is a faithful, typed representation of it.</text>
+
+<rect x="60" y="126" width="340" height="372" rx="14" fill="#fffdf7" stroke="#eadfc4" stroke-width="1.5" />
+<text x="84" y="162" font-family="JetBrains Mono, ui-monospace, monospace" font-size="17" font-weight="800" fill="#0f172a" text-anchor="start">HILLSIDE SUPPLIES</text>
+<text x="84" y="182" font-family="JetBrains Mono, ui-monospace, monospace" font-size="11" font-weight="500" fill="#64748b" text-anchor="start">Invoice 0042  ·  12/05/2026</text>
+<line x1="84" y1="198" x2="376" y2="198" stroke="#e8ddc6" stroke-width="2" stroke-dasharray="4 4" stroke-linecap="round"/>
+<text x="84" y="230" font-family="JetBrains Mono, ui-monospace, monospace" font-size="12" font-weight="500" fill="#0f172a" text-anchor="start">Paper reams</text><text x="376" y="230" font-family="JetBrains Mono, ui-monospace, monospace" font-size="12" font-weight="500" fill="#0f172a" text-anchor="end">1,200</text><text x="84" y="260" font-family="JetBrains Mono, ui-monospace, monospace" font-size="12" font-weight="500" fill="#0f172a" text-anchor="start">Printer ink</text><text x="376" y="260" font-family="JetBrains Mono, ui-monospace, monospace" font-size="12" font-weight="500" fill="#0f172a" text-anchor="end">2,100</text><text x="84" y="290" font-family="JetBrains Mono, ui-monospace, monospace" font-size="12" font-weight="500" fill="#0f172a" text-anchor="start">Delivery</text><text x="376" y="290" font-family="JetBrains Mono, ui-monospace, monospace" font-size="12" font-weight="500" fill="#0f172a" text-anchor="end">350</text><text x="84" y="320" font-family="JetBrains Mono, ui-monospace, monospace" font-size="12" font-weight="500" fill="#0f172a" text-anchor="start">VAT</text><text x="376" y="320" font-family="JetBrains Mono, ui-monospace, monospace" font-size="12" font-weight="500" fill="#0f172a" text-anchor="end">600</text>
+<line x1="84" y1="342" x2="376" y2="342" stroke="#d8c9a8" stroke-width="2" stroke-linecap="round"/>
+<text x="84" y="372" font-family="JetBrains Mono, ui-monospace, monospace" font-size="14" font-weight="800" fill="#0f172a" text-anchor="start">TOTAL</text>
+<text x="376" y="372" font-family="JetBrains Mono, ui-monospace, monospace" font-size="17" font-weight="800" fill="#0f172a" text-anchor="end">KES 4,850</text>
+<rect x="84" y="398" width="292" height="52" rx="8" fill="#fff1d6" stroke="none" stroke-width="1.5" />
+<text x="98" y="420" font-family="Inter, system-ui, sans-serif" font-size="10.5" font-weight="700" fill="#c8870a" text-anchor="start">Line items sum to 4,250 — the printed total</text>
+<text x="98" y="437" font-family="Inter, system-ui, sans-serif" font-size="10.5" font-weight="700" fill="#c8870a" text-anchor="start">says 4,850. Enter the printed total.</text>
+
+<rect x="440" y="126" width="480" height="118" rx="14" fill="#ffffff" stroke="#dbe3ee" stroke-width="1.5" />
+<rect x="462" y="142" width="58" height="22" rx="11.0" fill="#fff6df" stroke="none" stroke-width="1.5" /><text x="491.0" y="156.24" font-family="Inter, system-ui, sans-serif" font-size="9" font-weight="700" fill="#c8870a" text-anchor="middle">TOTAL</text>
+<text x="462" y="188" font-family="Inter, system-ui, sans-serif" font-size="15" font-weight="700" fill="#0f172a" text-anchor="start">Use the number printed on the receipt.</text>
+<text x="462" y="211" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="500" fill="#64748b" text-anchor="start">A source-side maths error is not yours to fix.</text>
+<text x="462" y="231" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="500" fill="#64748b" text-anchor="start">Flag it in the notes if the brief asks for that.</text>
+
+<rect x="440" y="258" width="480" height="108" rx="14" fill="#ffffff" stroke="#dbe3ee" stroke-width="1.5" />
+<rect x="462" y="274" width="52" height="22" rx="11.0" fill="#eef3fd" stroke="none" stroke-width="1.5" /><text x="488.0" y="288.24" font-family="Inter, system-ui, sans-serif" font-size="9" font-weight="700" fill="#1e3f9e" text-anchor="middle">DATE</text>
+<text x="462" y="320" font-family="Inter, system-ui, sans-serif" font-size="15" font-weight="700" fill="#0f172a" text-anchor="start">Normalize to the required format.</text>
+<text x="462" y="343" font-family="JetBrains Mono, ui-monospace, monospace" font-size="12.5" font-weight="500" fill="#64748b" text-anchor="start">12/05/2026  →  2026-05-12</text>
+
+<rect x="440" y="380" width="480" height="118" rx="14" fill="#ffffff" stroke="#dbe3ee" stroke-width="1.5" />
+<rect x="462" y="396" width="70" height="22" rx="11.0" fill="#eef3fd" stroke="none" stroke-width="1.5" /><text x="497.0" y="410.24" font-family="Inter, system-ui, sans-serif" font-size="9" font-weight="700" fill="#1e3f9e" text-anchor="middle">AMOUNT</text>
+<text x="462" y="442" font-family="Inter, system-ui, sans-serif" font-size="15" font-weight="700" fill="#0f172a" text-anchor="start">Digits only, no currency symbol.</text>
+<text x="462" y="465" font-family="JetBrains Mono, ui-monospace, monospace" font-size="12.5" font-weight="500" fill="#64748b" text-anchor="start">KES 4,850  →  4850</text>
+
+<text x="40" y="522" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="500" fill="#64748b" text-anchor="start" opacity="0.9">Illustration · not a live screenshot</text>
+</svg>

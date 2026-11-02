@@ -1,32 +1,47 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
   AlertTriangle,
   ArrowRight,
   BookOpen,
   CheckCircle2,
   ChevronDown,
+  Clock3,
   FileText,
+  GraduationCap,
+  HelpCircle,
   Lock,
   PartyPopper,
   RotateCcw,
-  Settings,
+  ShieldCheck,
+  Target,
+  XCircle,
 } from 'lucide-react'
-import type { Job } from '@/lib/afterworks-data'
+import {
+  type Job,
+  type TrainingCheck,
+  type TrainingSection,
+} from '@/lib/afterworks-data'
+import {
+  getJobTrainingCourse,
+  trainingCourseMinutes,
+} from '@/lib/training-curriculum'
+import { TrainingFigure } from '@/components/training-figure'
 import { cn } from '@/lib/utils'
 
 /**
- * Training, delivered as a course instead of a wall of text.
+ * Training, delivered as a short course instead of a wall of text.
  *
- * Sections come from the admin-authored `trainingNotes` on the job card when present; otherwise the
- * built-in per-category modules are used. Workers open one section at a time, mark it complete and
- * move to the next — progress is remembered per tab-set (sessionStorage) so a refresh does not send
- * them back to section 1. When the last section is finished the parent is notified, which is what
- * unlocks the assessment on the training page.
+ * Content comes from a short admin-authored briefing when the card has one, followed by the job's
+ * built-in category course from `lib/training-curriculum.ts` (five or more authored lessons replace
+ * the category course). Workers open
+ * one lesson at a time, pass the lesson's quick check (when it has one), mark it complete and move
+ * on. Progress is remembered per job so a refresh does not send them back to lesson 1. When the
+ * last lesson is finished the parent is notified, which unlocks the assessment.
  */
 
-export type TrainingSectionView = { title: string; text: string }
+export type TrainingSectionView = TrainingSection
 
 function progressKey(jobId: string): string {
   return `aw_training_progress:${jobId}`
@@ -62,7 +77,7 @@ function writeStoredDone(jobId: string, done: number): void {
   }
 }
 
-/** Persist a "all sections done" flag separately so the training page can detect completion
+/** Persist an "all lessons done" flag separately so the training page can detect completion
  *  even after a full tab restart wipes the in-memory state. */
 export function markTrainingComplete(jobId: string): void {
   try {
@@ -87,13 +102,9 @@ export function isTrainingMarkedComplete(jobId: string): boolean {
   }
 }
 
-/** The sections a worker must complete for this job: admin-authored notes first, category defaults as fallback. */
+/** The lessons a worker must complete for this job: authored notes first, category course as fallback. */
 export function getJobTrainingSections(job: Job): TrainingSectionView[] {
-  const authored = (job.trainingNotes ?? [])
-    .map((section) => ({ title: String(section?.title ?? '').trim(), text: String(section?.content ?? '').trim() }))
-    .filter((section) => section.title || section.text)
-  if (authored.length > 0) return authored
-  return categoryModules(job)
+  return getJobTrainingCourse(job).modules
 }
 
 /** Where a worker left off. Safe to call during render. */
@@ -101,29 +112,355 @@ export function readTrainingProgress(job: Job): { done: number; total: number; c
   const total = getJobTrainingSections(job).length
   if (typeof window === 'undefined') return { done: 0, total, complete: false }
   if (isTrainingMarkedComplete(job.id)) return { done: total, total, complete: true }
-  
+
   const done = Math.min(readStoredDone(job.id), total)
   return { done, total, complete: total > 0 && done >= total }
 }
 
-const SECTION_ICONS = [BookOpen, CheckCircle2, AlertTriangle, Settings, FileText]
+// ─── Inline formatting and figures ──────────────────────────────────────────
 
-function sectionIcon(index: number) {
-  const Icon = SECTION_ICONS[index % SECTION_ICONS.length]
-  return <Icon className="size-5 text-primary" />
+/**
+ * A deliberately tiny renderer for authored course prose. It supports paragraphs, `###`
+ * sub-headings, `-` bullets, numbered lists, `- [ ]` checklist items, `**bold**`, and
+ * `` `code` ``. It never uses `dangerouslySetInnerHTML`, so a pasted note cannot inject markup.
+ */
+function renderInline(text: string, keyPrefix: string): ReactNode[] {
+  const nodes: ReactNode[] = []
+  const pattern = /(\*\*[^*]+\*\*|`[^`]+`)/g
+  let lastIndex = 0
+  let match: RegExpExecArray | null
+  let index = 0
+
+  while ((match = pattern.exec(text)) !== null) {
+    if (match.index > lastIndex) nodes.push(text.slice(lastIndex, match.index))
+    const token = match[0]
+    if (token.startsWith('**')) {
+      nodes.push(
+        <strong key={`${keyPrefix}-b-${index}`} className="font-semibold text-foreground">
+          {token.slice(2, -2)}
+        </strong>,
+      )
+    } else {
+      nodes.push(
+        <code
+          key={`${keyPrefix}-c-${index}`}
+          className="rounded bg-muted px-1 py-0.5 font-mono text-[0.9em] text-foreground"
+        >
+          {token.slice(1, -1)}
+        </code>,
+      )
+    }
+    lastIndex = pattern.lastIndex
+    index += 1
+  }
+
+  if (lastIndex < text.length) nodes.push(text.slice(lastIndex))
+  return nodes
 }
 
-export function TrainingModules({ job, onComplete, onReset }: { job: Job; onComplete?: () => void; onReset?: () => void }) {
-  const sections = useMemo(() => getJobTrainingSections(job), [job])
+export function TrainingContent({ text }: { text: string }) {
+  const normalized = text.replace(/\\n/g, '\n').trim()
+  if (!normalized) return null
+  const blocks = normalized.split(/\n{2,}/)
+
+  return (
+    <div className="flex flex-col gap-3 text-sm leading-relaxed text-foreground/85">
+      {blocks.map((rawBlock, blockIndex) => {
+        const lines = rawBlock
+          .split('\n')
+          .map((line) => line.trim())
+          .filter(Boolean)
+        if (lines.length === 0) return null
+
+        if (lines[0].startsWith('### ')) {
+          const heading = lines[0].slice(4)
+          const rest = lines.slice(1)
+          return (
+            <Fragment key={`block-${blockIndex}`}>
+              <h4 className="mt-1 text-sm font-semibold text-foreground">{heading}</h4>
+              {rest.length > 0 && (
+                <p className="whitespace-pre-line">
+                  {renderInline(rest.join(' '), `block-${blockIndex}`)}
+                </p>
+              )}
+            </Fragment>
+          )
+        }
+
+        if (lines.every((line) => /^[-*•]\s+\[[ xX]\]\s+/.test(line) || /^\[[ xX]\]\s+/.test(line))) {
+          return (
+            <ul key={`block-${blockIndex}`} className="flex flex-col gap-1.5 rounded-xl border border-border/70 bg-muted/20 p-3">
+              {lines.map((line, lineIndex) => (
+                <li key={lineIndex} className="flex items-start gap-2 text-xs">
+                  <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-success" />
+                  <span>
+                    {renderInline(
+                      line.replace(/^[-*•]\s+/, '').replace(/^\[[ xX]\]\s+/, ''),
+                      `check-${blockIndex}-${lineIndex}`,
+                    )}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )
+        }
+
+        if (lines.every((line) => /^[-*•]\s+/.test(line))) {
+          return (
+            <ul key={`block-${blockIndex}`} className="flex flex-col gap-1.5 pl-1">
+              {lines.map((line, lineIndex) => (
+                <li key={lineIndex} className="flex gap-2">
+                  <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-primary/70" />
+                  <span>{renderInline(line.replace(/^[-*•]\s+/, ''), `ul-${blockIndex}-${lineIndex}`)}</span>
+                </li>
+              ))}
+            </ul>
+          )
+        }
+
+        if (lines.every((line) => /^\d+[.)]\s+/.test(line))) {
+          return (
+            <ol key={`block-${blockIndex}`} className="flex flex-col gap-1.5 pl-1">
+              {lines.map((line, lineIndex) => (
+                <li key={lineIndex} className="flex gap-2">
+                  <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-primary/10 font-mono text-[10px] font-semibold text-primary">
+                    {line.match(/^\d+/)?.[0]}
+                  </span>
+                  <span>{renderInline(line.replace(/^\d+[.)]\s+/, ''), `ol-${blockIndex}-${lineIndex}`)}</span>
+                </li>
+              ))}
+            </ol>
+          )
+        }
+
+        return (
+          <p key={`block-${blockIndex}`} className="whitespace-pre-line">
+            {renderInline(lines.join('\n'), `p-${blockIndex}`)}
+          </p>
+        )
+      })}
+    </div>
+  )
+}
+
+// ─── Lesson knowledge check ─────────────────────────────────────────────────
+
+function ModuleCheck({
+  check,
+  passed,
+  onPassed,
+}: {
+  check: TrainingCheck
+  passed: boolean
+  onPassed: () => void
+}) {
+  const [selected, setSelected] = useState<number | null>(null)
+  const [attempts, setAttempts] = useState(0)
+  const correct = selected === check.correctIndex
+  const answered = selected !== null
+
+  const choose = (index: number) => {
+    // Once the check is correct, keep the passed answer visible instead of letting a stray click
+    // turn a passed lesson back into a wrong-looking one.
+    if (selected === check.correctIndex) return
+    setSelected(index)
+    setAttempts((value) => value + 1)
+    if (index === check.correctIndex) onPassed()
+  }
+
+  return (
+    <div className="mt-5 rounded-xl border border-primary/20 bg-primary/[0.035] p-3.5 sm:p-4">
+      <div className="flex items-start gap-2">
+        <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+          <HelpCircle className="size-4" />
+        </span>
+        <div className="min-w-0">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-primary">
+            Quick check {passed ? '· passed' : ''}
+          </p>
+          <p className="mt-1 text-sm font-medium text-foreground">{check.question}</p>
+        </div>
+      </div>
+
+      <div className="mt-3 grid gap-2">
+        {check.options.map((option, index) => {
+          const isSelected = selected === index
+          const isCorrect = index === check.correctIndex
+          return (
+            <button
+              key={index}
+              type="button"
+              onClick={() => choose(index)}
+              className={cn(
+                'flex w-full items-start gap-2 rounded-lg border px-3 py-2 text-left text-xs transition-colors',
+                !isSelected && 'border-border bg-background hover:border-primary/40 hover:bg-primary/[0.03]',
+                isSelected && isCorrect && 'border-success/50 bg-success/10 text-success',
+                isSelected && !isCorrect && 'border-destructive/40 bg-destructive/5 text-destructive',
+                !isSelected && answered && isCorrect && 'border-success/40 bg-success/5',
+              )}
+            >
+              <span
+                className={cn(
+                  'mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full border text-[9px] font-bold',
+                  isSelected && isCorrect && 'border-success bg-success text-white',
+                  isSelected && !isCorrect && 'border-destructive bg-destructive text-white',
+                  !isSelected && 'border-border text-muted-foreground',
+                )}
+              >
+                {isSelected ? (isCorrect ? '✓' : '×') : String.fromCharCode(65 + index)}
+              </span>
+              <span>{option}</span>
+            </button>
+          )
+        })}
+      </div>
+
+      {answered && (
+        <div
+          role="status"
+          aria-live="polite"
+          className={cn(
+            'mt-3 flex items-start gap-2 rounded-lg border px-3 py-2 text-xs',
+            correct
+              ? 'border-success/30 bg-success/10 text-success'
+              : 'border-destructive/30 bg-destructive/5 text-destructive',
+          )}
+        >
+          {correct ? <CheckCircle2 className="mt-0.5 size-3.5 shrink-0" /> : <XCircle className="mt-0.5 size-3.5 shrink-0" />}
+          <span>
+            <span className="font-semibold">{correct ? 'Correct. ' : 'Not quite. '}</span>
+            {check.explanation ?? (correct ? 'You can finish this lesson.' : 'Try another answer.')}
+          </span>
+        </div>
+      )}
+
+      {answered && !correct && attempts > 0 && (
+        <button
+          type="button"
+          onClick={() => setSelected(null)}
+          className="mt-2 text-[11px] font-medium text-primary hover:underline"
+        >
+          Try again
+        </button>
+      )}
+    </div>
+  )
+}
+
+// ─── Course header ──────────────────────────────────────────────────────────
+
+function CourseHeader({
+  job,
+  course,
+  done,
+  total,
+  pct,
+  complete,
+}: {
+  job: Job
+  course: ReturnType<typeof getJobTrainingCourse>
+  done: number
+  total: number
+  pct: number
+  complete: boolean
+}) {
+  const minutes = trainingCourseMinutes(course)
+  return (
+    <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
+      <div className="p-4 sm:p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="flex min-w-0 items-start gap-3">
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+              <GraduationCap className="size-5" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-primary">
+                AfterWorks academy
+              </p>
+              <h3 className="mt-0.5 text-base font-bold text-foreground sm:text-lg">
+                {course.level.includes('job-specific')
+                  ? 'Job-specific training course'
+                  : `${job.category} training course`}
+              </h3>
+              <p className="mt-0.5 text-[11px] text-muted-foreground">
+                {course.level} · {total} lesson{total === 1 ? '' : 's'} · ~{minutes} min
+              </p>
+            </div>
+          </div>
+          <span
+            className={cn(
+              'rounded-full px-2.5 py-1 text-[11px] font-semibold',
+              complete ? 'bg-success/15 text-success' : 'bg-primary/10 text-primary',
+            )}
+          >
+            {complete ? 'Completed' : `${pct}%`}
+          </span>
+        </div>
+
+        <p className="mt-3 text-sm leading-relaxed text-foreground/80">{course.summary}</p>
+
+        <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-muted">
+          <div
+            className={cn('h-full rounded-full transition-all duration-500', complete ? 'bg-success' : 'bg-primary')}
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+        <p className="mt-1.5 text-[11px] text-muted-foreground">
+          {complete
+            ? `All ${total} lessons complete — the assessment is unlocked below.`
+            : `Lesson ${Math.min(done + 1, total)} of ${total} is open. Finish each lesson to unlock the next.`}
+        </p>
+
+        <div className="mt-4 rounded-xl border border-border/70 bg-muted/25 p-3">
+          <p className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            <Target className="size-3.5 text-primary" />
+            What you'll learn
+          </p>
+          <ul className="mt-2 grid gap-1.5 sm:grid-cols-2">
+            {course.objectives.map((objective) => (
+              <li key={objective} className="flex items-start gap-2 text-xs leading-relaxed text-foreground/80">
+                <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-success" />
+                <span>{objective}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+
+      {course.heroImage && (
+        <TrainingFigure
+          src={course.heroImage}
+          alt={course.heroAlt}
+          caption={course.heroCaption}
+          className="rounded-none border-x-0 border-b-0"
+        />
+      )}
+    </div>
+  )
+}
+
+// ─── Gated course ───────────────────────────────────────────────────────────
+
+export function TrainingModules({
+  job,
+  onComplete,
+  onReset,
+}: {
+  job: Job
+  onComplete?: () => void
+  onReset?: () => void
+}) {
+  const course = useMemo(() => getJobTrainingCourse(job), [job])
+  const sections = course.modules
   const total = sections.length
 
-  // `done` = how many sections are marked complete. The section at index `done` is the one being
-  // studied right now (locked ones are everything after it).
-  const [done, setDone] = useState(() => {
-    if (typeof window !== 'undefined' && isTrainingMarkedComplete(job.id)) return total
-    return 0
-  })
+  // `done` = how many lessons are marked complete. The lesson at index `done` is the current one;
+  // everything after it is locked.
+  // Start at zero on both server and client so hydration is stable; the effect below restores
+  // the saved position as soon as the browser is available.
+  const [done, setDone] = useState(0)
   const [openIndex, setOpenIndex] = useState(0)
+  const [passedChecks, setPassedChecks] = useState<Set<number>>(new Set())
 
   useEffect(() => {
     if (isTrainingMarkedComplete(job.id)) {
@@ -149,17 +486,25 @@ export function TrainingModules({ job, onComplete, onReset }: { job: Job; onComp
     setDone((prev) => {
       const next = Math.min(prev + 1, total)
       writeStoredDone(job.id, next)
-      if (next >= total) {
-        markTrainingComplete(job.id)
-      }
+      if (next >= total) markTrainingComplete(job.id)
       setOpenIndex(Math.min(next, Math.max(0, total - 1)))
       return next
     })
   }, [job.id, total])
 
+  const markCheckPassed = useCallback((index: number) => {
+    setPassedChecks((prev) => {
+      if (prev.has(index)) return prev
+      const next = new Set(prev)
+      next.add(index)
+      return next
+    })
+  }, [])
+
   const resetProgress = useCallback(() => {
     setDone(0)
     setOpenIndex(0)
+    setPassedChecks(new Set())
     try {
       window.localStorage.removeItem(progressKey(job.id))
       window.localStorage.removeItem(completionKey(job.id))
@@ -178,44 +523,23 @@ export function TrainingModules({ job, onComplete, onReset }: { job: Job; onComp
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Course header + progress */}
-      <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <div className="flex size-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
-              <BookOpen className="size-4.5" />
-            </div>
-            <div>
-              <p className="text-sm font-semibold text-foreground">
-                {isAuthored ? 'Training course' : `${job.category} training course`}
-              </p>
-              <p className="text-[11px] text-muted-foreground">
-                {complete ? 'All sections completed' : `Section ${Math.min(done + 1, total)} of ${total}`}
-              </p>
-            </div>
-          </div>
-          <span className="font-mono text-xs font-semibold tabular text-muted-foreground">{pct}%</span>
-        </div>
-        <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-muted">
-          <div
-            className={cn('h-full rounded-full transition-all duration-500', complete ? 'bg-success' : 'bg-primary')}
-            style={{ width: `${pct}%` }}
-          />
-        </div>
-      </div>
+      <CourseHeader job={job} course={course} done={done} total={total} pct={pct} complete={complete} />
 
-      {/* Sections: completed ones can be re-opened for review, the current one is open, the rest are locked */}
+      {/* Lessons: completed ones can be re-opened for review, the current one is open, the rest are locked */}
       <ul className="flex flex-col gap-3">
         {sections.map((section, index) => {
           const state = index < done ? 'completed' : index === done ? 'current' : 'locked'
           const isOpen = state !== 'locked' && openIndex === index
+          const checkPassed = !section.check || passedChecks.has(index)
+          const canFinish = state !== 'current' || checkPassed
+          const duration = section.durationMinutes ?? 5
           return (
             <li
-              key={index}
+              key={`${index}-${section.title}`}
               className={cn(
                 'overflow-hidden rounded-xl border transition-colors',
                 state === 'current' && 'border-primary/50 bg-card shadow-sm ring-1 ring-primary/20',
-                state === 'completed' && 'border-success/30 bg-success/5',
+                state === 'completed' && 'border-success/30 bg-success/[0.03]',
                 state === 'locked' && 'border-border/60 bg-muted/20 opacity-70',
               )}
             >
@@ -223,50 +547,115 @@ export function TrainingModules({ job, onComplete, onReset }: { job: Job; onComp
                 type="button"
                 disabled={state === 'locked'}
                 onClick={() => setOpenIndex(isOpen && state === 'completed' ? -1 : index)}
-                className="flex w-full items-center gap-3 p-4 text-left disabled:cursor-not-allowed"
+                className="flex w-full items-center gap-3 p-3.5 text-left disabled:cursor-not-allowed sm:p-4"
                 aria-expanded={isOpen}
               >
                 <span
                   className={cn(
-                    'flex size-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold',
+                    'flex size-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold',
                     state === 'completed' && 'bg-success/20 text-success',
                     state === 'current' && 'bg-primary/15 font-mono text-primary',
                     state === 'locked' && 'bg-muted text-muted-foreground',
                   )}
                 >
-                  {state === 'completed' ? <CheckCircle2 className="size-4" /> : state === 'locked' ? <Lock className="size-3.5" /> : index + 1}
+                  {state === 'completed' ? (
+                    <CheckCircle2 className="size-4" />
+                  ) : state === 'locked' ? (
+                    <Lock className="size-3.5" />
+                  ) : (
+                    index + 1
+                  )}
                 </span>
                 <span className="min-w-0 flex-1">
-                  <span className={cn('block truncate text-sm font-semibold', state === 'locked' ? 'text-muted-foreground' : 'text-foreground')}>
-                    {section.title || `Section ${index + 1}`}
+                  <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                    <span className="text-[9px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                      Lesson {index + 1}
+                    </span>
+                    <span className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground">
+                      <Clock3 className="size-3" />
+                      {duration} min
+                    </span>
+                    {section.check && (
+                      <span
+                        className={cn(
+                          'inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[9px] font-semibold',
+                          checkPassed ? 'bg-success/15 text-success' : 'bg-primary/10 text-primary',
+                        )}
+                      >
+                        {checkPassed ? 'check passed' : 'quick check'}
+                      </span>
+                    )}
                   </span>
-                  <span className="block text-[11px] text-muted-foreground">
-                    {state === 'completed' ? 'Completed — tap to review' : state === 'current' ? 'Study this section, then continue' : 'Unlocks when the previous section is complete'}
+                  <span
+                    className={cn(
+                      'mt-0.5 block truncate text-sm font-semibold',
+                      state === 'locked' ? 'text-muted-foreground' : 'text-foreground',
+                    )}
+                  >
+                    {section.title || `Lesson ${index + 1}`}
+                  </span>
+                  <span className="mt-0.5 block text-[11px] text-muted-foreground">
+                    {state === 'completed'
+                      ? 'Completed — tap to review'
+                      : state === 'current'
+                        ? 'Study this lesson, pass the check, then continue'
+                        : 'Unlocks when the previous lesson is complete'}
                   </span>
                 </span>
                 {state !== 'locked' && (
-                  <ChevronDown className={cn('size-4 shrink-0 text-muted-foreground transition-transform', isOpen && 'rotate-180')} />
+                  <ChevronDown
+                    className={cn(
+                      'size-4 shrink-0 text-muted-foreground transition-transform',
+                      isOpen && 'rotate-180',
+                    )}
+                  />
                 )}
               </button>
 
               {isOpen && (
-                <div className="border-t border-border/60 p-4">
+                <div className="border-t border-border/60 p-4 sm:p-5">
                   <div className="flex items-start gap-3">
-                    <span className="mt-0.5 shrink-0">{sectionIcon(index)}</span>
-                    <div className="min-w-0 flex-1 text-sm leading-relaxed text-foreground/85 whitespace-pre-wrap">{section.text}</div>
+                    <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                      {state === 'completed' ? (
+                        <ShieldCheck className="size-4" />
+                      ) : (
+                        <BookOpen className="size-4" />
+                      )}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <TrainingContent text={section.content} />
+                    </div>
                   </div>
+
+                  {section.image && (
+                    <TrainingFigure
+                      src={section.image}
+                      alt={section.imageAlt}
+                      caption={section.imageCaption}
+                      className="mt-4"
+                    />
+                  )}
+
+                  {section.check && state === 'current' && (
+                    <ModuleCheck
+                      check={section.check}
+                      passed={checkPassed}
+                      onPassed={() => markCheckPassed(index)}
+                    />
+                  )}
 
                   {state === 'current' && (
                     <div className="mt-5 flex flex-col gap-2 border-t border-border/60 pt-4 sm:flex-row sm:items-center sm:justify-between">
                       <p className="text-[11px] text-muted-foreground">
                         {index === total - 1
-                          ? 'This is the final section. Finish the course to unlock the assessment.'
-                          : `Section ${index + 1} of ${total} — the next section unlocks when you continue.`}
+                          ? 'This is the final lesson. Finish the course to unlock the assessment.'
+                          : `Lesson ${index + 1} of ${total} — the next lesson unlocks when you continue.`}
                       </p>
                       <button
                         type="button"
                         onClick={completeSection}
-                        className="inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground shadow-sm transition-colors hover:bg-primary/90"
+                        disabled={!canFinish}
+                        className="inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground shadow-sm transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         {index === total - 1 ? (
                           <>
@@ -275,12 +664,19 @@ export function TrainingModules({ job, onComplete, onReset }: { job: Job; onComp
                           </>
                         ) : (
                           <>
-                            Mark complete &amp; next section
+                            Mark complete &amp; next lesson
                             <ArrowRight className="size-4" />
                           </>
                         )}
                       </button>
                     </div>
+                  )}
+
+                  {state === 'current' && !canFinish && (
+                    <p className="mt-2 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                      <AlertTriangle className="size-3.5 text-warning" />
+                      Answer the quick check correctly to unlock the next lesson.
+                    </p>
                   )}
                 </div>
               )}
@@ -289,7 +685,6 @@ export function TrainingModules({ job, onComplete, onReset }: { job: Job; onComp
         })}
       </ul>
 
-      {/* Completion panel */}
       {complete && (
         <div className="flex flex-col items-start gap-3 rounded-xl border border-success/40 bg-success/10 p-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-3">
@@ -297,7 +692,8 @@ export function TrainingModules({ job, onComplete, onReset }: { job: Job; onComp
             <div>
               <p className="text-sm font-semibold text-success">Training complete</p>
               <p className="text-xs text-muted-foreground">
-                You finished all {total} section{total === 1 ? '' : 's'}. The assessment below is now unlocked.
+                You finished all {total} lesson{total === 1 ? '' : 's'}. The assessment below is now
+                unlocked.
               </p>
             </div>
           </div>
@@ -311,185 +707,113 @@ export function TrainingModules({ job, onComplete, onReset }: { job: Job; onComp
           </button>
         </div>
       )}
+
+      {isAuthored && (
+        <p className="text-[11px] text-muted-foreground">
+          This course includes a briefing written for this job card. Read it alongside the category
+          lessons — the assessment draws on both.
+        </p>
+      )}
     </div>
   )
 }
 
+// ─── Ungated preview for assessment-only cards ──────────────────────────────
+
 /**
- * Ungated note viewer for assessment-only job cards: the admin can still publish preparation
- * notes, and workers can expand them freely — there is no payment or sequencing to enforce.
+ * The free-card counterpart: the same rich lessons, but with no payment or sequencing gate. It is
+ * also the "preparation course" shown before an assessment-only card, so the questions are based on
+ * material the worker can actually read.
  */
 export function TrainingNotesPreview({ job }: { job: Job }) {
-  const sections = (job.trainingNotes ?? [])
-    .map((section) => ({ title: String(section?.title ?? '').trim(), text: String(section?.content ?? '').trim() }))
-    .filter((section) => section.title || section.text)
+  const course = useMemo(() => getJobTrainingCourse(job), [job])
+  const sections = course.modules
   const [open, setOpen] = useState<number | null>(0)
 
   if (sections.length === 0) return null
+  const minutes = trainingCourseMinutes(course)
 
   return (
-    <div className="flex flex-col gap-3">
-      <ul className="flex flex-col gap-2">
+    <div className="overflow-hidden rounded-2xl border border-border bg-card">
+      <div className="border-b border-border/60 bg-muted/20 p-4">
+        <div className="flex items-start gap-3">
+          <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+            <FileText className="size-4" />
+          </div>
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-primary">
+              Preparation course
+            </p>
+            <p className="mt-0.5 text-sm font-semibold text-foreground">
+              {job.category} · {sections.length} lesson{sections.length === 1 ? '' : 's'} · ~{minutes} min
+            </p>
+            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{course.summary}</p>
+          </div>
+        </div>
+        {course.objectives.length > 0 && (
+          <ul className="mt-3 grid gap-1.5 sm:grid-cols-2">
+            {course.objectives.map((objective) => (
+              <li key={objective} className="flex items-start gap-2 text-[11px] leading-relaxed text-foreground/75">
+                <CheckCircle2 className="mt-0.5 size-3 shrink-0 text-success" />
+                <span>{objective}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+        {course.heroImage && (
+          <TrainingFigure
+            src={course.heroImage}
+            alt={course.heroAlt}
+            caption={course.heroCaption}
+            className="mt-3"
+          />
+        )}
+      </div>
+
+      <ul className="divide-y divide-border/60">
         {sections.map((section, index) => (
-          <li key={index} className="overflow-hidden rounded-xl border border-border bg-card">
+          <li key={`${index}-${section.title}`}>
             <button
               type="button"
               onClick={() => setOpen(open === index ? null : index)}
-              className="flex w-full items-center gap-3 p-3.5 text-left"
+              className="flex w-full items-center gap-3 p-3.5 text-left hover:bg-muted/20"
               aria-expanded={open === index}
             >
-              <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
-                <StickyNoteIcon />
+              <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-primary/10 font-mono text-[11px] font-semibold text-primary">
+                {index + 1}
               </span>
-              <span className="min-w-0 flex-1 text-sm font-semibold text-foreground">{section.title || `Note ${index + 1}`}</span>
-              <ChevronDown className={cn('size-4 shrink-0 text-muted-foreground transition-transform', open === index && 'rotate-180')} />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm font-semibold text-foreground">
+                  {section.title || `Lesson ${index + 1}`}
+                </span>
+                <span className="mt-0.5 inline-flex items-center gap-1 text-[10px] text-muted-foreground">
+                  <Clock3 className="size-3" />
+                  {section.durationMinutes ?? 5} min · tap to {open === index ? 'close' : 'read'}
+                </span>
+              </span>
+              <ChevronDown
+                className={cn(
+                  'size-4 shrink-0 text-muted-foreground transition-transform',
+                  open === index && 'rotate-180',
+                )}
+              />
             </button>
             {open === index && (
-              <div className="border-t border-border/60 p-4 text-sm leading-relaxed text-foreground/85 whitespace-pre-wrap">{section.text}</div>
+              <div className="border-t border-border/60 p-4">
+                <TrainingContent text={section.content} />
+                {section.image && (
+                  <TrainingFigure
+                    src={section.image}
+                    alt={section.imageAlt}
+                    caption={section.imageCaption}
+                    className="mt-4"
+                  />
+                )}
+              </div>
             )}
           </li>
         ))}
       </ul>
     </div>
   )
-}
-
-function StickyNoteIcon() {
-  return <FileText className="size-3.5" />
-}
-
-// ─── Built-in fallback content (per category) ────────────────────────────────
-
-function categoryModules(job: Job): TrainingSectionView[] {
-  const contentMap: Record<string, TrainingSectionView[]> = {
-    'Transcription': [
-      {
-        title: 'Module 1: Introduction & Core Objective',
-        text: `In this role, you will be transcribing audio files into text. The core objective is capturing every spoken word accurately while adhering to the specified verbatim style. Your work directly trains voice recognition models and provides accessibility, making precision critical. \n\n**Job specifics:** ${job.description}`,
-      },
-      {
-        title: 'Module 2: Quality Standards & QA',
-        text: 'Our Quality Assurance (QA) team regularly audits submissions. We expect a minimum of 98% accuracy. This means correct spelling, proper punctuation, and accurate speaker identification. Falling below this threshold consistently will result in account suspension.',
-      },
-      {
-        title: 'Module 3: Common Pitfalls & Edge Cases',
-        text: 'Expect to encounter overlapping speech, thick accents, and heavy background noise. \n- **Overlapping Speech:** Always use separate speaker labels with exact timestamps.\n- **Unintelligible Audio:** If you cannot understand a word after listening 3 times, use the `[inaudible]` or `[unclear]` tag.\n- **Stutters/Filler Words:** Follow the project guidelines (strict verbatim requires capturing "um" and "uh", clean verbatim requires removing them).',
-      },
-      {
-        title: 'Module 4: Formatting Guidelines',
-        text: 'Always format speaker changes on a new line (e.g., "Speaker 1:"). Timestamps should be added at every speaker change or every 2 minutes of continuous speech unless instructed otherwise. Spell out numbers one through nine, and use numerals for 10 and above.',
-      },
-    ],
-    'Data Entry': [
-      {
-        title: 'Module 1: Introduction & Core Objective',
-        text: `You will be extracting structured data from receipts, invoices, and handwritten forms. Your core objective is to digitize analog information exactly as it appears on the source document. \n\n**Job specifics:** ${job.description}`,
-      },
-      {
-        title: 'Module 2: Quality Standards & QA',
-        text: 'Data entry demands 100% accuracy, especially on numeric fields like IDs, phone numbers, and financial totals. A single wrong digit invalidates the entire record. QA will sample your work, and precision is prioritized over speed.',
-      },
-      {
-        title: 'Module 3: Common Pitfalls & Edge Cases',
-        text: 'You will frequently see illegible handwriting, missing dates, or calculation errors on receipts.\n- **Errors on Source:** If a receipt total is calculated wrong, enter the total *exactly as written* on the receipt, do not fix their math.\n- **Blank Fields:** If a field is empty, leave the entry blank or use the designated N/A code. Do not guess.\n- **Illegible Text:** Use the `[unclear]` tag for completely unreadable words.',
-      },
-      {
-        title: 'Module 4: Formatting Guidelines',
-        text: 'Always format dates strictly as YYYY-MM-DD regardless of how they appear on the form (unless otherwise instructed). Omit currency symbols ($, €, £) from numeric amount fields. Ensure email addresses are entered in lowercase without trailing spaces.',
-      },
-    ],
-    'Image Labeling': [
-      {
-        title: 'Module 1: Introduction & Core Objective',
-        text: `Your task is to draw precise bounding boxes or polygons around objects of interest in images. This data is used to train computer vision AI models (like self-driving cars or medical imaging). \n\n**Job specifics:** ${job.description}`,
-      },
-      {
-        title: 'Module 2: Quality Standards & QA',
-        text: 'The most important metric is "tightness". A bounding box must tightly enclose the visible parts of the object—all four edges of the box should touch the outermost pixels of the target object. Loose boxes or boxes that cut off the object will be rejected by QA.',
-      },
-      {
-        title: 'Module 3: Common Pitfalls & Edge Cases',
-        text: 'You must correctly handle occlusion and truncation.\n- **Occlusion:** If a car is partially blocked by a tree, only draw the box around the *visible* parts of the car.\n- **Truncation:** If an object is cut off by the edge of the image, draw the box exactly up to the edge.\n- **Shadows/Reflections:** Exclude shadows and mirror reflections from your bounding boxes unless explicitly asked to include them.',
-      },
-      {
-        title: 'Module 4: Tooling & Categorization',
-        text: 'Ensure you select the most specific category available for an object. If a vehicle is towing a trailer, draw two separate bounding boxes (one for the vehicle, one for the trailer). Do not label objects that are too small to identify without extreme zooming.',
-      },
-    ],
-    'Content Review': [
-      {
-        title: 'Module 1: Introduction & Core Objective',
-        text: `You will evaluate user-generated text, images, or videos against platform safety policies. Your core objective is to maintain a safe environment by accurately identifying and actioning violating content. \n\n**Job specifics:** ${job.description}`,
-      },
-      {
-        title: 'Module 2: Quality Standards & QA',
-        text: 'Reviewers must remain 100% objective. You must separate your personal biases or offense from the written policy. QA audits rely entirely on whether your decision matches the strict letter of the platform guidelines.',
-      },
-      {
-        title: 'Module 3: Edge Cases & Escalations',
-        text: 'Not all content is black and white.\n- **Borderline Content:** Content that is highly offensive but doesn\'t technically cross the line into hate speech or harassment must usually be allowed.\n- **Context Matters:** A word might be a slur in one context, but a reclaimed term or historical reference in another.\n- **Escalations:** Any indication of imminent self-harm, terrorism, or CSAM must be immediately escalated through the emergency protocol.',
-      },
-      {
-        title: 'Module 4: Tagging Guidelines',
-        text: 'When removing content, you must apply the correct violation tag (e.g., "Hate Speech", "Spam", "Harassment"). If multiple violations exist, choose the most severe one. Always leave clear, concise audit notes if the decision was ambiguous.',
-      },
-    ],
-    'Translation': [
-      {
-        title: 'Module 1: Introduction & Core Objective',
-        text: `You will translate text from a source language to a target language. The objective is to convey the original meaning accurately, naturally, and fluently in the target language. \n\n**Job specifics:** ${job.description}`,
-      },
-      {
-        title: 'Module 2: Quality Standards & QA',
-        text: 'Literal, word-for-word translation is unacceptable because grammar rules differ between languages. QA grades based on meaning preservation, natural flow, and adherence to the intended tone (e.g., formal legal vs. casual marketing).',
-      },
-      {
-        title: 'Module 3: Common Pitfalls & Edge Cases',
-        text: 'You will encounter cultural idioms and untranslatable concepts.\n- **Idioms:** Never translate idioms literally (e.g., "it\'s raining cats and dogs"). Find an equivalent idiom in the target language or simply translate the underlying meaning.\n- **Typos in Source:** If the source text contains a typo, ignore it and translate the *intended* meaning.\n- **Ambiguity:** Use contextual clues to resolve ambiguous sentences rather than guessing.',
-      },
-      {
-        title: 'Module 4: Formatting & Localization',
-        text: 'Always preserve HTML formatting tags (like `<b>` or `<br>`) exactly as they appear. Do not translate trademarked brand names unless they have an established localized name. Convert dates and measurements to match the standard conventions of the target locale if instructed.',
-      },
-    ],
-    'Research': [
-      {
-        title: 'Module 1: Introduction & Core Objective',
-        text: `You will verify, find, and update business contact details or specific data points using web searches. The goal is to build a highly accurate, up-to-date database. \n\n**Job specifics:** ${job.description}`,
-      },
-      {
-        title: 'Module 2: Quality Standards & QA',
-        text: 'Accuracy and source credibility are paramount. Entering incorrect data defeats the purpose of verification. QA will check your submitted data against the exact source URL you provide to ensure they match perfectly.',
-      },
-      {
-        title: 'Module 3: Common Pitfalls & Edge Cases',
-        text: 'Information online is often conflicting or outdated.\n- **Conflicting Info:** If a business\'s website lists one phone number but their Facebook page lists another, the official website is your primary source of truth.\n- **Dead Links:** If a link returns a 404 error, mark the field as invalid/missing.\n- **Not Found:** If you cannot find any credible info after a thorough search, use the "Cannot Verify" tag rather than guessing.',
-      },
-      {
-        title: 'Module 4: Sourcing Guidelines',
-        text: 'Only use official company websites or credible public registries. Wikipedia and random blogs are not primary sources. Always copy the *exact* deep-link URL where you found the information, not just the homepage. Format phone numbers with appropriate country codes.',
-      },
-    ],
-  }
-
-  if (contentMap[job.category]) return contentMap[job.category]
-
-  return [
-    {
-      title: 'Module 1: Job Overview',
-      text: `Please review the specific requirements for this task carefully. \n\n**Job specifics:** ${job.description}`,
-    },
-    {
-      title: 'Module 2: Quality & Accuracy',
-      text: 'QA will sample your work to ensure it meets our accuracy standards. Take your time, follow instructions precisely, and do not rush.',
-    },
-    {
-      title: 'Module 3: Edge Cases',
-      text: 'If you encounter a scenario not covered in the instructions, please use your best judgment, flag the task for review, or use the `[unclear]` tag where applicable.',
-    },
-    {
-      title: 'Module 4: Submission Guidelines',
-      text: 'Ensure all required fields are filled out before submitting. Double-check your work for typos or formatting errors.',
-    },
-  ]
 }

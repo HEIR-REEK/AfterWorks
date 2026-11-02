@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 540" width="960" height="540" role="img">
+<title>What a QA-ready transcript looks like</title>
+<desc>The reviewer is checking the same three things every time: speaker, timestamp, and faithful words.</desc>
+<defs>
+  <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M 0 0 L 10 5 L 0 10 z" fill="#2f5bd3"/>
+  </marker>
+</defs>
+<rect width="960" height="540" fill="#f4f7fb"/>
+<circle cx="900" cy="20" r="150" fill="#2f5bd3" opacity="0.06"/>
+<circle cx="60" cy="530" r="120" fill="#0f9d6b" opacity="0.06"/>
+<rect x="40" y="26" width="190" height="24" rx="12.0" fill="#e8eefc" stroke="none" stroke-width="1.5" /><text x="135.0" y="41.6" font-family="Inter, system-ui, sans-serif" font-size="10" font-weight="700" fill="#1e3f9e" text-anchor="middle">AFTERWORKS · TRAINING</text>
+<text x="40" y="74" font-family="Inter, system-ui, sans-serif" font-size="27" font-weight="700" fill="#0f172a" text-anchor="start">What a QA-ready transcript looks like</text>
+<text x="40" y="101" font-family="Inter, system-ui, sans-serif" font-size="14" font-weight="500" fill="#64748b" text-anchor="start">The reviewer is checking the same three things every time: speaker, timestamp, and faithful words.</text>
+
+<rect x="40" y="126" width="420" height="352" rx="14" fill="#f2fbf7" stroke="#bfe8d7" stroke-width="1.5" />
+<rect x="62" y="146" width="150" height="26" rx="13.0" fill="#e8f8f1" stroke="none" stroke-width="1.5" /><text x="137.0" y="162.6" font-family="Inter, system-ui, sans-serif" font-size="10" font-weight="700" fill="#0f9d6b" text-anchor="middle">PASS · QA-READY</text>
+<text x="62" y="196" font-family="JetBrains Mono, ui-monospace, monospace" font-size="12.5" font-weight="700" fill="#0f9d6b" text-anchor="start">Speaker 1:</text>
+<text x="150" y="196" font-family="JetBrains Mono, ui-monospace, monospace" font-size="12.5" font-weight="500" fill="#0f172a" text-anchor="start">We began at 9 a.m. and reviewed the file.</text>
+<text x="62" y="224" font-family="JetBrains Mono, ui-monospace, monospace" font-size="12.5" font-weight="700" fill="#0f9d6b" text-anchor="start">[00:00:14] Speaker 2:</text>
+<text x="62" y="250" font-family="JetBrains Mono, ui-monospace, monospace" font-size="12.5" font-weight="500" fill="#0f172a" text-anchor="start">Understood. I will send the notes today.</text>
+<text x="62" y="278" font-family="JetBrains Mono, ui-monospace, monospace" font-size="12.5" font-weight="700" fill="#0f9d6b" text-anchor="start">Speaker 1:</text>
+<text x="150" y="278" font-family="JetBrains Mono, ui-monospace, monospace" font-size="12.5" font-weight="500" fill="#0f172a" text-anchor="start">The total was [inaudible].</text>
+<text x="62" y="334" font-family="Inter, system-ui, sans-serif" font-size="13" font-weight="600" fill="#0f9d6b" text-anchor="start">✓  New line for every speaker change</text>
+<text x="62" y="360" font-family="Inter, system-ui, sans-serif" font-size="13" font-weight="600" fill="#0f9d6b" text-anchor="start">✓  Timestamp where the speaker changes</text>
+<text x="62" y="386" font-family="Inter, system-ui, sans-serif" font-size="13" font-weight="600" fill="#0f9d6b" text-anchor="start">✓  [inaudible] instead of a guess</text>
+<text x="62" y="412" font-family="Inter, system-ui, sans-serif" font-size="13" font-weight="600" fill="#0f9d6b" text-anchor="start">✓  Names and numbers checked twice</text>
+<text x="62" y="450" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="500" fill="#64748b" text-anchor="start">Read it back once before you submit.</text>
+
+<rect x="500" y="126" width="420" height="352" rx="14" fill="#fdf4f2" stroke="#f0c7c1" stroke-width="1.5" />
+<rect x="522" y="146" width="170" height="26" rx="13.0" fill="#fdecea" stroke="none" stroke-width="1.5" /><text x="607.0" y="162.6" font-family="Inter, system-ui, sans-serif" font-size="10" font-weight="700" fill="#c0392b" text-anchor="middle">FIX · BEFORE SUBMIT</text>
+<text x="522" y="196" font-family="JetBrains Mono, ui-monospace, monospace" font-size="12.5" font-weight="500" fill="#c0392b" text-anchor="start">Speaker 1: We began at 9 a.m. Speaker 2:</text>
+<text x="522" y="222" font-family="JetBrains Mono, ui-monospace, monospace" font-size="12.5" font-weight="500" fill="#c0392b" text-anchor="start">Understood.</text>
+<text x="522" y="254" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="600" fill="#c0392b" text-anchor="start">— two speakers on one line</text>
+<text x="522" y="292" font-family="JetBrains Mono, ui-monospace, monospace" font-size="12.5" font-weight="500" fill="#c0392b" text-anchor="start">The total was unclear.</text>
+<text x="522" y="316" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="600" fill="#c0392b" text-anchor="start">— no tag, no timestamp</text>
+<text x="522" y="352" font-family="JetBrains Mono, ui-monospace, monospace" font-size="12.5" font-weight="500" fill="#c0392b" text-anchor="start">“They was going…” → “They were going…”</text>
+<text x="522" y="376" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="600" fill="#c0392b" text-anchor="start">— cleaned up the speaker’s words</text>
+<rect x="522" y="400" width="376" height="54" rx="10" fill="#fdecea" stroke="none" stroke-width="1.5" />
+<text x="540" y="424" font-family="Inter, system-ui, sans-serif" font-size="13" font-weight="700" fill="#c0392b" text-anchor="start">Fix the format, not the meaning.</text>
+<text x="540" y="443" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="500" fill="#c0392b" text-anchor="start">Verbatim means the speaker’s words, not your edit.</text>
+
+<text x="40" y="522" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="500" fill="#64748b" text-anchor="start" opacity="0.9">Illustration · not a live screenshot</text>
+</svg>

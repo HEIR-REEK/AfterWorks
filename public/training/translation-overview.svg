@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 540" width="960" height="540" role="img">
+<title>Translation: meaning first, words second</title>
+<desc>A faithful translation sounds natural in the target language and keeps the original intent.</desc>
+<defs>
+  <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M 0 0 L 10 5 L 0 10 z" fill="#2f5bd3"/>
+  </marker>
+</defs>
+<rect width="960" height="540" fill="#f4f7fb"/>
+<circle cx="900" cy="20" r="150" fill="#2f5bd3" opacity="0.06"/>
+<circle cx="60" cy="530" r="120" fill="#0f9d6b" opacity="0.06"/>
+<rect x="40" y="26" width="190" height="24" rx="12.0" fill="#e8eefc" stroke="none" stroke-width="1.5" /><text x="135.0" y="41.6" font-family="Inter, system-ui, sans-serif" font-size="10" font-weight="700" fill="#1e3f9e" text-anchor="middle">AFTERWORKS · TRAINING</text>
+<text x="40" y="74" font-family="Inter, system-ui, sans-serif" font-size="27" font-weight="700" fill="#0f172a" text-anchor="start">Translation: meaning first, words second</text>
+<text x="40" y="101" font-family="Inter, system-ui, sans-serif" font-size="14" font-weight="500" fill="#64748b" text-anchor="start">A faithful translation sounds natural in the target language and keeps the original intent.</text>
+
+<rect x="40" y="126" width="270" height="280" rx="14" fill="#ffffff" stroke="#dbe3ee" stroke-width="1.5" />
+<rect x="60" y="144" width="96" height="24" rx="12.0" fill="#eef3fd" stroke="none" stroke-width="1.5" /><text x="108.0" y="159.24" font-family="Inter, system-ui, sans-serif" font-size="9" font-weight="700" fill="#1e3f9e" text-anchor="middle">SOURCE · EN</text>
+<text x="60" y="194" font-family="Inter, system-ui, sans-serif" font-size="16" font-weight="600" fill="#0f172a" text-anchor="start">“The deadline is tight,</text>
+<text x="60" y="218" font-family="Inter, system-ui, sans-serif" font-size="16" font-weight="600" fill="#0f172a" text-anchor="start">but we can still deliver.”</text>
+<text x="60" y="262" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="500" fill="#64748b" text-anchor="start">Tone: reassuring, professional</text>
+<text x="60" y="282" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="500" fill="#64748b" text-anchor="start">Register: business email</text>
+<rect x="80" y="322" width="190" height="52" rx="8" fill="#f8fafc" stroke="#dbe3ee" stroke-width="1.5" />
+<text x="94" y="344" font-family="JetBrains Mono, ui-monospace, monospace" font-size="9.5" font-weight="700" fill="#64748b" text-anchor="start">Key meaning:</text>
+<text x="94" y="361" font-family="Inter, system-ui, sans-serif" font-size="10.5" font-weight="600" fill="#0f172a" text-anchor="start">short time, still possible</text>
+
+<path d="M316 266 L354 266" stroke="#2f5bd3" stroke-width="3" stroke-linecap="round" marker-end="url(#arrow)"/>
+<rect x="368" y="126" width="224" height="280" rx="14" fill="#eef3fd" stroke="#c9d7f4" stroke-width="1.5" />
+<circle cx="480" cy="190" r="34" fill="#2f5bd3" stroke="none" stroke-width="0"/>
+<text x="480" y="200" font-family="Inter, system-ui, sans-serif" font-size="22" font-weight="800" fill="#ffffff" text-anchor="middle">Aa</text>
+<text x="480" y="250" font-family="JetBrains Mono, ui-monospace, monospace" font-size="10.5" font-weight="800" fill="#1e3f9e" text-anchor="middle">MEANING + TONE</text>
+<text x="480" y="284" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="500" fill="#1e3f9e" text-anchor="middle">Translate the idea,</text>
+<text x="480" y="302" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="500" fill="#1e3f9e" text-anchor="middle">not the word order.</text>
+<text x="480" y="340" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="500" fill="#64748b" text-anchor="middle">Keep names, numbers</text>
+<text x="480" y="358" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="500" fill="#64748b" text-anchor="middle">and formatting intact.</text>
+
+<path d="M598 266 L636 266" stroke="#2f5bd3" stroke-width="3" stroke-linecap="round" marker-end="url(#arrow)"/>
+<rect x="650" y="126" width="270" height="280" rx="14" fill="#f2fbf7" stroke="#bfe8d7" stroke-width="1.5" />
+<rect x="670" y="144" width="96" height="24" rx="12.0" fill="#e8f8f1" stroke="none" stroke-width="1.5" /><text x="718.0" y="159.24" font-family="Inter, system-ui, sans-serif" font-size="9" font-weight="700" fill="#0f9d6b" text-anchor="middle">TARGET · SW</text>
+<text x="670" y="194" font-family="Inter, system-ui, sans-serif" font-size="16" font-weight="600" fill="#0f172a" text-anchor="start">“Muda ni mfupi, lakini</text>
+<text x="670" y="218" font-family="Inter, system-ui, sans-serif" font-size="16" font-weight="600" fill="#0f172a" text-anchor="start">tunaweza kuwasilisha.”</text>
+<text x="670" y="262" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="500" fill="#0f9d6b" text-anchor="start">Same promise, natural Swahili.</text>
+<text x="670" y="282" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="500" fill="#0f9d6b" text-anchor="start">Not a word-for-word copy.</text>
+<rect x="670" y="322" width="226" height="52" rx="8" fill="#ffffff" stroke="#bfe8d7" stroke-width="1.5" />
+<text x="684" y="344" font-family="JetBrains Mono, ui-monospace, monospace" font-size="9.5" font-weight="700" fill="#64748b" text-anchor="start">Review:</text>
+<text x="684" y="361" font-family="Inter, system-ui, sans-serif" font-size="10.5" font-weight="600" fill="#0f172a" text-anchor="start">read it aloud before submit</text>
+```)
+
+<text x="40" y="522" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="500" fill="#64748b" text-anchor="start" opacity="0.9">Illustration · not a live screenshot</text>
+</svg>

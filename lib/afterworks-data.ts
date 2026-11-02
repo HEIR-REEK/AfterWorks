@@ -10,17 +10,44 @@ export type JobCategory =
 
 export type JobStatus = 'open' | 'paused' | 'closed'
 
-/** One authored training section. Workers step through these one at a time on the training page. */
+/**
+ * One training lesson. `content` is a small, plain-text markup subset (paragraphs, `-` bullets,
+ * `**bold**`, `` `code` ``) rendered by the training reader. `image` is an optional figure shown
+ * beneath the lesson body — a same-origin path such as `/training/transcription-quality.svg`
+ * or a plain https URL. Alt text and a caption are authored alongside it.
+ */
 export type TrainingSection = {
   title: string
   content: string
+  image?: string
+  imageAlt?: string
+  imageCaption?: string
+  /** Estimated reading time, in minutes. Built-in courses use this for the course header. */
+  durationMinutes?: number
+  /** Optional knowledge check shown at the end of the lesson. */
+  check?: TrainingCheck
 }
 
-/** One authored assessment question. Options are 2–4 strings; `correctIndex` points at the right one. */
+/** A short end-of-lesson knowledge check. */
+export type TrainingCheck = {
+  question: string
+  options: string[]
+  correctIndex: number
+  explanation?: string
+}
+
+/**
+ * One assessment question. Options are 2–4 strings; `correctIndex` points at the right one.
+ * Image fields let a question carry a screenshot/figure, and `explanation` is shown after the
+ * worker submits so the assessment teaches rather than only scores.
+ */
 export type AssessmentQuestion = {
   question: string
   options: string[]
   correctIndex: number
+  image?: string
+  imageAlt?: string
+  explanation?: string
 }
 
 /** Canonical category list — client forms and the server validator both read this. */
@@ -32,6 +59,26 @@ export const JOB_CATEGORY_LIST: readonly JobCategory[] = [
   'Translation',
   'Research',
 ]
+
+/**
+ * Only allow a same-origin path or a plain https URL in an authored image field.
+ *
+ * Training content is stored as data, so a `javascript:`/`data:` value must never end up in an
+ * `<img src>`. Returning `undefined` makes the renderer omit the figure entirely instead of
+ * showing a broken image.
+ */
+export function safeImageSrc(value: unknown): string | undefined {
+  const raw = typeof value === 'string' ? value.trim() : ''
+  if (!raw || raw.length > 500) return undefined
+  if (raw.startsWith('/') && !raw.startsWith('//')) return raw
+  try {
+    const url = new URL(raw)
+    if (url.protocol === 'https:') return url.toString()
+  } catch {
+    return undefined
+  }
+  return undefined
+}
 
 export type Job = {
   id: string
@@ -49,7 +96,10 @@ export type Job = {
    * when `trainingRequired` is true; falls back to the globally configured fee when absent.
    */
   trainingFeeUsd?: number
-  /** Admin-authored training sections. Empty/absent → the built-in category modules are used. */
+  /**
+   * Admin-authored training sections. Empty/absent → the built-in category course is used. A short
+   * set of notes is prepended to that course; five or more notes replace it.
+   */
   trainingNotes?: TrainingSection[]
   /** Admin-authored assessment questions. Empty/absent → the built-in category bank is used. */
   assessmentQuestions?: AssessmentQuestion[]

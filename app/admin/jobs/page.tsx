@@ -8,6 +8,7 @@ import {
   Eye,
   GraduationCap,
   HelpCircle,
+  Image as ImageIcon,
   Loader2,
   Pause,
   Play,
@@ -38,8 +39,21 @@ import { cn } from '@/lib/utils'
  * notes/questions fall back to the built-in per-category content.
  */
 
-type DraftSection = { title: string; content: string }
-type DraftQuestion = { question: string; options: [string, string, string, string]; correctIndex: number }
+type DraftSection = {
+  title: string
+  content: string
+  image: string
+  imageAlt: string
+  imageCaption: string
+}
+type DraftQuestion = {
+  question: string
+  options: [string, string, string, string]
+  correctIndex: number
+  image: string
+  imageAlt: string
+  explanation: string
+}
 
 const EMPTY: Draft = {
   title: '',
@@ -59,7 +73,14 @@ const EMPTY: Draft = {
   closesAt: '',
 }
 
-const EMPTY_QUESTION: DraftQuestion = { question: '', options: ['', '', '', ''], correctIndex: 0 }
+const EMPTY_QUESTION: DraftQuestion = {
+  question: '',
+  options: ['', '', '', ''],
+  correctIndex: 0,
+  image: '',
+  imageAlt: '',
+  explanation: '',
+}
 
 type Draft = {
   id?: string
@@ -141,11 +162,20 @@ export default function AdminJobsPage() {
       slotsRemaining: job.slotsRemaining,
       trainingRequired: job.trainingRequired,
       trainingFeeUsd: job.trainingFeeUsd && job.trainingFeeUsd > 0 ? job.trainingFeeUsd : 10,
-      trainingNotes: (job.trainingNotes ?? []).map((section) => ({ title: section.title, content: section.content })),
+      trainingNotes: (job.trainingNotes ?? []).map((section) => ({
+        title: section.title,
+        content: section.content,
+        image: section.image ?? '',
+        imageAlt: section.imageAlt ?? '',
+        imageCaption: section.imageCaption ?? '',
+      })),
       assessmentQuestions: (job.assessmentQuestions ?? []).map((question) => ({
         question: question.question,
         options: [question.options?.[0] ?? '', question.options?.[1] ?? '', question.options?.[2] ?? '', question.options?.[3] ?? ''] as [string, string, string, string],
         correctIndex: question.correctIndex ?? 0,
+        image: question.image ?? '',
+        imageAlt: question.imageAlt ?? '',
+        explanation: question.explanation ?? '',
       })),
       requiresVerified: job.requiresVerified,
       status: job.status,
@@ -176,13 +206,22 @@ export default function AdminJobsPage() {
         options: filled,
         // The saved options are the non-empty ones, so re-point the correct answer at its new index.
         correctIndex: options.slice(0, question.correctIndex).filter(Boolean).length,
+        ...(question.image.trim() ? { image: question.image.trim() } : {}),
+        ...(question.image.trim() && question.imageAlt.trim() ? { imageAlt: question.imageAlt.trim() } : {}),
+        ...(question.explanation.trim() ? { explanation: question.explanation.trim() } : {}),
       }
     })
 
     const cleanedNotes = editing.trainingNotes
-      .map((section) => ({ title: section.title.trim(), content: section.content.trim() }))
+      .map((section) => ({
+        title: section.title.trim(),
+        content: section.content.trim(),
+        ...(section.image.trim() ? { image: section.image.trim() } : {}),
+        ...(section.image.trim() && section.imageAlt.trim() ? { imageAlt: section.imageAlt.trim() } : {}),
+        ...(section.image.trim() && section.imageCaption.trim() ? { imageCaption: section.imageCaption.trim() } : {}),
+      }))
       .filter((section) => section.title || section.content)
-      .map((section) => ({ title: section.title || 'Untitled section', content: section.content }))
+      .map((section) => ({ ...section, title: section.title || 'Untitled section' }))
 
     setSaving(true)
     try {
@@ -497,14 +536,14 @@ export default function AdminJobsPage() {
                       size="sm"
                       variant="outline"
                       className="h-7 gap-1 text-[11px]"
-                      onClick={() => setEditing({ ...editing, trainingNotes: [...editing.trainingNotes, { title: '', content: '' }] })}
+                      onClick={() => setEditing({ ...editing, trainingNotes: [...editing.trainingNotes, { title: '', content: '', image: '', imageAlt: '', imageCaption: '' }] })}
                     >
                       <Plus className="size-3" />
                       Add section
                     </Button>
                   </div>
                   <p className="text-[11px] leading-snug text-muted-foreground">
-                    Workers open one section at a time and press “next” until the course is done. Leave empty to use the built-in {editing.category} modules.
+                    Workers open one section at a time and press “next” until the course is done. Leave empty to use the built-in {editing.category} course. A few notes are added to that course as a job-specific briefing; five or more replace it.
                   </p>
                   {editing.trainingNotes.length === 0 ? (
                     <p className="rounded-lg border border-dashed border-border px-3 py-2.5 text-[11px] text-muted-foreground">
@@ -567,7 +606,7 @@ export default function AdminJobsPage() {
                             </div>
                           </div>
                           <textarea
-                            rows={3}
+                            rows={4}
                             value={section.content}
                             maxLength={8000}
                             onChange={(e) => {
@@ -575,9 +614,58 @@ export default function AdminJobsPage() {
                               next[index] = { ...section, content: e.target.value }
                               setEditing({ ...editing, trainingNotes: next })
                             }}
-                            placeholder="What the worker should learn in this section…"
+                            placeholder="What the worker should learn in this section… Use blank lines for paragraphs, - for bullets, **bold** for emphasis."
                             className={cn(inputClass, 'leading-relaxed')}
                           />
+                          <details className="rounded-lg border border-border/70 bg-muted/20 px-2.5 py-2">
+                            <summary className="flex cursor-pointer list-none items-center justify-between gap-2 text-[11px] font-medium text-muted-foreground">
+                              <span className="flex items-center gap-1.5">
+                                <ImageIcon className="size-3.5 text-primary" />
+                                Figure, alt text and caption
+                              </span>
+                              <span className="font-mono text-[10px]">
+                                {section.image ? 'added' : 'optional'}
+                              </span>
+                            </summary>
+                            <div className="mt-2 grid gap-1.5">
+                              <input
+                                value={section.image}
+                                onChange={(e) => {
+                                  const next = [...editing.trainingNotes]
+                                  next[index] = { ...section, image: e.target.value }
+                                  setEditing({ ...editing, trainingNotes: next })
+                                }}
+                                placeholder="/training/transcription-quality.svg or https://…"
+                                maxLength={500}
+                                className={cn(inputClass, 'h-8 font-mono text-[11px]')}
+                              />
+                              <input
+                                value={section.imageAlt}
+                                onChange={(e) => {
+                                  const next = [...editing.trainingNotes]
+                                  next[index] = { ...section, imageAlt: e.target.value }
+                                  setEditing({ ...editing, trainingNotes: next })
+                                }}
+                                placeholder="Alt text for screen readers — describe the figure"
+                                maxLength={240}
+                                className={cn(inputClass, 'h-8')}
+                              />
+                              <input
+                                value={section.imageCaption}
+                                onChange={(e) => {
+                                  const next = [...editing.trainingNotes]
+                                  next[index] = { ...section, imageCaption: e.target.value }
+                                  setEditing({ ...editing, trainingNotes: next })
+                                }}
+                                placeholder="Caption shown below the figure"
+                                maxLength={300}
+                                className={cn(inputClass, 'h-8')}
+                              />
+                              <p className="text-[10px] leading-snug text-muted-foreground">
+                                Same-origin paths and plain https URLs only. Figures are rendered inline; a bad URL is omitted rather than shown broken.
+                              </p>
+                            </div>
+                          </details>
                         </li>
                       ))}
                     </ul>
@@ -669,6 +757,53 @@ export default function AdminJobsPage() {
                             ))}
                             <p className="text-[10px] text-muted-foreground">Select the radio next to the correct answer. At least two options are required.</p>
                           </div>
+                          <details className="ml-6.5 rounded-lg border border-border/70 bg-muted/20 px-2.5 py-2">
+                            <summary className="flex cursor-pointer list-none items-center justify-between gap-2 text-[11px] font-medium text-muted-foreground">
+                              <span className="flex items-center gap-1.5">
+                                <ImageIcon className="size-3.5 text-primary" />
+                                Figure and answer explanation
+                              </span>
+                              <span className="font-mono text-[10px]">
+                                {question.image || question.explanation ? 'added' : 'optional'}
+                              </span>
+                            </summary>
+                            <div className="mt-2 grid gap-1.5">
+                              <input
+                                value={question.image}
+                                onChange={(e) => {
+                                  const next = [...editing.assessmentQuestions]
+                                  next[qIndex] = { ...question, image: e.target.value }
+                                  setEditing({ ...editing, assessmentQuestions: next })
+                                }}
+                                placeholder="/training/labeling-boxes.svg or https://…"
+                                maxLength={500}
+                                className={cn(inputClass, 'h-8 font-mono text-[11px]')}
+                              />
+                              <input
+                                value={question.imageAlt}
+                                onChange={(e) => {
+                                  const next = [...editing.assessmentQuestions]
+                                  next[qIndex] = { ...question, imageAlt: e.target.value }
+                                  setEditing({ ...editing, assessmentQuestions: next })
+                                }}
+                                placeholder="Alt text for the question figure"
+                                maxLength={240}
+                                className={cn(inputClass, 'h-8')}
+                              />
+                              <textarea
+                                rows={2}
+                                value={question.explanation}
+                                onChange={(e) => {
+                                  const next = [...editing.assessmentQuestions]
+                                  next[qIndex] = { ...question, explanation: e.target.value }
+                                  setEditing({ ...editing, assessmentQuestions: next })
+                                }}
+                                placeholder="Shown after the worker submits — explain why the correct answer is right."
+                                maxLength={600}
+                                className={cn(inputClass, 'leading-relaxed')}
+                              />
+                            </div>
+                          </details>
                         </li>
                       ))}
                     </ul>

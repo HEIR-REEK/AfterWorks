@@ -2,8 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Button } from '@/components/ui/button'
-import { assessmentPassMark, type AssessmentQuestion, type JobCategory } from '@/lib/afterworks-data'
-import { CheckCircle2, Circle, AlertCircle } from 'lucide-react'
+import { assessmentPassMark, safeImageSrc, type AssessmentQuestion, type JobCategory } from '@/lib/afterworks-data'
+import { TrainingFigure } from '@/components/training-figure'
+import { CheckCircle2, Circle, AlertCircle, BookOpen } from 'lucide-react'
 
 // ─── Assessment persistence helpers ──────────────────────────────────────────
 // Persists quiz progress in localStorage so a refresh during or after an
@@ -48,14 +49,28 @@ export function clearStoredQuizState(category: string, questionCount: number): v
   }
 }
 
-// Generate 15 distinct questions based on category
-function generateQuestions(category: JobCategory) {
-  const banks: Record<string, {q: string, opts: string[], ans: number}[]> = {
+type QuizQuestion = {
+  id: number
+  question: string
+  options: string[]
+  correctIndex: number
+  image?: string
+  imageAlt?: string
+  explanation?: string
+}
+
+// Generate 15 distinct questions based on category. A few questions carry a figure from the
+// preparation course, and every image question has an explanation so the assessment teaches.
+function generateQuestions(category: JobCategory): QuizQuestion[] {
+  const banks: Record<
+    string,
+    { q: string; opts: string[]; ans: number; img?: string; alt?: string; why?: string }[]
+  > = {
     'Transcription': [
       { q: 'How should you handle overlapping speech between two speakers?', opts: ['Only transcribe the louder speaker.', 'Use [crosstalk] tags or separate speaker labels with timestamps.', 'Ignore the overlapping section.', 'Combine both speakers into one sentence.'], ans: 1 },
       { q: 'If a speaker uses filler words (e.g., "um", "uh"), what is standard practice for strict verbatim?', opts: ['Always include them exactly as spoken.', 'Always delete them.', 'Replace them with periods.', 'Change them to formal words.'], ans: 0 },
       { q: 'When you encounter an unfamiliar medical term, you should:', opts: ['Guess the spelling.', 'Use the provided glossary or search online to verify spelling.', 'Skip the word.', 'Use [unclear] immediately.'], ans: 1 },
-      { q: 'How do you format a change in speakers?', opts: ['Start a new line with the speaker label.', 'Just continue on the same line.', 'Use a comma.', 'Add [New Speaker].'], ans: 0 },
+      { q: 'How do you format a change in speakers?', opts: ['Start a new line with the speaker label.', 'Just continue on the same line.', 'Use a comma.', 'Add [New Speaker].'], ans: 0, img: '/training/transcription-quality.svg', alt: 'A pass transcript with one speaker per line and a timestamp at the speaker change, beside a fix panel with merged speakers.', why: 'A new line with a speaker label is what lets a reviewer follow the conversation. The pass panel in the figure shows the same rule.' },
       { q: 'If the audio cuts out completely for a few seconds, you should:', opts: ['Make up dialogue.', 'Use an [audio cut] or [silence] tag with a timestamp.', 'Stop transcribing.', 'Skip to the end.'], ans: 1 },
       { q: 'When a speaker stutters (e.g., "I- I- I went"), how is it usually handled in strict verbatim?', opts: ['Remove the stutters.', 'Include all stutters exactly as spoken.', 'Write it once.', 'Put it in brackets.'], ans: 1 },
       { q: 'What is the correct way to transcribe numbers in general non-technical transcription?', opts: ['Always spell them out (e.g., "one").', 'Use numerals for 10 and above, spell out one through nine.', 'Always use numerals (e.g., "1").', 'It doesn\'t matter.'], ans: 1 },
@@ -71,7 +86,7 @@ function generateQuestions(category: JobCategory) {
     'Data Entry': [
       { q: 'What should you do if a handwritten number on a form is completely illegible?', opts: ['Guess the number.', 'Use the [unclear] or designated missing tag.', 'Leave it blank without flagging.', 'Delete the row.'], ans: 1 },
       { q: 'If a date is written as 12/05/2023 but the form asks for YYYY-MM-DD, how do you enter it?', opts: ['Convert it to the requested format if the guideline specifies.', 'Enter exactly as seen.', 'Skip the field.', 'Enter today\'s date.'], ans: 0 },
-      { q: 'When extracting a total amount from a receipt, you notice a calculation error on the receipt itself. What do you enter?', opts: ['Fix the calculation.', 'Enter the exact total written on the receipt.', 'Leave it blank.', 'Flag the receipt as invalid.'], ans: 1 },
+      { q: 'When extracting a total amount from a receipt, you notice a calculation error on the receipt itself. What do you enter?', opts: ['Fix the calculation.', 'Enter the exact total written on the receipt.', 'Leave it blank.', 'Flag the receipt as invalid.'], ans: 1, img: '/training/data-entry-receipt.svg', alt: 'A receipt with line items and a printed total, plus callouts for total, date, and amount.', why: 'The source document is the authority. Copy the printed total, then note the discrepancy if the brief asks for a note.' },
       { q: 'If a field is blank on the source document, you should:', opts: ['Guess the answer.', 'Leave the corresponding field blank or use the specific "N/A" code.', 'Enter "None".', 'Enter 0.'], ans: 1 },
       { q: 'How should you handle spelling mistakes in names on a form?', opts: ['Correct the spelling.', 'Type them exactly as they appear on the form.', 'Skip the field.', 'Ask a supervisor.'], ans: 1 },
       { q: 'What is the standard protocol for entering phone numbers?', opts: ['Format them however you want.', 'Use the format specified in the project guidelines.', 'Always include country codes even if absent.', 'Spell them out in words.'], ans: 1 },
@@ -86,7 +101,7 @@ function generateQuestions(category: JobCategory) {
       { q: 'If a receipt contains non-essential promotional text, do you extract it?', opts: ['Yes, extract everything.', 'No, extract only the required data points.', 'Extract it in the notes section.', 'Only if it has a discount code.'], ans: 1 },
     ],
     'Image Labeling': [
-      { q: 'What is the general rule for drawing a bounding box around an object?', opts: ['It should loosely enclose the object.', 'It should tightly enclose the visible parts of the object without cutting it off.', 'It should only cover the center.', 'It should be a perfect square.'], ans: 1 },
+      { q: 'What is the general rule for drawing a bounding box around an object?', opts: ['It should loosely enclose the object.', 'It should tightly enclose the visible parts of the object without cutting it off.', 'It should only cover the center.', 'It should be a perfect square.'], ans: 1, img: '/training/labeling-boxes.svg', alt: 'Three car labels: a tight green box, a loose amber box, and a box that stops at an occluding tree.', why: 'The tight green box touches the visible outer pixels without a background margin. That is the QA standard.' },
       { q: 'If a car is partially blocked (occluded) by a tree, how should you label it?', opts: ['Label the whole car, including the tree.', 'Label only the visible parts or estimate the full extent depending on specific project guidelines.', 'Don\'t label the car at all.', 'Label the tree instead.'], ans: 1 },
       { q: 'When an object is cut off by the edge of the image (truncated), you should:', opts: ['Ignore the object.', 'Draw the box up to the edge of the image.', 'Guess where the object ends outside the image.', 'Draw a box only in the middle.'], ans: 1 },
       { q: 'Should shadows of an object be included inside the bounding box?', opts: ['Always yes.', 'No, shadows are typically excluded unless specifically requested.', 'Only if they are dark.', 'Only for people.'], ans: 1 },
@@ -107,7 +122,7 @@ function generateQuestions(category: JobCategory) {
       { q: 'If a post contains graphic violence in a news context, how is it typically handled?', opts: ['Always deleted.', 'It may be allowed but age-restricted or marked sensitive, depending on policy.', 'Promoted.', 'Ignored.'], ans: 1 },
       { q: 'When reviewing potential spam, what is a key indicator?', opts: ['Long paragraphs.', 'Repetitive promotional links or irrelevant commercial content.', 'Spelling mistakes.', 'Using emojis.'], ans: 1 },
       { q: 'If a user threatens self-harm, what is the immediate action?', opts: ['Delete the post and move on.', 'Escalate to the emergency/safety team immediately.', 'Reply to the user.', 'Ignore it.'], ans: 1 },
-      { q: 'How do you handle a post that is highly offensive but doesn\'t violate any specific rule?', opts: ['Delete it anyway.', 'Allow it; moderation is based on strict rules, not personal offense.', 'Suspend the user.', 'Edit the post.'], ans: 1 },
+      { q: 'How do you handle a post that is highly offensive but doesn\'t violate any specific rule?', opts: ['Delete it anyway.', 'Allow it; moderation is based on strict rules, not personal offense.', 'Suspend the user.', 'Edit the post.'], ans: 1, img: '/training/review-decision.svg', alt: 'A decision tree that separates a clear violation from an ambiguous case and an allow decision.', why: 'Offensive is not the same as violating. If the policy has no rule for it, allow it and keep enforcement consistent.' },
       { q: 'What should you do with suspected child exploitation material (CSAM)?', opts: ['Review it carefully.', 'Block immediately and escalate via the strict legal protocol.', 'Delete it silently.', 'Ask a coworker.'], ans: 1 },
       { q: 'If an image contains nudity but is clearly educational or medical, is it allowed?', opts: ['Never.', 'It depends on the specific platform policy regarding educational exceptions.', 'Always.', 'Only if it is drawn.'], ans: 1 },
       { q: 'How do you review content in a language you don\'t speak?', opts: ['Guess the meaning.', 'Use translation tools, or route it to a native speaker queue.', 'Approve it automatically.', 'Reject it automatically.'], ans: 1 },
@@ -121,7 +136,7 @@ function generateQuestions(category: JobCategory) {
     ],
     'Translation': [
       { q: 'What is the most important goal of translation?', opts: ['To translate word-for-word.', 'To convey the original meaning accurately and naturally in the target language.', 'To make the text shorter.', 'To add your own opinions.'], ans: 1 },
-      { q: 'How should you translate cultural idioms or slang?', opts: ['Translate literally.', 'Find an equivalent idiom in the target language or translate the meaning.', 'Omit them.', 'Leave them in English.'], ans: 1 },
+      { q: 'How should you translate cultural idioms or slang?', opts: ['Translate literally.', 'Find an equivalent idiom in the target language or translate the meaning.', 'Omit them.', 'Leave them in English.'], ans: 1, img: '/training/translation-idiom.svg', alt: 'A literal idiom translation marked wrong beside a natural Swahili translation of the same meaning.', why: 'A literal idiom can be grammatically possible and still meaningless. Carry the meaning and tone, not the words.' },
       { q: 'If a brand name (e.g., "Apple") is used in the text, you should:', opts: ['Translate it to the local word for fruit.', 'Keep it in English or its original trademarked form.', 'Lowercase it.', 'Remove it.'], ans: 1 },
       { q: 'How do you handle formatting tags (like <b> or <br>) in the source text?', opts: ['Delete them.', 'Preserve them exactly in the translated text.', 'Change them to Markdown.', 'Move them to the end.'], ans: 1 },
       { q: 'If the source text contains a typo, what should you do?', opts: ['Translate the typo literally.', 'Translate the intended meaning and ignore the typo.', 'Add a note to the translation.', 'Skip the sentence.'], ans: 1 },
@@ -141,7 +156,7 @@ function generateQuestions(category: JobCategory) {
       { q: 'If a business\'s website lists one phone number but their social media lists another, which is preferred?', opts: ['Social media.', 'The official website is usually the primary source of truth.', 'Neither.', 'Add both together.'], ans: 1 },
       { q: 'What should you do if a business appears to be permanently closed?', opts: ['Ignore it.', 'Mark it as closed/inactive according to guidelines.', 'Enter old data.', 'Delete the task.'], ans: 1 },
       { q: 'How do you handle a website link that returns a 404 error?', opts: ['Mark the URL as invalid or missing.', 'Enter it anyway.', 'Fix the URL yourself.', 'Use the homepage instead.'], ans: 0 },
-      { q: 'When recording a source URL, what is important?', opts: ['Copy only the domain name.', 'Copy the exact link to the specific page where the information was found.', 'Shorten it with bit.ly.', 'Type it from memory.'], ans: 1 },
+      { q: 'When recording a source URL, what is important?', opts: ['Copy only the domain name.', 'Copy the exact link to the specific page where the information was found.', 'Shorten it with bit.ly.', 'Type it from memory.'], ans: 1, img: '/training/research-sources.svg', alt: 'A source hierarchy from official website and registry down to blogs and social posts, with a pre-submission checklist.', why: 'A reviewer must be able to open the same page and see the same fact. A homepage or a shortened link does not support the specific claim.' },
       { q: 'If a business has multiple locations, which address do you record?', opts: ['The closest one to you.', 'The headquarters or the specific branch requested in the task.', 'All of them.', 'None.'], ans: 1 },
       { q: 'Is it acceptable to use paid databases or paywalled sites?', opts: ['Yes, always.', 'No, rely on freely accessible public information.', 'Only if it\'s cheap.', 'Yes, if you have an account.'], ans: 1 },
       { q: 'How should you format a collected phone number?', opts: ['However it appears.', 'Include the country and area code in the specified format.', 'Remove all area codes.', 'Use letters.'], ans: 1 },
@@ -168,7 +183,10 @@ function generateQuestions(category: JobCategory) {
     id: idx + 1,
     question: rq.q,
     options: rq.opts,
-    correctIndex: rq.ans
+    correctIndex: rq.ans,
+    ...(safeImageSrc(rq.img) ? { image: safeImageSrc(rq.img) } : {}),
+    ...(rq.alt ? { imageAlt: rq.alt } : {}),
+    ...(rq.why ? { explanation: rq.why } : {}),
   }))
 }
 
@@ -176,13 +194,26 @@ export function AssessmentQuiz({ category, onPass, customQuestions }: { category
   // Admin-authored questions win; otherwise the built-in per-category bank.
   const questions = useMemo(() => {
     const authored = (customQuestions ?? [])
-      .map((question, index) => ({
-        id: index + 1,
-        question: String(question?.question ?? '').trim(),
-        options: (Array.isArray(question?.options) ? question.options : []).map((option) => String(option)).filter(Boolean),
-        correctIndex: Number(question?.correctIndex ?? 0) || 0,
-      }))
-      .filter((question) => question.question && question.options.length >= 2 && question.correctIndex < question.options.length)
+      .map((question, index) => {
+        const image = safeImageSrc(question?.image)
+        return {
+          id: index + 1,
+          question: String(question?.question ?? '').trim(),
+          options: (Array.isArray(question?.options) ? question.options : [])
+            .map((option) => String(option))
+            .filter(Boolean),
+          correctIndex: Number(question?.correctIndex ?? 0) || 0,
+          ...(image ? { image } : {}),
+          ...(image && question?.imageAlt ? { imageAlt: String(question.imageAlt) } : {}),
+          ...(question?.explanation ? { explanation: String(question.explanation) } : {}),
+        }
+      })
+      .filter(
+        (question) =>
+          question.question &&
+          question.options.length >= 2 &&
+          question.correctIndex < question.options.length,
+      )
     if (authored.length > 0) return authored
     return generateQuestions(category)
   }, [customQuestions, category])
@@ -193,6 +224,7 @@ export function AssessmentQuiz({ category, onPass, customQuestions }: { category
   const [submitted, setSubmitted] = useState(false)
   const [passed, setPassed] = useState(false)
   const [score, setScore] = useState(0)
+  const [showReview, setShowReview] = useState(false)
 
   // Restore persisted quiz state on mount (e.g. after a page refresh)
   useEffect(() => {
@@ -238,15 +270,66 @@ export function AssessmentQuiz({ category, onPass, customQuestions }: { category
 
   if (passed) {
     return (
-      <div className="flex flex-col items-center gap-4 py-12 rounded-xl border border-success/30 bg-success/5">
-        <CheckCircle2 className="size-16 text-success" />
-        <h3 className="text-2xl font-bold text-success-foreground">Assessment Passed!</h3>
-        <p className="text-muted-foreground text-center max-w-md">
-          You scored {score}/{questions.length} — at or above the {passMark}/{questions.length} pass mark — and demonstrated your skills for {category} tasks.
-        </p>
-        <Button onClick={handleProceed} size="lg" className="mt-4 px-8">
-          Proceed to Application
-        </Button>
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-col items-center gap-4 rounded-xl border border-success/30 bg-success/5 py-12">
+          <CheckCircle2 className="size-16 text-success" />
+          <h3 className="text-2xl font-bold text-success-foreground">Assessment Passed!</h3>
+          <p className="max-w-md text-center text-muted-foreground">
+            You scored {score}/{questions.length} — at or above the {passMark}/{questions.length} pass
+            mark — and demonstrated your skills for {category} tasks.
+          </p>
+          <div className="mt-4 flex flex-col items-center gap-2 sm:flex-row">
+            <Button onClick={handleProceed} size="lg" className="px-8">
+              Proceed to Application
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="lg"
+              onClick={() => setShowReview((value) => !value)}
+            >
+              {showReview ? 'Hide review' : 'Review answers'}
+            </Button>
+          </div>
+        </div>
+
+        {showReview && (
+          <div className="rounded-xl border border-border bg-card p-4 sm:p-5">
+            <h4 className="flex items-center gap-2 text-sm font-semibold text-foreground">
+              <BookOpen className="size-4 text-primary" />
+              Answer review
+            </h4>
+            <ul className="mt-3 flex flex-col gap-4">
+              {questions.map((q, index) => {
+                const yourAnswer = answers[q.id]
+                return (
+                  <li key={q.id} className="border-t border-border/60 pt-3 first:border-t-0 first:pt-0">
+                    <p className="text-sm font-medium text-foreground">
+                      <span className="mr-1.5 text-muted-foreground">{index + 1}.</span>
+                      {q.question}
+                    </p>
+                    {q.image && (
+                      <TrainingFigure src={q.image} alt={q.imageAlt} className="mt-2 max-w-xl" />
+                    )}
+                    <p className="mt-2 text-xs text-success">
+                      <span className="font-semibold">Correct:</span> {q.options[q.correctIndex]}
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      <span className="font-semibold">Your answer:</span>{' '}
+                      {yourAnswer === undefined ? 'Not answered' : q.options[yourAnswer]}
+                    </p>
+                    {q.explanation && (
+                      <p className="mt-1.5 text-xs leading-relaxed text-foreground/75">
+                        <span className="font-semibold text-foreground">Why this matters: </span>
+                        {q.explanation}
+                      </p>
+                    )}
+                  </li>
+                )
+              })}
+            </ul>
+          </div>
+        )}
       </div>
     )
   }
@@ -258,7 +341,11 @@ export function AssessmentQuiz({ category, onPass, customQuestions }: { category
           <div>
             <h3 className="text-xl font-bold">Skill Assessment</h3>
             <p className="text-sm text-muted-foreground mt-1">
-              Category: {category}
+              {category} · based on the preparation course
+            </p>
+            <p className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+              <BookOpen className="size-3.5 text-primary" />
+              Every question maps to a rule or example from the lessons.
             </p>
           </div>
           <div className="flex items-center gap-2 bg-accent/50 px-3 py-1.5 rounded-lg text-sm font-medium">
@@ -274,6 +361,13 @@ export function AssessmentQuiz({ category, onPass, customQuestions }: { category
                 <span className="text-muted-foreground mr-2">{i + 1}.</span>
                 {q.question}
               </p>
+              {q.image && (
+                <TrainingFigure
+                  src={q.image}
+                  alt={q.imageAlt}
+                  className="max-w-2xl"
+                />
+              )}
               <div className="grid gap-2 sm:grid-cols-2">
                 {q.options.map((opt, oIdx) => {
                   const isSelected = answers[q.id] === oIdx
@@ -310,6 +404,15 @@ export function AssessmentQuiz({ category, onPass, customQuestions }: { category
                   )
                 })}
               </div>
+              {submitted && q.explanation && (
+                <div className="flex items-start gap-2 rounded-lg border border-primary/20 bg-primary/[0.04] px-3 py-2 text-xs leading-relaxed text-foreground/80">
+                  <BookOpen className="mt-0.5 size-3.5 shrink-0 text-primary" />
+                  <span>
+                    <span className="font-semibold text-foreground">Why this matters: </span>
+                    {q.explanation}
+                  </span>
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -335,7 +438,7 @@ export function AssessmentQuiz({ category, onPass, customQuestions }: { category
               You scored {score}/{questions.length} — the pass mark is {passMark}/{questions.length}.
             </p>
             <p className="text-sm text-muted-foreground text-center">
-              Please review the training notes and guidelines, then try again.
+              Review the preparation course and the explanations below, then try again.
             </p>
             <Button
               size="lg"

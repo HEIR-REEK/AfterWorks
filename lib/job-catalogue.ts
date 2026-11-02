@@ -26,7 +26,9 @@ import {
   type Job,
   type JobCategory,
   type JobStatus,
+  type TrainingCheck,
   type TrainingSection,
+  safeImageSrc,
 } from '@/lib/afterworks-data'
 
 /** How many cards the bounded public read fetches. Kept in step with the Firestore helper. */
@@ -62,15 +64,40 @@ function stringList(value: unknown, max: number, maxLength: number): string[] {
     .slice(0, max)
 }
 
+function trainingCheck(value: unknown): TrainingCheck | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const raw = value as Record<string, unknown>
+  const question = text(raw.question, 400)
+  const options = stringList(raw.options, 4, 300)
+  if (!question || options.length < 2) return undefined
+  const explanation = text(raw.explanation, 500)
+  return {
+    question,
+    options,
+    correctIndex: clamp(Math.round(number(raw.correctIndex, 0)), 0, options.length - 1),
+    ...(explanation ? { explanation } : {}),
+  }
+}
+
 /** Authored training sections, bounded the same way the admin route bounds them. */
 export function normaliseTrainingSections(value: unknown): TrainingSection[] {
   if (!Array.isArray(value)) return []
   return value
     .map((entry) => {
       const section = (entry ?? {}) as Record<string, unknown>
+      const image = safeImageSrc(section.image)
+      const imageAlt = text(section.imageAlt, 240)
+      const imageCaption = text(section.imageCaption, 300)
+      const duration = Math.round(number(section.durationMinutes, 0))
+      const check = trainingCheck(section.check)
       return {
         title: text(section.title, 140),
         content: typeof section.content === 'string' ? section.content.trim().slice(0, 8_000) : '',
+        ...(image ? { image } : {}),
+        ...(image && imageAlt ? { imageAlt } : {}),
+        ...(image && imageCaption ? { imageCaption } : {}),
+        ...(duration >= 1 && duration <= 120 ? { durationMinutes: duration } : {}),
+        ...(check ? { check } : {}),
       }
     })
     .filter((section) => section.title || section.content)
@@ -84,10 +111,16 @@ export function normaliseAssessmentQuestions(value: unknown): AssessmentQuestion
     .map((entry) => {
       const question = (entry ?? {}) as Record<string, unknown>
       const options = stringList(question.options, 4, 400)
+      const image = safeImageSrc(question.image)
+      const imageAlt = text(question.imageAlt, 240)
+      const explanation = text(question.explanation, 600)
       return {
         question: text(question.question, 500),
         options,
         correctIndex: clamp(Math.round(number(question.correctIndex, 0)), 0, Math.max(0, options.length - 1)),
+        ...(image ? { image } : {}),
+        ...(image && imageAlt ? { imageAlt } : {}),
+        ...(explanation ? { explanation } : {}),
       }
     })
     .filter((question) => question.question && question.options.length >= 2)

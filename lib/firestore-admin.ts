@@ -33,6 +33,7 @@ import {
 } from '@/lib/admin-domain'
 import type { AssessmentQuestion, TrainingSection } from '@/lib/afterworks-data'
 import { safeImageSrc } from '@/lib/afterworks-data'
+import { normaliseAssessmentQuestions, normaliseTrainingSections } from '@/lib/job-catalogue'
 
 // ─── Admin SDK initialisation (singleton) ────────────────────────────────────
 
@@ -2539,12 +2540,36 @@ export function sanitizeJob(input: AdminJobInput, existing?: Record<string, unkn
       const image = safeImageSrc(section.image)
       const imageAlt = String(section.imageAlt ?? '').replace(/\s+/g, ' ').trim().slice(0, 240)
       const imageCaption = String(section.imageCaption ?? '').replace(/\s+/g, ' ').trim().slice(0, 300)
+      const duration = Math.round(Number(section.durationMinutes) || 0)
+      // A lesson check is optional, but a half-authored one is dropped: the worker-facing reader
+      // only renders a check when it has a question and at least two real options.
+      const checkRaw =
+        section.check && typeof section.check === 'object'
+          ? (section.check as Record<string, unknown>)
+          : null
+      const checkOptions = (Array.isArray(checkRaw?.options) ? checkRaw.options : [])
+        .map((option) => String(option).replace(/\s+/g, ' ').trim().slice(0, 300))
+        .filter(Boolean)
+        .slice(0, 4)
+      const checkQuestion = String(checkRaw?.question ?? '').replace(/\s+/g, ' ').trim().slice(0, 400)
+      const checkExplanation = String(checkRaw?.explanation ?? '').replace(/\s+/g, ' ').trim().slice(0, 500)
+      const check =
+        checkRaw && checkQuestion && checkOptions.length >= 2
+          ? {
+              question: checkQuestion,
+              options: checkOptions,
+              correctIndex: Math.max(0, Math.min(checkOptions.length - 1, Math.round(Number(checkRaw.correctIndex) || 0))),
+              ...(checkExplanation ? { explanation: checkExplanation } : {}),
+            }
+          : undefined
       return {
         title: String(section.title ?? '').replace(/\s+/g, ' ').trim().slice(0, 140),
         content: String(section.content ?? '').trim().slice(0, 8_000),
         ...(image ? { image } : {}),
         ...(image && imageAlt ? { imageAlt } : {}),
         ...(image && imageCaption ? { imageCaption } : {}),
+        ...(duration >= 1 && duration <= 120 ? { durationMinutes: duration } : {}),
+        ...(check ? { check } : {}),
       }
     })
     .filter((section) => section.title || section.content)
@@ -3105,31 +3130,10 @@ export async function listJobsServer(opts: { status?: string; pageSize?: number 
         slotsRemaining: Number(data.slotsRemaining ?? 0) || 0,
         trainingRequired: data.trainingRequired === true,
         trainingFeeUsd: Number(data.trainingFeeUsd ?? 0) || 0,
-        trainingNotes: Array.isArray(data.trainingNotes)
-          ? (data.trainingNotes as Record<string, unknown>[]).map((section) => {
-              const image = safeImageSrc(section?.image)
-              return {
-                title: String(section?.title ?? ''),
-                content: String(section?.content ?? ''),
-                ...(image ? { image } : {}),
-                ...(image && section?.imageAlt ? { imageAlt: String(section.imageAlt) } : {}),
-                ...(image && section?.imageCaption ? { imageCaption: String(section.imageCaption) } : {}),
-              }
-            })
-          : [],
-        assessmentQuestions: Array.isArray(data.assessmentQuestions)
-          ? (data.assessmentQuestions as Record<string, unknown>[]).map((question) => {
-              const image = safeImageSrc(question?.image)
-              return {
-                question: String(question?.question ?? ''),
-                options: Array.isArray(question?.options) ? (question.options as unknown[]).map(String) : [],
-                correctIndex: Number(question?.correctIndex ?? 0) || 0,
-                ...(image ? { image } : {}),
-                ...(image && question?.imageAlt ? { imageAlt: String(question.imageAlt) } : {}),
-                ...(question?.explanation ? { explanation: String(question.explanation) } : {}),
-              }
-            })
-          : [],
+        // Reuse the worker-facing normalisers so the console edits exactly the lesson fields the
+        // training reader renders — duration and the end-of-lesson check included.
+        trainingNotes: normaliseTrainingSections(data.trainingNotes),
+        assessmentQuestions: normaliseAssessmentQuestions(data.assessmentQuestions),
         requiresVerified: data.requiresVerified !== false,
         status: String(data.status ?? 'open'),
         closesAt: String(data.closesAt ?? ''),

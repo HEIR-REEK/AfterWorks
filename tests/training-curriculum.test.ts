@@ -73,13 +73,31 @@ test('authored training figures and explanations survive normalisation, and unsa
       image: '/training/data-entry-receipt.svg',
       imageAlt: 'A receipt with a printed total',
       imageCaption: 'The printed total wins.',
+      durationMinutes: 7,
+      check: {
+        question: 'Which total is copied?',
+        options: ['The line-item sum', 'The printed total'],
+        correctIndex: 1,
+        explanation: 'The source document is the authority.',
+      },
     },
-    { title: 'Unsafe', content: 'No figure.', image: 'javascript:alert(1)' },
+    {
+      title: 'Unsafe',
+      content: 'No figure.',
+      image: 'javascript:alert(1)',
+      check: { question: 'Half-written', options: ['Only one'], correctIndex: 0 },
+    },
   ])
   assert.equal(sections[0]!.image, '/training/data-entry-receipt.svg')
   assert.equal(sections[0]!.imageAlt, 'A receipt with a printed total')
   assert.equal(sections[0]!.imageCaption, 'The printed total wins.')
+  assert.equal(sections[0]!.durationMinutes, 7)
+  assert.equal(sections[0]!.check?.question, 'Which total is copied?')
+  assert.deepEqual(sections[0]!.check?.options, ['The line-item sum', 'The printed total'])
+  assert.equal(sections[0]!.check?.correctIndex, 1)
   assert.equal(sections[1]!.image, undefined)
+  // A check with fewer than two options is not answerable, so the reader never sees it.
+  assert.equal(sections[1]!.check, undefined)
 
   const questions = normaliseAssessmentQuestions([
     {
@@ -115,6 +133,13 @@ test('the admin write path keeps safe figures and explanations, and drops unsafe
         image: '/training/transcription-quality.svg',
         imageAlt: 'A transcript example',
         imageCaption: 'Pass versus fix.',
+        durationMinutes: 6,
+        check: {
+          question: 'What starts a new line?',
+          options: ['A speaker change', 'A comma'],
+          correctIndex: 0,
+          explanation: 'A speaker change starts a new line.',
+        },
       },
       { title: 'Unsafe', content: 'No figure.', image: 'javascript:alert(1)' },
     ],
@@ -131,6 +156,9 @@ test('the admin write path keeps safe figures and explanations, and drops unsafe
   assert.equal(saved.trainingNotes[0]!.image, '/training/transcription-quality.svg')
   assert.equal(saved.trainingNotes[0]!.imageAlt, 'A transcript example')
   assert.equal(saved.trainingNotes[0]!.imageCaption, 'Pass versus fix.')
+  assert.equal(saved.trainingNotes[0]!.durationMinutes, 6)
+  assert.equal(saved.trainingNotes[0]!.check?.question, 'What starts a new line?')
+  assert.equal(saved.trainingNotes[0]!.check?.correctIndex, 0)
   assert.equal(saved.trainingNotes[1]!.image, undefined)
   assert.equal(saved.assessmentQuestions[0]!.image, '/training/transcription-quality.svg')
   assert.equal(saved.assessmentQuestions[0]!.explanation, 'The speaker change starts a new line.')

@@ -12,7 +12,6 @@ import {
   MailCheck,
   RefreshCw,
   Gift,
-  Clock3,
 } from 'lucide-react'
 import { Button } from './ui/button'
 import { useAuth } from './firebase-auth-provider'
@@ -143,9 +142,6 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
   const googleNeedsAccount = !isSignUp && errorCode === 'auth/account-created-instead-of-signed-in'
   const justVerified = !isSignUp && searchParams.get('verified') === '1'
   const justReset = !isSignUp && searchParams.get('reset') === '1'
-  // The idle guard signs people out and drops them back here. Say why, or the reload looks like
-  // the site decided to log them out for no reason.
-  const idleSignOut = !isSignUp && searchParams.get('reason') === 'idle'
 
   function handleEmailChange(value: string) {
     setEmail(value)
@@ -268,17 +264,6 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
           <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-green-600" />
           <span>
             <strong>Password updated.</strong> Sign in with your new password — other devices were signed out.
-          </span>
-        </div>
-      )}
-
-      {idleSignOut && (
-        <div className="mb-5 flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
-          <Clock3 className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400" />
-          <span>
-            <strong>You were signed out.</strong> AfterWorks closes a session that sits idle for 10 minutes, so a
-            device left unattended cannot keep anyone&apos;s account open. Sign in again to carry on where you left
-            off — nothing was lost.
           </span>
         </div>
       )}

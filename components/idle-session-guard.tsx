@@ -115,7 +115,9 @@ export function IdleSessionGuard() {
       // Full navigation, not a soft refresh: every in-memory copy of the worker's wallet, KYC
       // state and profile is discarded with the document.
       const here = `${window.location.pathname}${window.location.search}`
-      const next = here.startsWith('/sign-in') ? here : '/sign-in?reason=idle'
+      // Silent sign-out: the member lands back on the normal sign-in page with no shouty notice.
+      // The reason is not needed in the URL — the guard's job is to close the session, not explain it.
+      const next = here.startsWith('/sign-in') ? here : '/sign-in'
       window.location.replace(next)
     })()
   }, [])

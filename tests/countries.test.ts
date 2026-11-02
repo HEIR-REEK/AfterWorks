@@ -140,6 +140,15 @@ test('the idle guard signs out and reloads rather than only refreshing', async (
   assert.doesNotMatch(source, /router\.refresh\(\)/)
 })
 
+test('an idle sign-out is quiet: no notice and no reason in the URL', async () => {
+  const guard = await readFile('components/idle-session-guard.tsx', 'utf8')
+  const form = await readFile('components/auth-form.tsx', 'utf8')
+  // The guard still signs out and still reloads; it just does not announce it.
+  assert.match(guard, /window\.location\.replace\(next\)/)
+  assert.doesNotMatch(guard, /reason=idle/, 'the sign-out URL should not carry a visible notice marker')
+  assert.doesNotMatch(form, /You were signed out/, 'the sign-in page should not shout about an idle sign-out')
+})
+
 // ─── Regression guard for the numbers it touched ─────────────────────────────
 
 test('detection does not disturb phone normalisation or the uniqueness key', () => {

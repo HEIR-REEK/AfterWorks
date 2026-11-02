@@ -31,7 +31,7 @@ function initials(nameOrEmail: string) {
 }
 
 const baseNav = [
-  { href: '/', label: 'Dashboard', icon: LayoutDashboard },
+  { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/jobs', label: 'Jobs', icon: Briefcase },
   { href: '/applications', label: 'Applied', icon: ListChecks },
   { href: '/wallet', label: 'Wallet', icon: Wallet },
@@ -68,7 +68,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   function isActive(href: string) {
-    if (href === '/') return pathname === '/'
+    if (href === '/dashboard') return pathname === '/dashboard'
     return pathname.startsWith(href)
   }
 
@@ -82,7 +82,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       {/* Top Header */}
       <header className="sticky top-0 z-40 border-b border-border bg-background/85 backdrop-blur">
         <div className="mx-auto flex h-14 w-full max-w-6xl items-center gap-4 px-4 sm:h-16 sm:gap-6 sm:px-6">
-          <BrandLink href="/" label={site.name} size={40} wordmarkClass="sm:text-base" />
+          <BrandLink href="/dashboard" label={site.name} size={40} wordmarkClass="sm:text-base" />
 
           <div className="ml-auto flex items-center gap-2 sm:gap-3">
             {worker?.kycVerified && worker?.phone && worker?.country && (

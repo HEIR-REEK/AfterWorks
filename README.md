@@ -61,6 +61,8 @@ still require a deployed check using a test account you control.
 
 | Path | What lives there |
 | --- | --- |
+| `app/page.tsx` | public landing page served at `/` — explains the platform, links to `/sign-in` and `/sign-up` |
+| `app/dashboard/page.tsx` | signed-in worker dashboard (moved off `/` when the landing page took the root) |
 | `middleware.ts` | Edge security: CSRF/host checks, maintenance gate, header policy |
 | `lib/session-token.ts` | one sign/verify path shared by Edge and Node (admin + maintenance-bypass cookies) |
 | `lib/security.ts`, `lib/security-core.ts` | passcode hashing, attempt budgets, redaction, env parsing |

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { Bell, CheckCheck, Inbox } from 'lucide-react'
 import { fetchNotifications, markNotificationsRead, type NotificationRow } from '@/lib/firestore'
+import { formatTimestamp } from '@/lib/datetime'
 import { useAuth } from '@/components/firebase-auth-provider'
 import { StatusBadge } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
@@ -135,7 +136,7 @@ export function NotificationsBell({ className }: { className?: string }) {
                     </div>
                     <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{item.body}</p>
                     <div className="mt-1.5 flex items-center justify-between">
-                      <time className="text-[11px] text-muted-foreground/80" dateTime={item.createdAt}>
+                      <time className="text-[11px] text-muted-foreground/80" dateTime={item.createdAt} suppressHydrationWarning>
                         {relativeTime(item.createdAt)}
                       </time>
                       {item.link ? (
@@ -173,5 +174,5 @@ function relativeTime(iso: string): string {
   if (hours < 24) return `${hours}h ago`
   const days = Math.round(hours / 24)
   if (days < 7) return `${days}d ago`
-  return new Date(iso).toLocaleDateString()
+  return formatTimestamp(iso, { day: '2-digit', month: 'short', year: 'numeric' })
 }

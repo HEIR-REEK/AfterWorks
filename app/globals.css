@@ -194,6 +194,16 @@
 }
 
 @layer utilities {
+  /* The landing page sits on a soft blue/green wash instead of flat white. Kept here (rather than
+     as a long arbitrary Tailwind value) so it also adapts to dark mode through the theme tokens. */
+  .landing-backdrop {
+    background-color: var(--background);
+    background-image:
+      radial-gradient(70rem 42rem at 92% -12%, rgba(59, 130, 246, 0.14), transparent 62%),
+      radial-gradient(48rem 34rem at -8% 38%, rgba(16, 185, 129, 0.09), transparent 68%),
+      radial-gradient(60rem 38rem at 50% 100%, rgba(59, 130, 246, 0.07), transparent 70%);
+  }
+
   /* Subtle blueprint grid used by the outage / maintenance screens. */
   .bg-grid-pattern {
     background-image:

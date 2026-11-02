@@ -115,7 +115,7 @@ function ApplicationRow({ app }: { app: Application }) {
           {app.status === 'under_review' && (
             <>
               <Clock className="size-3.5" />
-              Reviewing — {reviewCountdown(app.reviewExpiresAt)}
+              Reviewing — <span suppressHydrationWarning>{reviewCountdown(app.reviewExpiresAt)}</span>
             </>
           )}
           {app.status === 'approved' && 'Slot reserved. Start the work when ready.'}

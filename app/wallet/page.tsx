@@ -17,6 +17,7 @@ import { WithdrawPanel } from '@/components/withdraw-panel'
 import { useAfterWorks } from '@/components/afterworks-provider'
 import { Button } from '@/components/ui/button'
 import { formatKesValue, formatUsd } from '@/lib/afterworks-data'
+import { formatTimestamp } from '@/lib/datetime'
 import { site } from '@/lib/site'
 import { cn } from '@/lib/utils'
 
@@ -87,7 +88,7 @@ export default function WalletPage() {
           </p>
           <p className="mt-1.5 font-mono text-2xl font-semibold tabular-nums">{formatUsd(wallet.pendingUsd)}</p>
           <p className="mt-0.5 text-[11px] text-muted-foreground">
-            {walletMeta.nextClearingAt ? `Next clears ${new Date(walletMeta.nextClearingAt).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}` : `Clears after ${walletMeta.clearingHours}h`}
+            {walletMeta.nextClearingAt ? `Next clears ${formatTimestamp(walletMeta.nextClearingAt, { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })} EAT` : `Clears after ${walletMeta.clearingHours}h`}
           </p>
         </div>
         <div className="rounded-2xl border border-border bg-card p-4">
@@ -153,7 +154,7 @@ export default function WalletPage() {
             </p>
           </div>
           <span className="text-[11px] text-muted-foreground">
-            {walletMeta.asOf ? `As of ${new Date(walletMeta.asOf).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}` : ''}
+            {walletMeta.asOf ? `As of ${formatTimestamp(walletMeta.asOf, { hour: '2-digit', minute: '2-digit' })} EAT` : ''}
           </span>
         </header>
 
@@ -183,11 +184,11 @@ export default function WalletPage() {
                       <p className="truncate text-[11px] text-muted-foreground">
                         {entry.jobTitle || entry.description || (entry.reference ? `Ref ${entry.reference}` : '')}
                         {' · '}
-                        {entry.createdAt ? new Date(entry.createdAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : ''}
+                        {entry.createdAt ? formatTimestamp(entry.createdAt, { day: '2-digit', month: 'short', year: 'numeric' }) : ''}
                       </p>
                       {pendingEntry ? (
                         <p className="mt-0.5 text-[11px] text-warning">
-                          Clearing{entry.clearedAt ? ` — available ${new Date(entry.clearedAt).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}` : ''}
+                          Clearing{entry.clearedAt ? ` — available ${formatTimestamp(entry.clearedAt, { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })} EAT` : ''}
                         </p>
                       ) : null}
                     </div>

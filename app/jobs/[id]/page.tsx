@@ -70,11 +70,19 @@ export default function JobDetailPage({
   const filled = job.capacity - job.slotsRemaining
   const fillPct = Math.round((filled / job.capacity) * 100)
   const trainingFee = formatUsd(trainingFeeUsdFor(job.trainingFeeUsd))
+  const trainingRequired = job.trainingRequired
 
   async function handleApply() {
     setError(null)
-    if (!worker.kycVerified) {
-      setError('Identity verification (KYC) is required before applying for jobs.')
+    // A training fee may be paid before identity verification — that is the whole point of the
+    // checkout on the training page. What verification gates is access to the training material
+    // and the assessment, plus the application itself (which the server also enforces).
+    if (!worker.kycVerified && (!trainingRequired || isPaid)) {
+      setError(
+        trainingRequired
+          ? 'Your payment is confirmed. Verify your identity in Profile to unlock the training and assessment.'
+          : 'Identity verification (KYC) is required before taking the assessment.',
+      )
       return
     }
     
@@ -131,16 +139,25 @@ export default function JobDetailPage({
           <div className="rounded-2xl border border-border bg-card p-6">
             <h2 className="text-sm font-semibold">Requirements & Flow</h2>
             <ul className="mt-3 flex flex-col gap-3 text-sm">
-              <li className="flex items-center gap-2.5 text-muted-foreground">
+              <li className="flex items-start gap-2.5 text-muted-foreground">
                 {worker.kycVerified ? (
                   <>
-                    <ShieldCheck className="size-4 shrink-0 text-success" />
-                    <span>Identity Verification (KYC) — <strong className="text-success font-medium">Verified</strong></span>
+                    <ShieldCheck className="mt-0.5 size-4 shrink-0 text-success" />
+                    <div>
+                      <span>Identity Verification (KYC) — <strong className="text-success font-medium">Verified</strong></span>
+                    </div>
                   </>
                 ) : (
                   <>
-                    <ShieldAlert className="size-4 shrink-0 text-warning" />
-                    <span>Identity Verification (KYC) — <strong className="text-warning font-medium">Action required</strong></span>
+                    <ShieldAlert className="mt-0.5 size-4 shrink-0 text-warning" />
+                    <div>
+                      <span>Identity Verification (KYC) — <strong className="text-warning font-medium">Action required</strong></span>
+                      {job.trainingRequired ? (
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          You can pay this job card’s training fee first. The training material and assessment unlock after this check is approved.
+                        </p>
+                      ) : null}
+                    </div>
                   </>
                 )}
               </li>
@@ -148,12 +165,14 @@ export default function JobDetailPage({
                 <li className="flex items-start gap-2.5 text-muted-foreground">
                   <GraduationCap className="mt-0.5 size-4 shrink-0 text-primary" />
                   <div>
-                    <span>Step 1: Pay {trainingFee} → Step 2: Access Training → Step 3: Skill Assessment → Step 4: Apply for Job Card</span>
+                    <span>Step 1: Pay {trainingFee} → Step 2: Verify Identity → Step 3: Training → Step 4: Assessment → Apply for Job Card</span>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      {isPaid ? (
+                      {isPaid && worker.kycVerified ? (
                         <strong className="text-success font-medium">✓ Payment confirmed. Training &amp; assessment unlocked for this job card!</strong>
+                      ) : isPaid ? (
+                        <strong className="text-warning font-medium">Payment confirmed. Verify your identity in Profile to unlock training &amp; assessment.</strong>
                       ) : (
-                        <span>Each job card requires its own separate {trainingFee} payment. Completing payment unlocks training &amp; assessment for this specific job card only.</span>
+                        <span>Each job card requires its own separate {trainingFee} payment. You can pay before identity verification; training &amp; assessment open only after the check is approved for this job card.</span>
                       )}
                     </p>
                   </div>
@@ -210,9 +229,11 @@ export default function JobDetailPage({
               }`}>
                 <GraduationCap className="mt-0.5 size-4 shrink-0" />
                 <span>
-                  {isPaid
+                  {isPaid && worker.kycVerified
                     ? 'Payment detected! Training modules & assessment are unlocked.'
-                    : `This job card requires payment detection (${trainingFee}) before training and assessment open.`}
+                    : isPaid
+                      ? 'Payment confirmed. Verify your identity in Profile to unlock training and assessment.'
+                      : `This job card requires a ${trainingFee} training payment. You can pay before identity verification; training and assessment open once the check is approved.`}
                 </span>
               </div>
             )}
@@ -235,26 +256,40 @@ export default function JobDetailPage({
                   </Button>
                 </div>
               ) : !worker.kycVerified ? (
-                <div className="flex flex-col gap-2">
+                job.trainingRequired && !isPaid ? (
+                  <div className="flex flex-col gap-2">
+                    <Button
+                      onClick={handleApply}
+                      disabled={isClosed || isApplying}
+                      size="lg"
+                      className="w-full gap-2"
+                    >
+                      {isApplying && <Loader2 className="size-4 animate-spin" />}
+                      {isApplying ? 'Redirecting...' : isClosed ? 'Slots full' : `Pay ${trainingFee} to Start Training`}
+                    </Button>
+                    <Button
+                      render={<Link href="/profile" />}
+                      variant="outline"
+                      size="sm"
+                      className="w-full gap-1.5 border-warning/40 text-warning hover:bg-warning/10"
+                    >
+                      <ShieldAlert className="size-4" />
+                      Verify KYC in Profile
+                    </Button>
+                    <p className="text-center text-xs text-muted-foreground">
+                      You can pay the training fee first. Training and the assessment unlock after verification.
+                    </p>
+                  </div>
+                ) : (
                   <Button
-                    onClick={handleApply}
-                    disabled={isClosed || isApplying}
+                    render={<Link href="/profile" />}
                     size="lg"
                     className="w-full gap-2"
                   >
-                    {isApplying && <Loader2 className="size-4 animate-spin" />}
-                    {isApplying ? 'Redirecting...' : isClosed ? 'Slots full' : 'Take Assessment to Apply'}
-                  </Button>
-                  <Button
-                    render={<Link href="/profile" />}
-                    variant="outline"
-                    size="sm"
-                    className="w-full gap-1.5 border-warning/40 text-warning hover:bg-warning/10"
-                  >
                     <ShieldAlert className="size-4" />
-                    Verify KYC in Profile
+                    {job.trainingRequired ? 'Verify KYC to Start Training' : 'Verify KYC to Take the Assessment'}
                   </Button>
-                </div>
+                )
               ) : (
                 <Button
                   onClick={handleApply}
@@ -284,7 +319,7 @@ export default function JobDetailPage({
 
               {!application && !isClosed && (
                 <p className="mt-3 text-center text-xs text-muted-foreground">
-                  No fee to apply. Your saved professional details are attached automatically.
+                  No fee to submit an application. A training fee, where the job card requires one, is separate. Your saved professional details are attached automatically.
                 </p>
               )}
             </div>

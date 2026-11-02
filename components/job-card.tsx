@@ -63,7 +63,10 @@ export function JobCard({ job }: { job: Job }) {
           <Users className="size-3.5" />
           {job.capacity} workers
         </span>
-        <span className={`inline-flex items-center gap-1.5 ${closing.urgent ? 'text-warning-foreground' : ''}`}>
+        <span
+          className={`inline-flex items-center gap-1.5 ${closing.urgent ? 'text-warning-foreground' : ''}`}
+          suppressHydrationWarning
+        >
           <MapPin className="size-3.5" />
           {closing.text}
         </span>

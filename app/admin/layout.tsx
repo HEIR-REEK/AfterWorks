@@ -129,7 +129,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             <span className="hidden max-w-[16ch] truncate text-xs font-medium text-muted-foreground md:inline" title={session.email}>
               {session.email}
             </span>
-            <Button render={<Link href="/" />} variant="ghost" size="sm" className="gap-1.5 text-muted-foreground">
+            <Button render={<Link href="/dashboard" />} variant="ghost" size="sm" className="gap-1.5 text-muted-foreground">
               Worker app
               <ArrowUpRight className="size-3.5" />
             </Button>

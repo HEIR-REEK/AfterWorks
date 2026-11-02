@@ -57,8 +57,36 @@ test('a legal document is readable without signing in first', () => {
   assert.equal(isPublicRoute(privacyHref('retention')), true)
 })
 
+test('the landing page at the domain root is public and opens the two doors', () => {
+  // afterworks.site must explain the product to a stranger, not bounce them to a login form. `/`
+  // is the landing page; the dashboard moved to `/dashboard`.
+  assert.equal(isPublicRoute('/'), true, '/ must render without a session')
+  assert.ok(routeFileExists('/'), 'app/page.tsx is missing')
+
+  const landing = readFileSync(join(ROOT, 'app/page.tsx'), 'utf8')
+  assert.match(landing, /href="\/sign-in"/, 'the landing page must link to the existing sign-in page')
+  assert.match(landing, /href="\/sign-up"/, 'the landing page must link to the existing sign-up page')
+  // The header is client-rendered, so it is checked separately: a landing page whose only auth
+  // links live behind a client component still needs them to be real anchors somewhere.
+  const header = readFileSync(join(ROOT, 'components/landing-header.tsx'), 'utf8')
+  assert.match(header, /href="\/sign-in"/, 'the landing header must link to /sign-in')
+  assert.match(header, /href="\/sign-up"/, 'the landing header must link to /sign-up')
+  assert.match(header, /'\/dashboard'/, 'a signed-in visitor needs a way back to the workspace')
+})
+
+test('a successful sign-in lands on the dashboard, not on the landing page', () => {
+  // The landing page took over `/`, so any leftover `router.push('/')` after authentication would
+  // drop a member back onto marketing copy while looking signed in.
+  const form = readFileSync(join(ROOT, 'components/auth-form.tsx'), 'utf8')
+  assert.match(form, /router\.push\('\/dashboard'\)/, 'the auth form must continue to the dashboard')
+  assert.doesNotMatch(form, /router\.push\('\/'\)/, 'the auth form must not send members to the landing page')
+
+  const shell = readFileSync(join(ROOT, 'components/app-shell.tsx'), 'utf8')
+  assert.match(shell, /href: '\/dashboard'/, 'the workspace navigation must point at /dashboard')
+})
+
 test('the routes the app already treated as public stay public', () => {
-  for (const route of ['/sign-in', '/sign-up', '/forgot-password', '/verify-email', '/kyc/callback', '/maintenance', '/status']) {
+  for (const route of ['/', '/sign-in', '/sign-up', '/forgot-password', '/verify-email', '/kyc/callback', '/maintenance', '/status']) {
     assert.equal(isPublicRoute(route), true, `${route} must render for a signed-out visitor`)
   }
   // Sub-paths of a public route are public (`/sign-in/anything`), which is how the gate matched
@@ -67,7 +95,9 @@ test('the routes the app already treated as public stay public', () => {
 })
 
 test('the routes that need a session are still private', () => {
-  for (const route of ['/', '/profile', '/jobs', '/wallet', '/applications', '/referrals', '/training', '/admin', '/admin/login']) {
+  // `/dashboard` replaced `/` as the signed-in home, so it inherits that route's privacy. The
+  // landing page's exemption must not leak into it.
+  for (const route of ['/dashboard', '/profile', '/jobs', '/wallet', '/applications', '/referrals', '/training', '/admin', '/admin/login']) {
     assert.equal(isPublicRoute(route), false, `${route} must not render without a session`)
   }
 })
@@ -121,4 +151,44 @@ test('the public list is what the gate reads, not a copy of it', () => {
   assert.match(gate, /from '@\/lib\/public-routes'/, 'app-gate must import the shared list')
   assert.doesNotMatch(gate, /const PUBLIC_ROUTES\s*=/, 'app-gate must not keep its own copy of the list')
   assert.ok(PUBLIC_ROUTES.includes('/terms') && PUBLIC_ROUTES.includes('/privacy'))
+})
+
+test('the landing page uses local photographs and keeps payment rails off the marketing copy', () => {
+  // The landing page shows real photographs. A remote URL can silently 404 or start serving a
+  // watermarked preview, so every image source must resolve to a file in public/. The photography
+  // credit lives in `public/photos/README.md` rather than in the page footer.
+  const source = readFileSync(join(ROOT, 'app/page.tsx'), 'utf8')
+  const photos = [
+    ...new Set(
+      [...source.matchAll(/src(?:\s*:\s*'|\s*=\s*")(\/photos\/[^'"]+)/g)].map((match) => match[1]),
+    ),
+  ]
+
+  assert.ok(photos.length >= 3, 'expected the landing page to use at least three local photographs')
+  for (const photo of photos) {
+    assert.ok(existsSync(join(ROOT, 'public', photo)), `${photo} is missing from public/`)
+  }
+  assert.doesNotMatch(source, /src(?:\s*:\s*'|\s*=\s*")https?:\/\//, 'photographs must be local, not hotlinked')
+
+  const credits = readFileSync(join(ROOT, 'public/photos/README.md'), 'utf8')
+  assert.match(credits, /Unsplash/, 'the photo README must record the source and licence')
+
+  // Copy the client has explicitly asked not to advertise: rail-specific payment promises and
+  // free-tier slogans. They were removed from the page; this stops a later edit reintroducing them.
+  assert.doesNotMatch(source, /M-Pesa|mobile money/i, 'payment-rail wording is not allowed on the landing page')
+  assert.doesNotMatch(source, /you never pay to apply|applications are always free|free to join/i)
+})
+
+test('the privacy notice describes payout destinations without naming a payment rail', () => {
+  // The notice may say that a payout destination is collected; it must not hard-code one rail
+  // (the product supports more than one, and the field is not what the notice needs to disclose).
+  const terms = readFileSync(join(ROOT, 'lib/terms.ts'), 'utf8')
+  assert.doesNotMatch(terms, /an M-Pesa number or bank details/, 'the old rail-specific parenthetical is back')
+})
+
+test('a training fee may be paid before KYC, but training and the assessment may not open', () => {
+  const terms = readFileSync(join(ROOT, 'lib/terms.ts'), 'utf8')
+  assert.match(terms, /You may pay it before identity verification/)
+  assert.match(terms, /unlocked only after your identity verification is approved/)
+  assert.match(terms, /paying does not bypass that check/)
 })

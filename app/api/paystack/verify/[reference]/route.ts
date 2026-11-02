@@ -160,8 +160,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ refe
 
     await firestore
       .notifyUser(uid, {
-        title: 'Training unlocked',
-        body: 'Your payment was confirmed and training for this job card is open. Complete the assessment to apply.',
+        title: 'Training payment confirmed',
+        body: 'Your payment was confirmed for this job card. Training and assessment unlock once your identity verification is approved.',
         tone: 'success',
         link: `/training/${encodeURIComponent(jobId)}`,
       })

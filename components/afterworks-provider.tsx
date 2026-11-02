@@ -267,6 +267,8 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
   const [pending, setPending] = useState<Record<string, boolean>>({})
   const [error, setError] = useState<string | null>(null)
   const mounted = useRef(true)
+  /** uid whose one automatic welcome-reward claim has already been attempted. */
+  const welcomeClaimUid = useRef<string | null>(null)
 
   useEffect(() => {
     mounted.current = true
@@ -802,6 +804,19 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
 
   // ── Onboarding: profile prompt + reward celebration ─────────────────────────────
   const completion = useMemo<ProfileCompletion>(() => profileCompletion(profileDoc), [profileDoc])
+
+  // A profile that is already complete but has no reward row is the legacy/partial-save case. The
+  // profile save normally credits the $5 in the same transaction, but an account created before
+  // that fix (or a save interrupted at the wrong moment) would otherwise show a dashboard total
+  // without it until the member found the claim button on /profile. Claim once per signed-in
+  // account; the endpoint is idempotent, so a second device is harmless.
+  useEffect(() => {
+    if (!configured || !user || !profileLoaded) return
+    if (payouts.welcomeBonus.granted || !completion.complete) return
+    if (welcomeClaimUid.current === user.uid) return
+    welcomeClaimUid.current = user.uid
+    void claimWelcomeBonus()
+  }, [configured, user, profileLoaded, payouts.welcomeBonus.granted, completion.complete, claimWelcomeBonus])
 
   // The prompt appears once the session is settled and a profile is genuinely owed. It stays away
   // when: the member is in demo mode, the inbox is unproven (the app gate owns that conversation),

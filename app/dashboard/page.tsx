@@ -15,6 +15,7 @@ import {
   Eye,
   EyeOff,
   Hourglass,
+  Sparkles,
   Star,
   Wallet as WalletIcon,
 } from 'lucide-react'
@@ -42,8 +43,22 @@ function HiddenMoney({ value, hidden, className }: { value: string; hidden: bool
 }
 
 export default function DashboardPage() {
-  const { worker, wallet, walletMeta, payouts, onboarding, jobs, applications, getJob, catalogueLive } = useAfterWorks()
+  const {
+    worker,
+    wallet,
+    walletMeta,
+    payouts,
+    onboarding,
+    jobs,
+    applications,
+    getJob,
+    catalogueLive,
+    claimWelcomeBonus,
+    pending,
+    mode,
+  } = useAfterWorks()
   const [balanceHidden, setBalanceHidden] = useState(false)
+  const [bonusNotice, setBonusNotice] = useState<string | null>(null)
   // Completion and the reward are server-scored (`lib/profile-completion.ts`) and celebrated by the
   // shared reward dialog, so this page never has to guess — or store — whether the $5 was paid.
   const profileCompletion = onboarding.completion.percent
@@ -57,8 +72,20 @@ export default function DashboardPage() {
   const topTrainingPay = trainingJobs.reduce((highest, job) => Math.max(highest, job.payAmountUsd), 0)
 
   // The server sums available + pending. Held money is already inside available (a payout request
-  // claims it rather than moving it), so it must not be added a second time.
+  // claims it rather than moving it), so it must not be added a second time. The welcome reward is
+  // part of available once the server has credited it — this total never counts money that has only
+  // been promised.
   const totalBalance = payouts.totalUsd || wallet.availableUsd + wallet.pendingUsd
+
+  async function claimWelcomeReward() {
+    setBonusNotice(null)
+    const result = await claimWelcomeBonus()
+    if (result.granted) {
+      setBonusNotice(`${formatUsd(payouts.welcomeBonus.amountUsd)} has been added to your total.`)
+      return
+    }
+    setBonusNotice(result.error || 'The welcome reward could not be claimed yet.')
+  }
 
   return (
     <div className="flex flex-col gap-6 sm:gap-8">
@@ -133,8 +160,9 @@ export default function DashboardPage() {
               className="mt-2 block font-mono text-3xl font-semibold tabular-nums sm:text-4xl"
             />
             <p className="mt-1 max-w-xl text-xs leading-relaxed text-muted-foreground">
-              Everything in your account — withdrawable money, earnings still clearing, amounts on hold
-              and referral bonuses. It all counts here, even when it is not ready to withdraw.
+              Everything in your account — withdrawable money, earnings still clearing, amounts on hold,
+              referral bonuses and any welcome reward already credited. It all counts here, even when it
+              is not ready to withdraw.
             </p>
           </div>
           <button
@@ -198,8 +226,48 @@ export default function DashboardPage() {
           </div>
         </div>
 
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border p-4">
+          <div className="flex min-w-0 items-start gap-2.5">
+            <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+              <Sparkles className="size-3.5" />
+            </span>
+            <div className="min-w-0">
+              <p className="text-sm font-semibold">Welcome reward</p>
+              <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+                {welcomeRewardPaid
+                  ? `${formatUsd(payouts.welcomeBonus.amountUsd)} is credited and already included in your total.`
+                  : onboarding.completion.complete
+                    ? `${formatUsd(payouts.welcomeBonus.amountUsd)} is earned but not yet in your total — claim it to add it.`
+                    : `${formatUsd(payouts.welcomeBonus.amountUsd)} unlocks at 100% profile completion. It joins your total once it is credited.`}
+              </p>
+              {bonusNotice ? (
+                <p className="mt-1 text-xs font-medium text-primary" role="status">{bonusNotice}</p>
+              ) : null}
+            </div>
+          </div>
+          {welcomeRewardPaid ? (
+            <Button render={<Link href="/wallet" />} size="sm" variant="outline">
+              View in wallet
+            </Button>
+          ) : onboarding.completion.complete ? (
+            <Button
+              size="sm"
+              onClick={() => void claimWelcomeReward()}
+              disabled={pending['bonus'] === true || mode === 'demo'}
+              className="gap-1.5"
+            >
+              <Sparkles className="size-3.5" />
+              {pending['bonus'] ? 'Claiming…' : `Claim ${formatUsd(payouts.welcomeBonus.amountUsd)}`}
+            </Button>
+          ) : (
+            <Button render={<Link href="/profile" />} size="sm" variant="outline">
+              Finish profile
+            </Button>
+          )}
+        </div>
+
         <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border bg-muted/20 px-5 py-3 text-xs">
-          <span className="text-muted-foreground">Referral bonuses and your welcome reward are included in the total.</span>
+          <span className="text-muted-foreground">Referral bonuses are included once credited.</span>
           <div className="flex gap-3">
             <Link href="/referrals" className="font-medium text-primary hover:underline">Referral earnings →</Link>
             <Link href="/wallet" className="font-medium text-primary hover:underline">Wallet & payouts →</Link>

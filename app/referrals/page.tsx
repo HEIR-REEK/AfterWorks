@@ -26,6 +26,7 @@ import {
   Loader2,
   RefreshCw,
   Share2,
+  UserPlus,
   Users,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -36,8 +37,10 @@ import { authedFetch, describeError } from '@/lib/client-api'
 import { site } from '@/lib/site'
 import { cn } from '@/lib/utils'
 import {
+  REFERRAL_ATTACH_WINDOW_DAYS,
   REFERRAL_STATUS_HINT,
   REFERRAL_STATUS_LABEL,
+  normaliseReferralCode,
   type ReferralDashboard,
   type ReferralRow,
 } from '@/lib/referrals'
@@ -77,12 +80,38 @@ function ReferralRowItem({ row }: { row: ReferralRow }) {
   )
 }
 
+function claimErrorMessage(reason: string | undefined): string {
+  switch (reason) {
+    case 'unknown_referral_code':
+      return 'That referral code was not found. Check the letters and try again.'
+    case 'already_referred':
+      return 'This account is already linked to a referrer. A referral cannot be moved to someone else.'
+    case 'self_referral':
+      return 'You cannot use your own referral code.'
+    case 'referrer_restricted':
+      return 'That referrer\'s account is not active, so their code cannot be accepted right now.'
+    case 'referral_rate_limited':
+      return 'That referrer has reached their weekly invitation limit. Try again next week.'
+    case 'referral_window_closed':
+      return `Referral codes can only be added within ${REFERRAL_ATTACH_WINDOW_DAYS} days of creating your account.`
+    case 'rate_limited':
+      return 'Too many attempts. Wait a minute and try again.'
+    case 'rate_limit_unavailable':
+      return 'We could not check that code safely just now. Please try again in a minute.'
+    default:
+      return 'That code could not be attached. Check it and try again, or contact support if it keeps failing.'
+  }
+}
+
 export default function ReferralsPage() {
   const { user, configured } = useAuth()
   const [data, setData] = useState<DashboardResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
+  const [inviteCode, setInviteCode] = useState('')
+  const [claiming, setClaiming] = useState(false)
+  const [claimError, setClaimError] = useState<string | null>(null)
 
   const load = useCallback(async (quiet = false) => {
     if (!user || !configured) {
@@ -124,7 +153,10 @@ export default function ReferralsPage() {
   }, [user, configured, load])
 
   async function copyLink() {
-    if (!data) return
+    // A code that cannot be shared must not be copyable either: otherwise a member who has not
+    // finished KYC can share a link that will only be paid after they do, which is exactly the
+    // "I used their link and nobody got $3" confusion this screen has to prevent.
+    if (!data?.canShare) return
     try {
       await navigator.clipboard.writeText(data.shareUrl)
       setCopied(true)
@@ -152,6 +184,35 @@ export default function ReferralsPage() {
       // The member dismissed the share sheet, or it is unavailable. Fall through to copying.
     }
     await copyLink()
+  }
+
+  async function attachInviteCode(e: React.FormEvent) {
+    e.preventDefault()
+    const code = normaliseReferralCode(inviteCode)
+    if (!code) {
+      setClaimError('That does not look like an AfterWorks referral code. Check it and try again.')
+      return
+    }
+    setClaiming(true)
+    setClaimError(null)
+    try {
+      const result = await authedFetch<{ attached?: boolean; reason?: string }>('/api/referrals/claim', {
+        method: 'POST',
+        body: { code },
+      })
+      if (!result.attached) {
+        setClaimError(claimErrorMessage(result.reason))
+        return
+      }
+      setInviteCode('')
+      // Reload the panel so the attribution card replaces this form and, when the profile and
+      // referrer were already eligible, so the qualified status is shown immediately.
+      await load(true)
+    } catch (err) {
+      setClaimError(describeError(err))
+    } finally {
+      setClaiming(false)
+    }
   }
 
   if (!configured || !user) {
@@ -206,6 +267,67 @@ export default function ReferralsPage() {
         </Button>
       </header>
 
+      {/* ── Attribution / recovery ───────────────────────────────────────────── */}
+      {data.attribution ? (
+        <section
+          className={cn(
+            'flex flex-wrap items-center justify-between gap-3 rounded-2xl border p-4',
+            data.attribution.status === 'qualified'
+              ? 'border-success/30 bg-success/[0.06]'
+              : 'border-warning/30 bg-warning/[0.06]',
+          )}
+          aria-label="Your referral"
+        >
+          <div className="min-w-0">
+            <p className="text-sm font-semibold">You joined with {data.attribution.referrerName}'s code</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              {data.attribution.status === 'qualified'
+                ? `Their ${formatUsd(data.bonusUsd)} bonus has been credited to their pending balance.`
+                : `The ${formatUsd(data.bonusUsd)} is released when your profile is complete and their identity verification is approved.`}
+            </p>
+          </div>
+          <StatusBadge tone={data.attribution.status === 'qualified' ? 'success' : 'warning'}>
+            {data.attribution.status === 'qualified' ? 'Bonus credited' : 'Awaiting release'}
+          </StatusBadge>
+        </section>
+      ) : data.canAttachReferral ? (
+        <section className="rounded-2xl border border-primary/25 bg-primary/[0.04] p-4" aria-label="Add a referral code">
+          <div className="flex items-start gap-2.5">
+            <UserPlus className="mt-0.5 size-4 shrink-0 text-primary" />
+            <div className="min-w-0">
+              <p className="text-sm font-semibold">Were you invited by someone?</p>
+              <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+                If you signed up with an invite code but it did not attach, add it here within{' '}
+                {data.attachWindowDays ?? REFERRAL_ATTACH_WINDOW_DAYS} days of creating your account.
+                One account can only ever have one referrer.
+              </p>
+            </div>
+          </div>
+          <form onSubmit={attachInviteCode} className="mt-3 flex flex-col gap-2 sm:flex-row">
+            <input
+              value={inviteCode}
+              onChange={(e) => setInviteCode(e.target.value.toUpperCase())}
+              placeholder="AWK7MNPQ"
+              aria-label="Referral code"
+              autoComplete="off"
+              spellCheck={false}
+              maxLength={64}
+              className="h-9 min-w-0 flex-1 rounded-lg border border-input bg-background px-3 font-mono text-sm uppercase tracking-[0.12em] outline-none placeholder:text-muted-foreground/60 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+            />
+            <Button type="submit" disabled={claiming || inviteCode.trim().length === 0} className="gap-1.5">
+              {claiming ? <Loader2 className="size-3.5 animate-spin" /> : <UserPlus className="size-3.5" />}
+              {claiming ? 'Attaching…' : 'Attach code'}
+            </Button>
+          </form>
+          {claimError ? (
+            <p className="mt-2 flex items-start gap-1.5 text-xs text-destructive" role="alert">
+              <AlertCircle className="mt-0.5 size-3.5 shrink-0" />
+              {claimError}
+            </p>
+          ) : null}
+        </section>
+      ) : null}
+
       {/* ── The link ─────────────────────────────────────────────────────────── */}
       <section className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
         <div className="border-b border-border bg-muted/30 p-5">
@@ -228,7 +350,14 @@ export default function ReferralsPage() {
         <div className="flex flex-col gap-3 p-5">
           <div className="flex items-center gap-2 rounded-lg border border-input bg-muted/40 px-3 py-2.5">
             <code className="min-w-0 flex-1 truncate text-sm text-muted-foreground">{data.shareUrl}</code>
-            <Button size="sm" variant="ghost" onClick={copyLink} className="shrink-0 gap-1.5">
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={copyLink}
+              disabled={!data.canShare}
+              title={data.canShare ? undefined : 'Finish your own verification and profile before sharing this link.'}
+              className="shrink-0 gap-1.5"
+            >
               {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
               {copied ? 'Copied' : 'Copy'}
             </Button>

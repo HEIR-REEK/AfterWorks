@@ -12,10 +12,13 @@ import {
   phoneMatchKey,
 } from '@/lib/countries'
 import {
+  REFERRAL_ATTACH_WINDOW_DAYS,
+  REFERRAL_ATTACH_WINDOW_MS,
   REFERRAL_BONUS_USD,
   REFERRAL_CODE_RE,
   REFERRAL_SIGNUP_WEEKLY_LIMIT,
   evaluateReferralClaim,
+  referralAttachWindowOpen,
   generateReferralCode,
   normaliseReferralCode,
   referralShareUrl,
@@ -100,15 +103,40 @@ test('a member cannot refer themselves, by uid or by email', () => {
   assert.equal(byEmail.ok === false && byEmail.code, 'self_referral')
 })
 
-test('an unverified or restricted referrer cannot pay anyone', () => {
+test('an unverified referrer can still be credited later, but a restricted one cannot', () => {
+  // Attribution is recorded while the referrer finishes KYC; the release pass is what refuses to
+  // write the bonus until the referrer is verified. Refusing here used to lose the referral
+  // permanently when the invitation arrived before the referrer had finished verification.
   const unverified = evaluateReferralClaim({ ...goodClaim, referrerKycVerified: false })
-  assert.equal(unverified.ok === false && unverified.code, 'referrer_unverified')
+  assert.equal(unverified.ok, true)
+  assert.equal(unverified.ok && unverified.deferred, 'referrer_unverified')
+
+  const verified = evaluateReferralClaim(goodClaim)
+  assert.equal(verified.ok, true)
+  assert.equal(verified.ok && verified.deferred, undefined)
 
   const suspended = evaluateReferralClaim({ ...goodClaim, referrerAccountState: 'suspended' })
   assert.equal(suspended.ok === false && suspended.code, 'referrer_restricted')
 
   const banned = evaluateReferralClaim({ ...goodClaim, referrerAccountState: 'banned' })
   assert.equal(banned.ok === false && banned.code, 'referrer_restricted')
+})
+
+test('a referral code can be attached during the recovery window, not years later', () => {
+  const now = Date.parse('2026-11-03T12:00:00.000Z')
+  const justSignedUp = new Date(now - 60_000).toISOString()
+  const lastDay = new Date(now - REFERRAL_ATTACH_WINDOW_MS + 60_000).toISOString()
+  const tooLate = new Date(now - REFERRAL_ATTACH_WINDOW_MS - 60_000).toISOString()
+
+  assert.equal(referralAttachWindowOpen(justSignedUp, now), true)
+  assert.equal(referralAttachWindowOpen(lastDay, now), true)
+  assert.equal(referralAttachWindowOpen(tooLate, now), false)
+  assert.equal(referralAttachWindowOpen(new Date(now - 60_000), now), true)
+  assert.equal(referralAttachWindowOpen({ seconds: Math.floor((now - 60_000) / 1000) }, now), true)
+  // A missing timestamp is the initial-signup case, where the server timestamp may not have
+  // resolved yet. It must not block the ordinary attribution path.
+  assert.equal(referralAttachWindowOpen(undefined, now), true)
+  assert.equal(REFERRAL_ATTACH_WINDOW_DAYS, 30)
 })
 
 test('the weekly cap is enforced at the limit, not above it', () => {
@@ -124,7 +152,7 @@ test('every rejection carries a message a member can be shown', () => {
   for (const claim of [
     { ...goodClaim, code: 'nope' },
     { ...goodClaim, referredUid: 'ref-1' },
-    { ...goodClaim, referrerKycVerified: false },
+    { ...goodClaim, referrerAccountState: 'suspended' },
     { ...goodClaim, recentSignups: 999 },
   ]) {
     const decision = evaluateReferralClaim(claim)

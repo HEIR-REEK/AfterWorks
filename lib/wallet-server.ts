@@ -43,6 +43,7 @@ import {
   isOpenPayoutStatus,
   mapPayoutRequest,
   roundUsd,
+  totalWalletUsd,
   validatePayoutDestination,
   validateWithdrawalAmount,
   canTransitionPayout,
@@ -284,6 +285,7 @@ export async function getMemberWallet(uid: string): Promise<WalletSnapshot | nul
   return {
     pendingUsd,
     availableUsd,
+    totalUsd: totalWalletUsd({ availableUsd, pendingUsd }),
     heldUsd,
     withdrawableUsd,
     payoutNumber: String(wallet.payoutNumber ?? data.phone ?? ''),

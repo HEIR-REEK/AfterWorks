@@ -37,13 +37,16 @@ import { formatUsd } from '@/lib/afterworks-data'
 import { site } from '@/lib/site'
 import { sanitizeLine } from '@/lib/security-core'
 import {
+  REFERRAL_ATTACH_WINDOW_DAYS,
   REFERRAL_BONUS_USD,
   REFERRAL_SIGNUP_WEEK_MS,
   evaluateReferralClaim,
   generateReferralCode,
   normaliseReferralCode,
+  referralAttachWindowOpen,
   referralShareUrl,
   referralStats,
+  type ReferralAttribution,
   type ReferralDashboard,
   type ReferralRow,
   type ReferralStatus,
@@ -145,17 +148,30 @@ export async function resolveReferralCode(code: string): Promise<{ uid: string; 
  * so a failure here is audited and swallowed rather than rolled back into a sign-up error. A
  * member must never be locked out because a referral write timed out.
  *
- * Every rejection is a decision, not a crash: an invalid code, a self-referral, a referrer who
- * has not verified their identity, a restricted referrer and a rate-limited referrer all answer
- * with a reason the sign-up form can show, and none of them create a document.
+ * Every rejection is a decision, not a crash: an invalid code, a self-referral, a restricted
+ * referrer and a rate-limited referrer all answer with a reason the sign-up form can show.
+ *
+ * A referrer who has not completed KYC is different: the attribution is written, but the release
+ * function refuses to move money until that verification is approved. This is deliberate. Refusing
+ * the claim outright lost a real invitation whenever it arrived before the referrer finished their
+ * identity check; the referrer reconciliation pass pays the pending row when that approval lands.
  */
+export type ClaimReferralResult = {
+  attached: boolean
+  code: string
+  reason?: string
+  codeName?: string
+  /** Present when the attribution is saved but the referrer's KYC has not been approved yet. */
+  deferred?: 'referrer_unverified'
+}
+
 export async function claimReferralForSignup(input: {
   referredUid: string
   referredEmail: string
   referredName: string
   rawCode: string
   emailVerified: boolean
-}): Promise<{ attached: boolean; code: string; reason?: string; codeName?: string }> {
+}): Promise<ClaimReferralResult> {
   const db = dbOrNull()
   const normalised = normaliseReferralCode(input.rawCode)
   if (!db || !normalised) return { attached: false, code: '', reason: 'invalid_referral_code' }
@@ -163,6 +179,17 @@ export async function claimReferralForSignup(input: {
   try {
     const resolved = await resolveReferralCode(normalised)
     if (!resolved) return { attached: false, code: normalised, reason: 'unknown_referral_code' }
+
+    // A late claim (the recovery form on /referrals) is allowed for one month after the account was
+    // created. The immediate sign-up claim runs well inside this window; an old account cannot
+    // retroactively attach itself to a referrer.
+    const referredSnap = await db.collection('users').doc(input.referredUid).get().catch(() => null)
+    if (referredSnap?.exists) {
+      const createdAt = (referredSnap.data() ?? {}).createdAt
+      if (!referralAttachWindowOpen(createdAt)) {
+        return { attached: false, code: normalised, reason: 'referral_window_closed' }
+      }
+    }
 
     const referrerRef = db.collection('users').doc(resolved.uid)
     const referrerSnap = await referrerRef.get()
@@ -188,10 +215,21 @@ export async function claimReferralForSignup(input: {
         .get()
       recentSignups = recent.size
     } catch (err) {
-      // Without the rolling index the cap cannot be measured. Fail closed: a limit we cannot
-      // enforce is not a limit, and the alternative is an unmetered signup faucet.
-      console.warn('[referrals] weekly count unavailable, refusing attribution:', err instanceof Error ? err.message : err)
-      return { attached: false, code: normalised, reason: 'rate_limit_unavailable' }
+      // The composite (referrerUid, createdAt) index is the fast path, but a deployment that has
+      // not run `firebase deploy --only firestore:indexes` must not turn every referral into
+      // "rate limit unavailable". Fall back to the single-field index Firestore creates
+      // automatically and count the window in memory. If even that read fails, fail closed.
+      console.warn('[referrals] ordered weekly count unavailable, using bounded fallback:', err instanceof Error ? err.message : err)
+      try {
+        const bounded = await db.collection('referrals').where('referrerUid', '==', resolved.uid).limit(500).get()
+        recentSignups = bounded.docs.filter((doc) => {
+          const createdAt = String((doc.data() ?? {}).createdAt ?? '')
+          return createdAt >= cutoff
+        }).length
+      } catch (fallbackErr) {
+        console.warn('[referrals] weekly count unavailable, refusing attribution:', fallbackErr instanceof Error ? fallbackErr.message : fallbackErr)
+        return { attached: false, code: normalised, reason: 'rate_limit_unavailable' }
+      }
     }
 
     const decision = evaluateReferralClaim({
@@ -237,7 +275,12 @@ export async function claimReferralForSignup(input: {
     // attribution (for example after a retried signup callback) cannot leave an already-complete
     // profile permanently pending.
     await reconcileCompletedReferral(input.referredUid)
-    return { attached: true, code: normalised, codeName: String(referrer.name ?? '') }
+    return {
+      attached: true,
+      code: normalised,
+      codeName: String(referrer.name ?? ''),
+      ...(decision.deferred ? { deferred: decision.deferred } : {}),
+    }
   } catch (err) {
     console.warn('[referrals] attribution skipped:', err instanceof Error ? err.message : err)
     return { attached: false, code: normalised, reason: 'attribution_failed' }
@@ -416,6 +459,39 @@ export async function reconcileCompletedReferral(referredUid: string): Promise<b
   }
 }
 
+/**
+ * Retries every pending referral owned by a referrer.
+ *
+ * The usual release is atomic with the referred member's profile save. This is the other order:
+ * the referred profile was already complete when the referrer's KYC was approved, so nothing would
+ * revisit those rows. Called from every path that can mark a referrer verified — the Didit webhook,
+ * the status self-heal and the admin approval — and safe to call repeatedly because
+ * `stageReferralBonusForCompletedProfile` returns no writes once a row is qualified.
+ */
+export async function reconcileReferralsForReferrer(referrerUid: string): Promise<number> {
+  const db = dbOrNull()
+  if (!db || !referrerUid) return 0
+
+  try {
+    const snap = await db.collection('referrals').where('referrerUid', '==', referrerUid).limit(200).get()
+    const pending = snap.docs.filter((doc) => {
+      const data = (doc.data() ?? {}) as Record<string, unknown>
+      return data.status !== 'qualified'
+    })
+    let released = 0
+    for (const doc of pending) {
+      if (await reconcileCompletedReferral(doc.id)) released += 1
+    }
+    if (released > 0) {
+      console.info(`[referrals] released ${released} pending referral(s) after referrer ${referrerUid.slice(0, 8)} became eligible`)
+    }
+    return released
+  } catch (err) {
+    console.warn('[referrals] referrer reconciliation skipped:', err instanceof Error ? err.message : err)
+    return 0
+  }
+}
+
 function round2(value: number): number {
   return Math.round(value * 100) / 100
 }
@@ -474,12 +550,28 @@ export async function getReferralDashboard(uid: string): Promise<ReferralDashboa
   const completion = profileCompletion(user)
   const blocked = referralBlockReason(user, completion)
 
+  let attribution: ReferralAttribution | null = null
+  const ownReferral = await db.collection('referrals').doc(uid).get().catch(() => null)
+  if (ownReferral?.exists) {
+    const row = mapReferral(ownReferral.id, (ownReferral.data() ?? {}) as Record<string, unknown>)
+    attribution = {
+      code: row.code,
+      referrerName: row.referrerName || 'A member',
+      status: row.status,
+      createdAt: row.createdAt,
+      qualifiedAt: row.qualifiedAt,
+    }
+  }
+
   return {
     code,
     shareUrl,
     bonusUsd: REFERRAL_BONUS_USD,
     stats: referralStats(rows),
     rows,
+    attribution,
+    canAttachReferral: !attribution && referralAttachWindowOpen(user.createdAt),
+    attachWindowDays: REFERRAL_ATTACH_WINDOW_DAYS,
     blockedReason: blocked.reason,
     canShare: blocked.reason === null,
     asOf: new Date().toISOString(),

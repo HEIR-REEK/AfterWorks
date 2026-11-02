@@ -283,6 +283,22 @@ test('a referrer who is no longer in good standing is not paid', async () => {
   assert.equal(db.read('wallet_ledger/referral_bonus_u1'), undefined)
 })
 
+test('a referrer who has not finished KYC keeps the referral pending, not lost', async () => {
+  // Attribution is no longer refused while the referrer verifies; the profile save must still hold
+  // the money back until KYC is approved. The KYC completion path retries this pending row.
+  const db = new FakeFirestore({
+    ...REFERRAL_SEED,
+    'users/ref-1': { uid: 'ref-1', accountState: 'active', kycVerified: false, wallet: { pendingUsd: 2 } },
+  })
+  const result = await saveMemberProfile('u1', COMPLETING_SAVE, { db: asDb(db) })
+
+  assert.equal(result.releasedReferral, null)
+  assert.equal((db.read('users/ref-1')?.wallet as Doc).pendingUsd, 2)
+  assert.equal(db.read('wallet_ledger/referral_bonus_u1'), undefined)
+  // The attribution survives for the retry that runs when the referrer is approved.
+  assert.equal(db.read('referrals/u1')?.status, 'pending')
+})
+
 // ─── The rule, for every other transaction in the codebase ───────────────────
 
 test('no transaction in the codebase reads after it writes', () => {

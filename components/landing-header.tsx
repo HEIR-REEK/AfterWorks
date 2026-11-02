@@ -24,6 +24,7 @@ const SECTION_LINKS = [
   { href: '#what', label: 'What it is' },
   { href: '#how-it-works', label: 'How it works' },
   { href: '#work', label: 'The work' },
+  { href: '#training', label: 'Training' },
   { href: '#payouts', label: 'Payouts' },
   { href: '#faq', label: 'FAQ' },
 ] as const

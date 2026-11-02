@@ -19,6 +19,7 @@ import {
 } from 'lucide-react'
 import { useAfterWorks } from '@/components/afterworks-provider'
 import { JobCard } from '@/components/job-card'
+import { TrainingPushBanner } from '@/components/training-push'
 import { StatusBadge } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -30,7 +31,7 @@ import {
 import { formatTimestamp } from '@/lib/datetime'
 
 export default function DashboardPage() {
-  const { worker, wallet, walletMeta, payouts, onboarding, jobs, applications, getJob } = useAfterWorks()
+  const { worker, wallet, walletMeta, payouts, onboarding, jobs, applications, getJob, catalogueLive } = useAfterWorks()
   const [balanceHidden, setBalanceHidden] = useState(false)
   // Completion and the reward are server-scored (`lib/profile-completion.ts`) and celebrated by the
   // shared reward dialog, so this page never has to guess — or store — whether the $5 was paid.
@@ -41,6 +42,8 @@ export default function DashboardPage() {
   const activeApps = applications.filter(
     (a) => !['completed', 'rejected', 'failed_qa'].includes(a.status),
   )
+  const trainingJobs = openJobs.filter((job) => job.trainingRequired)
+  const topTrainingPay = trainingJobs.reduce((highest, job) => Math.max(highest, job.payAmountUsd), 0)
 
   const stats = [
     {
@@ -167,6 +170,8 @@ export default function DashboardPage() {
           </div>
         </div>
       </section>
+
+      <TrainingPushBanner trainingJobs={trainingJobs.length} topPayUsd={topTrainingPay} live={catalogueLive} />
 
       {/* Active applications */}
       <section>

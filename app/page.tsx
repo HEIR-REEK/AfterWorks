@@ -12,6 +12,7 @@ import {
   FileAudio,
   Fingerprint,
   Gift,
+  GraduationCap,
   Image as ImageIcon,
   Languages,
   Lock,
@@ -24,6 +25,7 @@ import {
   Wallet,
 } from 'lucide-react'
 import { LandingHeader } from '@/components/landing-header'
+import { TrainingPushSection } from '@/components/training-push'
 import { BrandMark } from '@/components/brand'
 import { Button } from '@/components/ui/button'
 import { formatUsd } from '@/lib/afterworks-data'
@@ -313,6 +315,15 @@ export default function LandingPage() {
                   Log in
                 </Button>
               </div>
+
+              <Link
+                href="#training"
+                className="mt-4 inline-flex items-center gap-2 rounded-full border border-warning/40 bg-warning/10 px-3 py-1.5 text-xs font-semibold text-warning-foreground transition-colors hover:bg-warning/20"
+              >
+                <GraduationCap className="size-3.5" aria-hidden />
+                Get trained for higher-paying jobs
+                <ArrowRight className="size-3.5" aria-hidden />
+              </Link>
 
               <p className="mt-3 text-xs text-muted-foreground">
                 Fixed fees · No bidding · Reviewed work
@@ -679,6 +690,9 @@ export default function LandingPage() {
           </div>
         </section>
 
+        {/* ── Training → higher pay ─────────────────────────────────────────── */}
+        <TrainingPushSection />
+
         {/* ── Payouts ──────────────────────────────────────────────────────── */}
         <section id="payouts" className="scroll-mt-24 border-b border-border bg-card/40 py-16 sm:py-24">
           <div className="mx-auto w-full max-w-6xl px-4 sm:px-6">
@@ -980,6 +994,11 @@ export default function LandingPage() {
                 <li>
                   <a href="#work" className="transition-colors hover:text-foreground">
                     The work
+                  </a>
+                </li>
+                <li>
+                  <a href="#training" className="transition-colors hover:text-foreground">
+                    Training
                   </a>
                 </li>
                 <li>

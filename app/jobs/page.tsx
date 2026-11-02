@@ -1,9 +1,10 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { Suspense, useEffect, useMemo, useState } from 'react'
 import { useAfterWorks } from '@/components/afterworks-provider'
 import Link from 'next/link'
-import { AlertCircle, ChevronRight, RefreshCw } from 'lucide-react'
+import { useSearchParams } from 'next/navigation'
+import { AlertCircle, ChevronRight, GraduationCap, RefreshCw } from 'lucide-react'
 import { JobCard } from '@/components/job-card'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -21,7 +22,23 @@ const categories: (JobCategory | 'All')[] = [
 ]
 
 export default function JobsPage() {
+  return (
+    <Suspense fallback={<p className="rounded-xl border border-dashed border-border p-10 text-center text-sm text-muted-foreground">Loading jobs…</p>}>
+      <JobsPageInner />
+    </Suspense>
+  )
+}
+
+function JobsPageInner() {
   const { jobs, worker, profileLoaded, mode, catalogueLive, catalogueSyncedAt, refreshJobs } = useAfterWorks()
+  const searchParams = useSearchParams()
+  const trainingParam = searchParams.get('training') === '1'
+  // The training upsell links here with `?training=1`. Keep the toggle in state so the worker can
+  // clear it without navigating away, and follow the parameter when a link changes it.
+  const [trainingOnly, setTrainingOnly] = useState(trainingParam)
+  useEffect(() => {
+    setTrainingOnly(trainingParam)
+  }, [trainingParam])
   const [category, setCategory] = useState<(typeof categories)[number]>('All')
   const [hideFull, setHideFull] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
@@ -45,10 +62,11 @@ export default function JobsPage() {
   const filtered = useMemo(() => {
     return jobs.filter((job) => {
       if (category !== 'All' && job.category !== category) return false
+      if (trainingOnly && !job.trainingRequired) return false
       if (hideFull && (job.status !== 'open' || job.slotsRemaining <= 0)) return false
       return true
     })
-  }, [jobs, category, hideFull])
+  }, [jobs, category, hideFull, trainingOnly])
 
   return (
     <div className="flex flex-col gap-6">
@@ -132,6 +150,20 @@ export default function JobsPage() {
               {c}
             </button>
           ))}
+          <button
+            type="button"
+            onClick={() => setTrainingOnly((value) => !value)}
+            aria-pressed={trainingOnly}
+            className={cn(
+              'inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-sm font-medium transition-colors',
+              trainingOnly
+                ? 'border-warning bg-warning text-warning-foreground'
+                : 'border-warning/50 bg-warning/10 text-warning-foreground hover:bg-warning/20',
+            )}
+          >
+            <GraduationCap className="size-3.5" aria-hidden />
+            Training required
+          </button>
         </div>
 
         <label className="flex w-fit cursor-pointer items-center gap-2 text-sm text-muted-foreground">

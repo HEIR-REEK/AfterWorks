@@ -8,6 +8,7 @@ import { JobCard } from '@/components/job-card'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import type { JobCategory } from '@/lib/afterworks-data'
+import { formatTimestamp } from '@/lib/datetime'
 
 const categories: (JobCategory | 'All')[] = [
   'All',
@@ -29,7 +30,7 @@ export default function JobsPage() {
   // a changed training price, pay, slot count or status — lands here by itself. The button is the
   // manual escape hatch for a worker who has just been told something changed.
   const syncedLabel = catalogueSyncedAt
-    ? new Date(catalogueSyncedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    ? `${formatTimestamp(catalogueSyncedAt, { hour: '2-digit', minute: '2-digit' })} EAT`
     : null
 
   const onRefresh = async () => {
@@ -100,7 +101,7 @@ export default function JobsPage() {
             <div className="flex flex-col gap-1">
               <h3 className="text-sm font-semibold text-warning-foreground">Action Required: Update your profile</h3>
               <p className="text-xs text-muted-foreground leading-relaxed">
-                You must update your profile and complete Didit KYC verification to unlock all jobs and receive payments.
+                Complete your profile and Didit KYC verification to start training, take assessments and receive payments. You can pay a job card’s training fee before verification; the training and assessment stay locked until the check is approved.
               </p>
             </div>
           </div>

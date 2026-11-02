@@ -47,7 +47,7 @@ const MAINTENANCE_GATE_ON = (process.env.MAINTENANCE_EDGE_GATE ?? 'true') !== 'f
  * MAINTENANCE_STATIC_SHELL=false to fall back to the rendered /maintenance route.
  */
 const MAINTENANCE_STATIC_SHELL = (process.env.MAINTENANCE_STATIC_SHELL ?? 'true') !== 'false'
-const SUPPORT_EMAIL_EDGE = (process.env.NEXT_PUBLIC_SUPPORT_EMAIL ?? 'support@afterworks.io').trim().toLowerCase()
+const SUPPORT_EMAIL_EDGE = (process.env.NEXT_PUBLIC_SUPPORT_EMAIL ?? 'supportafterworks@gmail.com').trim().toLowerCase()
 const RATE_CAPACITY = Number(process.env.MIDDLEWARE_RATE_LIMIT_PER_MINUTE ?? 40)
 const ALLOWED_HOSTS = new Set(
   [process.env.APP_ALLOWED_HOSTS, process.env.NEXT_PUBLIC_APP_URL, process.env.RENDER_EXTERNAL_URL]
@@ -354,7 +354,7 @@ export async function middleware(request: NextRequest) {
 
   // Tell crawlers not to index private/API routes even if they discover them through links.
   // This is belt-and-suspenders alongside robots.txt (which they should respect first).
-  const NOINDEX_PATHS = /^\/(api|admin|profile|applications|referrals|kyc|training|verify-email|forgot-password)(\/|$)/
+  const NOINDEX_PATHS = /^\/(api|admin|dashboard|profile|applications|referrals|kyc|training|verify-email|forgot-password)(\/|$)/
   if (NOINDEX_PATHS.test(pathname)) {
     response.headers.set('X-Robots-Tag', 'noindex, nofollow')
   }

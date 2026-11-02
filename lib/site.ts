@@ -15,11 +15,11 @@ export type SiteService = { id: string; label: string; description: string }
 export const site = {
   name: 'AfterWorks',
   legalName: 'AfterWorks Inc.',
-  tagline: 'Real, verified microwork. Paid to your mobile money.',
+  tagline: 'Real, verified microwork. Paid for work that is checked.',
   description:
-    'AfterWorks connects verified workers with paid microwork — transcription, labelling, content review and data entry. Browsing and applying are always free.',
+    'AfterWorks connects verified workers with paid microwork — transcription, labelling, content review and data entry. Browse the board, verify once, and work when it suits you.',
   url: sanitizeLine(env('NEXT_PUBLIC_APP_URL') || env('APP_URL') || 'http://localhost:3000', 200).replace(/\/$/, ''),
-  supportEmail: (isEmailLike(env('NEXT_PUBLIC_SUPPORT_EMAIL')) ? env('NEXT_PUBLIC_SUPPORT_EMAIL') : 'support@afterworks.io').trim().toLowerCase(),
+  supportEmail: (isEmailLike(env('NEXT_PUBLIC_SUPPORT_EMAIL')) ? env('NEXT_PUBLIC_SUPPORT_EMAIL') : 'supportafterworks@gmail.com').trim().toLowerCase(),
   opsEmail: (isEmailLike(env('NEXT_PUBLIC_OPS_EMAIL')) ? env('NEXT_PUBLIC_OPS_EMAIL') : 'payouts@afterworks.io').trim().toLowerCase(),
   pressEmail: 'press@afterworks.io',
   twitter: 'https://twitter.com/afterworks',
@@ -44,7 +44,7 @@ export const site = {
   trainingFeeKes: envInt('PAYSTACK_AMOUNT_KES', 0),
   services: [
     { id: 'jobs', label: 'Jobs & applications', description: 'Browsing, applying and the review queue.' },
-    { id: 'wallet', label: 'Wallet & payouts', description: 'Balances, clearing and mobile money transfers.' },
+    { id: 'wallet', label: 'Wallet & payouts', description: 'Balances, clearing and payout requests.' },
     { id: 'kyc', label: 'ID verification', description: 'Didit-powered identity checks and callbacks.' },
     { id: 'training', label: 'Training & payments', description: 'Paid training modules and Paystack checkout.' },
   ] satisfies SiteService[],
@@ -55,11 +55,11 @@ export type Site = typeof site
 export const SITE_FAQ = [
   {
     q: 'Does it cost anything to apply for a job?',
-    a: 'No. Browsing, applying, verifying your identity and withdrawing earnings are free. Some job categories ask for a paid training module before your first assignment; the price is shown before you pay.',
+    a: 'No. Browsing, applying, verifying your identity and requesting a payout do not carry a platform charge. Some job categories ask for a paid training module before your first assignment; the price is shown before you pay.',
   },
   {
     q: 'When do I get paid?',
-    a: `Completed work enters a ${site.clearingWindowHours}-hour clearing window so the client can confirm quality. After that it becomes available in your wallet, and mobile money transfers are sent within 24 hours.`,
+    a: `Completed work enters a ${site.clearingWindowHours}-hour clearing window so the client can confirm quality. After that it becomes available in your wallet, and payout requests are processed within 24 hours.`,
   },
   {
     q: 'Why do I need ID verification?',
@@ -78,6 +78,6 @@ export const SITE_FAQ = [
 /** Trust strip on the dashboard — all figures come from live data at render time. */
 export const TRUST_POINTS = [
   { label: 'Zero fees to apply', detail: 'You are never charged to browse or apply.' },
-  { label: 'Escrowed payouts', detail: `${site.clearingWindowHours}h clearing, then mobile money in 24h.` },
+  { label: 'Escrowed payouts', detail: `${site.clearingWindowHours}h clearing, then payouts in 24h.` },
   { label: 'Verified workers only', detail: 'Government ID + liveness check.' },
 ] as const

@@ -63,16 +63,19 @@ export function BrandLink({
   className,
   size = 36,
   wordmarkClass,
+  markClassName,
 }: {
   href: string
   label?: string
   className?: string
   size?: 28 | 32 | 36 | 40 | 44
   wordmarkClass?: string
+  /** Optional overrides for the mark's tile — e.g. the public header shows the bare logo. */
+  markClassName?: string
 }) {
   return (
     <Link href={href} className={cn('flex items-center gap-2.5', className)}>
-      <BrandMark size={size} />
+      <BrandMark size={size} className={markClassName} />
       {label ? <span className={cn('text-sm font-semibold tracking-tight sm:text-base', wordmarkClass)}>{label}</span> : null}
     </Link>
   )

@@ -191,7 +191,7 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
         router.push('/profile?new=1')
         router.refresh()
       } else {
-        router.push('/')
+        router.push('/dashboard')
         router.refresh()
       }
     } else {
@@ -220,7 +220,7 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
         router.push('/profile?new=1')
         router.refresh()
       } else {
-        router.push('/')
+        router.push('/dashboard')
         router.refresh()
       }
     } else {
@@ -232,7 +232,9 @@ function AuthFormInner({ mode }: { mode: 'sign-in' | 'sign-up' }) {
   return (
     <div className="mx-auto flex min-h-dvh w-full max-w-md flex-col justify-center px-4 py-10">
       <div className="mb-8 flex flex-col items-center text-center">
-        <BrandLockup width={210} className="mb-4" />
+        <Link href="/" aria-label="AfterWorks home" className="mb-4 inline-flex transition-opacity hover:opacity-80">
+          <BrandLockup width={210} />
+        </Link>
         <h1 className="text-2xl font-semibold tracking-tight text-balance">
           {isSignUp ? 'Create your AfterWorks account' : 'Welcome back to AfterWorks'}
         </h1>
@@ -613,7 +615,9 @@ export function AuthForm({ mode }: { mode: 'sign-in' | 'sign-up' }) {
       fallback={
         <div className="mx-auto flex min-h-dvh w-full max-w-md flex-col justify-center px-4 py-10">
           <div className="mb-8 flex flex-col items-center text-center">
-            <BrandLockup width={210} className="mb-4" />
+            <Link href="/" aria-label="AfterWorks home" className="mb-4 inline-flex transition-opacity hover:opacity-80">
+              <BrandLockup width={210} />
+            </Link>
             <h1 className="text-2xl font-semibold tracking-tight text-balance">{title}</h1>
             <p className="mt-2 text-sm text-muted-foreground text-pretty">{subtitle}</p>
           </div>

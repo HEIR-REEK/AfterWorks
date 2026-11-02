@@ -3,7 +3,7 @@
   "short_name": "AfterWorks",
   "description": "AfterWorks connects verified workers with paid microwork. Browsing and applying are always free.",
   "id": "/",
-  "start_url": "/",
+  "start_url": "/dashboard",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait-primary",

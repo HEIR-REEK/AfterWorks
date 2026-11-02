@@ -144,8 +144,8 @@ export async function POST(req: NextRequest) {
 
     await firestore
       .notifyUser(uid, {
-        title: 'Training unlocked',
-        body: 'We confirmed your payment. Your training and assessment are open — complete them to apply for the job card.',
+        title: 'Training payment confirmed',
+        body: 'We confirmed your payment for this job card. Training and assessment unlock once your identity verification is approved.',
         tone: 'success',
         link: `/training/${encodeURIComponent(jobId)}`,
       })

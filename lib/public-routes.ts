@@ -19,6 +19,11 @@
  * you have to sign in to read is not a Terms & Conditions anybody agreed to.
  */
 export const PUBLIC_ROUTES = [
+  // The landing page at the domain root. `/` used to be the signed-in dashboard, which meant a
+  // first-time visitor typing afterworks.site was bounced straight to a login form with no
+  // explanation of the product. The dashboard now lives at `/dashboard`; this entry is what keeps
+  // the marketing page reachable without a session (and on deployments without Firebase config).
+  '/',
   // Authentication — the way in.
   '/sign-in',
   '/sign-up',

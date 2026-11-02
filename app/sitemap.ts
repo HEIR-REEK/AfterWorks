@@ -11,12 +11,9 @@ export default function sitemap(): MetadataRoute.Sitemap {
       changeFrequency: 'daily',
       priority: 1,
     },
-    {
-      url: `${baseUrl}/jobs`,
-      lastModified: new Date(),
-      changeFrequency: 'hourly',
-      priority: 0.9,
-    },
+    // /jobs is deliberately absent: the board requires a session (AppGate redirects signed-out
+    // visitors to /sign-in), so asking a crawler to index it would only advertise a redirect. The
+    // landing page explains the work instead and carries the FAQPage structured data.
     {
       url: `${baseUrl}/sign-in`,
       lastModified: new Date(),

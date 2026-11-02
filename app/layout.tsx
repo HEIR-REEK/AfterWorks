@@ -50,7 +50,7 @@ export async function generateMetadata(): Promise<Metadata> {
       'microwork',
       'paid transcription jobs',
       'data entry jobs Kenya',
-      'mobile money payouts',
+      'reviewed microwork',
       'verified remote work',
       'AfterWorks',
     ],
@@ -134,12 +134,16 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
     ],
   }
 
+  // Browser extensions and translated pages can rewrite attributes on <html>/<body> before React
+  // hydrates. That is not an app mismatch, and warning about it only alarms the user; app-level
+  // mismatches deeper in the tree are still reported normally.
   return (
     <html
       lang="en"
       className="light bg-background"
       data-maintenance={maintenanceMode}
       data-build={env('APP_VERSION') || 'dev'}
+      suppressHydrationWarning
     >
       <head>
         {noIndex ? <meta name="robots" content="noindex, nofollow" /> : null}
@@ -149,7 +153,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
         {requestId ? <meta name="x-request-id" content={requestId} /> : null}
         <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
       </head>
-      <body className="font-sans antialiased">
+      <body className="font-sans antialiased" suppressHydrationWarning>
         <FirebaseAuthProvider config={config}>
           <AppGate>{children}</AppGate>
         </FirebaseAuthProvider>

@@ -32,6 +32,7 @@ import { Button } from '@/components/ui/button'
 import { StatusBadge } from '@/components/status-badge'
 import { useAfterWorks } from '@/components/afterworks-provider'
 import { formatKesValue, formatUsd } from '@/lib/afterworks-data'
+import { formatTimestamp } from '@/lib/datetime'
 import {
   PAYOUT_STATUS_SHORT,
   PAYOUT_STATUS_TONE,
@@ -47,7 +48,7 @@ function formatWhen(iso: string | null | undefined): string {
   if (!iso) return '—'
   const date = new Date(iso)
   if (Number.isNaN(date.getTime())) return '—'
-  return date.toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
+  return `${formatTimestamp(date, { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })} EAT`
 }
 
 export function WithdrawPanel() {

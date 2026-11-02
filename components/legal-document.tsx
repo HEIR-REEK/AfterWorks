@@ -81,10 +81,11 @@ export function LegalDocument({
             <a href={`mailto:${TERMS_CONTACT}`} className="font-medium text-primary hover:underline">
               {TERMS_CONTACT}
             </a>
-            . We aim to respond within 14 days.
+            . We aim to respond within 14 days to general questions, and within 30 days to
+            data-protection requests.
           </p>
           <p className="text-xs text-muted-foreground">
-            Terms version {version ?? TERMS_VERSION} — the version recorded against your account when you accepted it.
+            Current version {version ?? TERMS_VERSION}. The version you accepted is recorded against your account.
           </p>
         </div>
       </main>

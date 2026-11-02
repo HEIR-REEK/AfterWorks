@@ -21,7 +21,7 @@ export const metadata: Metadata = {
  */
 const REFERRAL_SECTION: TermsSection = {
   id: 'referrals',
-  title: '6A. The referral program',
+  title: '8A. Referral program — full rules',
   paragraphs: [
     `You can invite people to AfterWorks with your personal referral code. When someone signs up with your code and completes their profile, ${REFERRAL_BONUS_LABEL} is added to your pending balance. There is no cap on how many people you can refer, but every referral must be a real person who really signed up.`,
     'The bonus clears into your available balance on the same schedule as paid work, and it is withdrawable once it has cleared and you have reached the minimum withdrawal amount.',
@@ -29,20 +29,26 @@ const REFERRAL_SECTION: TermsSection = {
   bullets: REFERRAL_TERMS.map((term) => `${term.title}. ${term.body}`),
 }
 
-// Section 6 ("Welcome and referral rewards") is the summary; this is the full rulebook, so it
-// sits directly after it rather than at the end where nobody would find it.
-const PAGE_SECTIONS: readonly TermsSection[] = [
-  ...TERMS_SECTIONS.slice(0, 6),
-  REFERRAL_SECTION,
-  ...TERMS_SECTIONS.slice(6),
-]
+// Section 8 ("Rewards, referrals and promotions") is the summary; this is the full rulebook, so
+// it sits directly after it rather than at the end where nobody would find it. Find the section by
+// id rather than by index so adding a section above it cannot silently move the referral rules.
+const REWARDS_INDEX = TERMS_SECTIONS.findIndex((section) => section.id === 'rewards')
+
+const PAGE_SECTIONS: readonly TermsSection[] =
+  REWARDS_INDEX === -1
+    ? [...TERMS_SECTIONS, REFERRAL_SECTION]
+    : [
+        ...TERMS_SECTIONS.slice(0, REWARDS_INDEX + 1),
+        REFERRAL_SECTION,
+        ...TERMS_SECTIONS.slice(REWARDS_INDEX + 1),
+      ]
 
 export default function TermsPage() {
   return (
     <LegalDocument
       title="Terms & Conditions"
       version={TERMS_VERSION}
-      intro={`These terms form the agreement between you and ${TERMS_ENTITY} for using the AfterWorks platform. They are the same document you accept when you create an account, and the version below is the one recorded against your account. Our Privacy Notice describes how your personal data is handled.`}
+      intro={`These terms form the agreement between you and ${TERMS_ENTITY} for using the AfterWorks platform. They cover eligibility, identity verification, the work you accept, quality review, how you are paid, and what happens if something goes wrong. They are the same document you accept when you create an account, and the version you accepted is recorded against your account. Our Privacy Notice describes how your personal data is handled.`}
       sections={PAGE_SECTIONS}
     />
   )

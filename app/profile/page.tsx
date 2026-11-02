@@ -31,6 +31,7 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { formatKesValue, formatUsd } from '@/lib/afterworks-data'
+import { formatTimestamp } from '@/lib/datetime'
 import { KENYAN_BANKS } from '@/lib/banks'
 import { CountrySelect, PhoneInput } from '@/components/phone-input'
 import { DEFAULT_COUNTRY, guessCountryFromE164, isKnownCountry, normalisePhone } from '@/lib/countries'
@@ -686,7 +687,7 @@ function ProfilePageContent() {
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Verified On:</span>
                   <span className="font-semibold text-foreground">
-                    {worker.kycVerifiedAt ? new Date(worker.kycVerifiedAt).toLocaleDateString() : 'N/A'}
+                    {worker.kycVerifiedAt ? formatTimestamp(worker.kycVerifiedAt, { day: '2-digit', month: 'short', year: 'numeric' }) : 'N/A'}
                   </span>
                 </div>
               )}
@@ -773,7 +774,7 @@ function ProfilePageContent() {
                   <div>
                     <h4 className="text-sm font-medium">{job?.title || app.jobId}</h4>
                     <p className="text-xs text-muted-foreground">
-                      Applied on {new Date(app.appliedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                      Applied on {formatTimestamp(app.appliedAt, { month: 'short', day: 'numeric', year: 'numeric' })}
                     </p>
                   </div>
                   <div className="flex items-center justify-between gap-4 sm:justify-end">

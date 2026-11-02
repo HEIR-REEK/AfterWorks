@@ -101,7 +101,9 @@ export async function PATCH(req: NextRequest) {
 
   try {
     const firestore = await import('@/lib/firestore-admin')
-    if (!firestore.isFirebaseAdminUsable()) return fail(503, 'Storage unavailable — no changes were made.', { code: 'storage_unavailable' })
+    if (!firestore.isFirebaseAdminUsable()) {
+      return fail(503, 'Firebase Admin is unavailable — no changes were made. Check FIREBASE_SERVICE_ACCOUNT_JSON / FIREBASE_PROJECT_ID on this deployment.', { code: 'storage_unavailable' })
+    }
 
     switch (action) {
       case 'moderate': {
@@ -283,11 +285,22 @@ export async function PATCH(req: NextRequest) {
       case 'delete': {
         if (reason.length < 6) return fail(400, 'Deletion needs a written justification.', { code: 'reason_required' })
         await firestore.adminUpdateUser(uid, { accountState: 'banned', deletedAt: new Date().toISOString(), moderationReason: reason }, guard.value.email, 'USER_MARKED_DELETED')
-        await audit({ action: 'USER_SOFT_DELETED', actorEmail: guard.value.email, details: { uid, reason }, req })
+        // A ban that leaves a working credential is only a label. Disable sign-in too, and say so
+        // in the response: the profile write above already succeeded even if Auth is unreachable.
+        const credential = await firestore.setAccountEnabled(uid, false, guard.value.email)
+        await audit({
+          action: 'USER_SOFT_DELETED',
+          actorEmail: guard.value.email,
+          details: { uid, reason, credentialDisabled: credential.ok, credentialError: credential.ok ? undefined : credential.error },
+          req,
+        })
         return json({
           ok: true,
           softDelete: true,
-          note: 'The account is banned and flagged for deletion. Hard deletion is a data-retention task run from the console export job, not a browser request.',
+          credentialDisabled: credential.ok,
+          note: credential.ok
+            ? 'Account banned and flagged for deletion (deletedAt + moderationReason written), and sign-in is disabled. No documents were removed — use "Erase account" to delete the data now.'
+            : `Account banned and flagged for deletion, but sign-in could not be disabled${credential.error ? `: ${credential.error}` : '.'} No documents were removed — use "Erase account" to delete the data.`,
         })
       }
 

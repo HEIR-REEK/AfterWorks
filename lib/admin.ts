@@ -342,6 +342,7 @@ export const adminApi = {
       credentialDisabled?: boolean
       temporaryPassword?: string
       link?: string
+      softDelete?: boolean
       removed?: Record<string, number>
     }>('/api/admin/users', { method: 'PATCH', body }),
   ledger: (query: { source?: string; kind?: string; status?: string; search?: string; pageSize?: number; cursor?: string | null }) =>

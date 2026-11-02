@@ -46,6 +46,35 @@ import { cn } from '@/lib/utils'
 
 type UserDetail = AdminUserDetail
 
+/**
+ * A hard delete is only reassuring if the console says what it actually removed. The API returns
+ * per-collection counts (`removed`) — show them, instead of the old generic "saved" toast that made
+ * a partial or empty erase look like a successful one.
+ */
+const REMOVED_LABELS: Record<string, string> = {
+  profile: 'profile',
+  applications: 'applications',
+  ledger: 'ledger rows',
+  notifications: 'notifications',
+  auth: 'sign-in credential',
+  phoneClaims: 'phone claim',
+  kyc: 'KYC record',
+  payoutOpen: 'payout guard',
+  payoutRequests: 'payout requests',
+  transactions: 'payments',
+  referrals: 'referrals',
+  referralCodes: 'referral codes',
+  emailVerifications: 'verification tokens',
+  adminSessions: 'admin sessions',
+}
+
+function describeRemoved(removed: Record<string, number> | undefined): string {
+  const parts = Object.entries(removed ?? {})
+    .filter(([, count]) => count > 0)
+    .map(([key, count]) => `${REMOVED_LABELS[key] ?? key}: ${count}`)
+  return parts.length > 0 ? `Removed — ${parts.join(', ')}.` : 'The server reported no removed documents.'
+}
+
 
 
 export default function AdminUsersPage() {
@@ -152,6 +181,10 @@ function UsersPageInner() {
         }
       } else if (typeof result.link === 'string') {
         push('info', `Verification link generated — send it yourself: ${result.link}`, 45_000)
+      } else if (result.removed) {
+        push('success', `${result.note ?? 'Account erased.'} ${describeRemoved(result.removed)}`, 45_000)
+      } else if (result.softDelete) {
+        push(result.credentialDisabled ? 'success' : 'warning', result.note ?? 'Account flagged for deletion.', 45_000)
       } else if (result.credentialDisabled !== undefined) {
         push(result.credentialDisabled ? 'warning' : 'success', result.note ?? (result.credentialDisabled ? 'Sign-in credential disabled.' : 'Sign-in credential enabled.'))
       } else {
@@ -455,6 +488,7 @@ function UsersPageInner() {
             {selected.moderationReason && (
               <p className="rounded-xl border border-warning/40 bg-warning/10 px-3 py-2 text-[11px] text-warning-foreground">
                 <strong className="font-semibold">Moderation note:</strong> {selected.moderationReason}
+                {selected.deletedAt ? ` · flagged for deletion ${new Date(selected.deletedAt).toLocaleDateString()}` : ''}
               </p>
             )}
             {selected.walletNote && (
@@ -586,7 +620,7 @@ function UsersPageInner() {
                   </Button>
                 )}
                 {isOwner && (
-                  <Button size="sm" variant="ghost" className="gap-1.5 text-destructive hover:bg-destructive/10 hover:text-destructive" disabled={busy} onClick={() => setConfirm({ action: 'delete', title: 'Flag for deletion', description: 'Bans the account and marks it for the retention job. Records are kept for financial audit; this is not an instant erase.', confirmLabel: 'Ban & flag', tone: 'destructive' })}>
+                  <Button size="sm" variant="ghost" className="gap-1.5 text-destructive hover:bg-destructive/10 hover:text-destructive" disabled={busy} onClick={() => setConfirm({ action: 'delete', title: 'Flag for deletion', description: 'Bans the account and writes deletedAt plus the reason. No documents are removed — records are kept for financial audit. Use “Erase account” when the data itself must go.', confirmLabel: 'Ban & flag', tone: 'destructive', minReasonLength: 6 })}>
                     <Trash2 className="size-3.5" />
                     Flag for deletion
                   </Button>

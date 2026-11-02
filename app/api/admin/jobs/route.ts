@@ -77,13 +77,33 @@ export async function PUT(req: NextRequest) {
         // normalised by sanitizeJob() — the browser never gets to decide the real bounds.
         trainingFeeUsd: body.trainingFeeUsd === undefined ? undefined : Number(body.trainingFeeUsd),
         trainingNotes: Array.isArray(body.trainingNotes)
-          ? (body.trainingNotes as Record<string, unknown>[]).map((section) => ({
-              title: String(section?.title ?? ''),
-              content: String(section?.content ?? ''),
-              image: String(section?.image ?? ''),
-              imageAlt: String(section?.imageAlt ?? ''),
-              imageCaption: String(section?.imageCaption ?? ''),
-            }))
+          ? (body.trainingNotes as Record<string, unknown>[]).map((section) => {
+              const check =
+                section?.check && typeof section.check === 'object'
+                  ? (section.check as Record<string, unknown>)
+                  : null
+              return {
+                title: String(section?.title ?? ''),
+                content: String(section?.content ?? ''),
+                image: String(section?.image ?? ''),
+                imageAlt: String(section?.imageAlt ?? ''),
+                imageCaption: String(section?.imageCaption ?? ''),
+                durationMinutes:
+                  section?.durationMinutes === undefined || section?.durationMinutes === ''
+                    ? undefined
+                    : Number(section.durationMinutes),
+                ...(check
+                  ? {
+                      check: {
+                        question: String(check.question ?? ''),
+                        options: Array.isArray(check.options) ? (check.options as unknown[]).map(String) : [],
+                        correctIndex: Number(check.correctIndex ?? 0),
+                        explanation: String(check.explanation ?? ''),
+                      },
+                    }
+                  : {}),
+              }
+            })
           : [],
         assessmentQuestions: Array.isArray(body.assessmentQuestions)
           ? (body.assessmentQuestions as Record<string, unknown>[]).map((question) => ({

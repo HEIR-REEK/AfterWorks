@@ -14,7 +14,6 @@ import {
   ShieldAlert,
 } from 'lucide-react'
 import { useAfterWorks, useJobDetail } from '@/components/afterworks-provider'
-import emailjs from '@emailjs/browser'
 import { useAuth } from '@/components/firebase-auth-provider'
 import { Button } from '@/components/ui/button'
 import { AssessmentQuiz } from '@/components/assessment-quiz'
@@ -515,27 +514,8 @@ function TrainingPageInner({ params }: { params: Promise<{ id: string }> }) {
       return
     }
 
-    try {
-      // Receipt email. Configured in .env.local; absence is not an error — the application record
-      // is already written server-side and the worker also gets an in-app notification.
-      const serviceId = process.env.NEXT_PUBLIC_EMAILJS_SERVICE_ID ?? 'service_8qxbsyi'
-      const templateId = process.env.NEXT_PUBLIC_EMAILJS_TEMPLATE_ID ?? 'template_8g1egki'
-      const publicKey = process.env.NEXT_PUBLIC_EMAILJS_PUBLIC_KEY ?? 'Juc_jABykXhGr_WPK'
-      await emailjs.send(
-        serviceId,
-        templateId,
-        {
-          to_name: worker.name || 'Applicant',
-          to_email: worker.email,
-          job_title: job!.title,
-          message: 'Your application is under review. You will be contacted shortly for an online interview.',
-        },
-        publicKey
-      )
-    } catch (err) {
-      console.error('Failed to send application email:', err)
-    }
-
+    // The receipt email is sent server-side from POST /api/applications through Resend. Nothing
+    // about that send can block this redirect: the application record is already written.
     setIsApplying(false)
     router.push('/applications')
   }

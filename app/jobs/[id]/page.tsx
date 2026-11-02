@@ -15,7 +15,6 @@ import {
   Users,
 } from 'lucide-react'
 import { useAfterWorks, useJobDetail } from '@/components/afterworks-provider'
-import emailjs from '@emailjs/browser'
 import { StatusBadge } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
 import {

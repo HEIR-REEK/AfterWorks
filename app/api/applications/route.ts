@@ -1,4 +1,4 @@
-import { NextRequest } from 'next/server'
+import { after, NextRequest } from 'next/server'
 import { consumeBucket, fail, json, maintenanceBlockForApi, requireUser, requireVerifiedUser, routeError } from '@/lib/guards'
 import { sanitizeLine } from '@/lib/security-core'
 
@@ -94,8 +94,34 @@ export async function POST(req: NextRequest) {
     if (!firestore.isFirebaseAdminUsable()) {
       return fail(503, 'Applications cannot be accepted right now. Please try again in a few minutes.', { code: 'storage_unavailable' })
     }
-    const { applicationId } = await firestore.createApplicationServer(guard.value.uid, jobId)
-    return json({ ok: true, applicationId, status: 'under_review' }, { status: 201 })
+    const application = await firestore.createApplicationServer(guard.value.uid, jobId)
+
+    // Send the receipt after the response so a slow or rejected email can never turn a recorded
+    // application into an error. The application document is the source of truth; email is a courtesy.
+    after(async () => {
+      try {
+        const { sendEmail, isResendConfigured, applicationReceiptEmailSubject, applicationReceiptEmailText, applicationReceiptEmailHtml } = await import('@/lib/email')
+        if (!isResendConfigured() || !application.workerEmail) return
+        const copy = {
+          name: application.workerName,
+          email: application.workerEmail,
+          jobTitle: application.jobTitle,
+          applicationId: application.applicationId,
+        }
+        const result = await sendEmail({
+          to: application.workerEmail,
+          subject: applicationReceiptEmailSubject(application.jobTitle),
+          html: applicationReceiptEmailHtml(copy),
+          text: applicationReceiptEmailText(copy),
+          tag: 'application-receipt',
+        })
+        if (!result.ok) console.warn('[applications] receipt email not sent:', result.code)
+      } catch (err) {
+        console.warn('[applications] receipt email failed:', err instanceof Error ? err.message : err)
+      }
+    })
+
+    return json({ ok: true, applicationId: application.applicationId, status: 'under_review' }, { status: 201 })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Could not record your application.'
     // Worker-facing refusals are expected (slots, KYC, duplicates) → 409/403, not a 500.

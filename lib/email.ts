@@ -447,6 +447,118 @@ export function accountInviteEmailHtml(copy: AccountInviteCopy): string {
 </html>`
 }
 
+// ─── Application receipt ────────────────────────────────────────────────────
+
+export type ApplicationReceiptEmailCopy = {
+  name: string
+  email: string
+  jobTitle: string
+  applicationId: string
+}
+
+export function applicationReceiptEmailSubject(jobTitle: string): string {
+  return `Application received — ${sanitizeLine(jobTitle, 100) || 'your AfterWorks application'}`
+}
+
+export function applicationReceiptEmailText(copy: ApplicationReceiptEmailCopy): string {
+  const first = firstName(copy.name, copy.email)
+  const jobTitle = sanitizeLine(copy.jobTitle, 140) || 'your AfterWorks application'
+  return [
+    `Hi ${first},`,
+    '',
+    `We received your application for “${jobTitle}”. This email is your receipt — it is not a decision.`,
+    '',
+    'What happens next:',
+    '  1. We check your profile and the job requirements.',
+    `  2. You will hear back within ${site.reviewSlaHours} hours.`,
+    '  3. You can track the status from your applications page.',
+    '',
+    `Track your application: ${site.url}/applications`,
+    '',
+    `Reference: ${copy.applicationId}`,
+    '',
+    `Questions? Reply to this email or write to ${site.supportEmail}.`,
+    '',
+    `— ${site.name}`,
+  ].join('\n')
+}
+
+export function applicationReceiptEmailHtml(copy: ApplicationReceiptEmailCopy): string {
+  const first = escapeHtml(firstName(copy.name, copy.email))
+  const jobTitle = escapeHtml(copy.jobTitle || 'your AfterWorks application')
+  const applicationId = escapeHtml(copy.applicationId)
+  const applicationsUrl = escapeHtml(`${site.url}/applications`)
+  const support = escapeHtml(site.supportEmail)
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Application received</title>
+</head>
+<body style="margin:0;padding:0;background:#F4F6FB;font-family:Inter,Segoe UI,Helvetica,Arial,sans-serif;color:#1A1F36;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F4F6FB;padding:32px 12px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;">
+          <tr>
+            <td align="center" style="padding:8px 8px 20px;">
+              ${EMAIL_BRAND_LOGO_HTML}
+            </td>
+          </tr>
+          <tr>
+            <td style="background:#ffffff;border:1px solid #E4E7F1;border-radius:16px;padding:36px 32px;">
+              <p style="margin:0 0 8px;font-size:13px;font-weight:600;color:#2F5FE0;">Application received</p>
+              <h1 style="margin:0 0 16px;font-size:24px;line-height:1.3;font-weight:700;color:#1A1F36;">We have your application</h1>
+              <p style="margin:0 0 20px;font-size:15px;line-height:1.6;color:#3C4257;">
+                Hi ${first}, thanks for applying. We received your application for:
+              </p>
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 24px;background:#F7F9FF;border:1px solid #DCE4FA;border-radius:12px;">
+                <tr>
+                  <td style="padding:16px 18px;">
+                    <p style="margin:0 0 4px;font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#2F5FE0;">Job card</p>
+                    <p style="margin:0;font-size:17px;line-height:1.45;font-weight:700;color:#1A1F36;">${jobTitle}</p>
+                    <p style="margin:6px 0 0;font-size:12px;color:#667085;">Status: under review</p>
+                  </td>
+                </tr>
+              </table>
+              <p style="margin:0 0 10px;font-size:15px;line-height:1.6;color:#3C4257;font-weight:600;">What happens next</p>
+              <ol style="margin:0 0 24px;padding-left:20px;font-size:14px;line-height:1.7;color:#3C4257;">
+                <li>We check your profile and the job requirements.</li>
+                <li>You will hear back within <strong>${site.reviewSlaHours} hours</strong>.</li>
+                <li>You can track the status from your applications page.</li>
+              </ol>
+              <table role="presentation" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td style="border-radius:10px;background:#2F5FE0;">
+                    <a href="${applicationsUrl}" style="display:inline-block;padding:14px 22px;font-size:15px;font-weight:600;color:#ffffff;text-decoration:none;">
+                      View your applications
+                    </a>
+                  </td>
+                </tr>
+              </table>
+              <p style="margin:24px 0 0;font-size:12px;line-height:1.55;color:#667085;">
+                Reference: <span style="font-family:'JetBrains Mono',SFMono-Regular,Menlo,Consolas,monospace;">${applicationId}</span>
+              </p>
+              <p style="margin:10px 0 0;font-size:12px;line-height:1.55;color:#667085;">
+                This email is a receipt, not a decision. Applying for work is free.
+              </p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:20px 8px 0;font-size:12px;line-height:1.55;color:#667085;">
+              Questions? Reply to this email or write to ${support}.
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`
+}
+
 function firstName(name: string, email: string): string {
   const trimmed = name.trim()
   if (trimmed) return trimmed.split(/\s+/)[0]!.slice(0, 40)

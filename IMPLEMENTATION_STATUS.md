@@ -14,8 +14,9 @@ Corrected status, as of this pass:
   (users, jobs, QA, audit, maintenance, security), maintenance mode at the edge, security headers
   and CSP, rate limiting, audit logging.
 * **Not implemented** — Prisma/Express backend, Twilio OTP, device fingerprinting, ABIS matching,
-  background cron reconciliation workers, email receipts beyond the single EmailJS template, any
-  multi-tenant or admin-managed role hierarchy beyond the `ADMIN_EMAILS` roster + `isAdmin` flag.
+  background cron reconciliation workers, email templates beyond verification, password reset,
+  account invite and the application receipt, any multi-tenant or admin-managed role hierarchy
+  beyond the `ADMIN_EMAILS` roster + `isAdmin` flag.
 * **Known gaps** — no automated tests yet (only `npm run typecheck`), no CSP report collector, no
   hard account deletion (moderation is a ban + flag for a retention job).
 

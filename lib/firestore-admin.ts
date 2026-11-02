@@ -2669,7 +2669,14 @@ export class TransitionError extends Error {
  * duplicate applications) is checked *inside a Firestore transaction* so two devices clicking
  * at once cannot oversubscribe a job or double-credit a worker.
  */
-export async function createApplicationServer(uid: string, jobId: string): Promise<{ applicationId: string }> {
+export type CreatedApplication = {
+  applicationId: string
+  jobTitle: string
+  workerEmail: string
+  workerName: string
+}
+
+export async function createApplicationServer(uid: string, jobId: string): Promise<CreatedApplication> {
   const db = adminDb()
   const [userSnap, jobSnap] = await Promise.all([db.collection('users').doc(uid).get(), db.collection('jobs').doc(jobId).get()])
 
@@ -2752,7 +2759,12 @@ export async function createApplicationServer(uid: string, jobId: string): Promi
     link: '/applications',
   })
 
-  return { applicationId }
+  return {
+    applicationId,
+    jobTitle: String(job.title ?? ''),
+    workerEmail: String(user.email ?? ''),
+    workerName: String(user.name ?? ''),
+  }
 }
 
 export async function withdrawApplicationServer(uid: string, applicationId: string): Promise<void> {

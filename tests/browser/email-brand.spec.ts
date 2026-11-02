@@ -1,10 +1,11 @@
 import { expect, test } from '@playwright/test'
 import { EMAIL_LOGO_CONTENT_ID, prepareEmailBranding } from '@/lib/email-brand'
-import { passwordResetEmailHtml, verificationEmailHtml } from '@/lib/email'
+import { applicationReceiptEmailHtml, passwordResetEmailHtml, verificationEmailHtml } from '@/lib/email'
 
 const templates = [
   { name: 'password reset', html: passwordResetEmailHtml({ name: 'Amina', email: 'member@example.com', code: '004 213', expiresMinutes: 15 }) },
   { name: 'verification', html: verificationEmailHtml({ name: 'Amina', email: 'member@example.com', verifyUrl: 'https://afterworks.site/verify-email?token=test-only', expiresHours: 24 }) },
+  { name: 'application receipt', html: applicationReceiptEmailHtml({ name: 'Amina', email: 'member@example.com', jobTitle: 'Transcription — Swahili', applicationId: 'app-test-abc' }) },
 ]
 
 for (const template of templates) {

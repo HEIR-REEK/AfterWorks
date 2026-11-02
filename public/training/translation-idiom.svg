@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 540" width="960" height="540" role="img">
+<title>Idioms: translate the meaning</title>
+<desc>A literal idiom is the most common way a translation sounds “wrong” to a native reader.</desc>
+<defs>
+  <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M 0 0 L 10 5 L 0 10 z" fill="#2f5bd3"/>
+  </marker>
+</defs>
+<rect width="960" height="540" fill="#f4f7fb"/>
+<circle cx="900" cy="20" r="150" fill="#2f5bd3" opacity="0.06"/>
+<circle cx="60" cy="530" r="120" fill="#0f9d6b" opacity="0.06"/>
+<rect x="40" y="26" width="190" height="24" rx="12.0" fill="#e8eefc" stroke="none" stroke-width="1.5" /><text x="135.0" y="41.6" font-family="Inter, system-ui, sans-serif" font-size="10" font-weight="700" fill="#1e3f9e" text-anchor="middle">AFTERWORKS · TRAINING</text>
+<text x="40" y="74" font-family="Inter, system-ui, sans-serif" font-size="27" font-weight="700" fill="#0f172a" text-anchor="start">Idioms: translate the meaning</text>
+<text x="40" y="101" font-family="Inter, system-ui, sans-serif" font-size="14" font-weight="500" fill="#64748b" text-anchor="start">A literal idiom is the most common way a translation sounds “wrong” to a native reader.</text>
+
+<rect x="40" y="126" width="420" height="320" rx="14" fill="#fdf4f2" stroke="#f0c7c1" stroke-width="1.5" />
+<rect x="62" y="144" width="120" height="24" rx="12.0" fill="#fdecea" stroke="none" stroke-width="1.5" /><text x="122.0" y="159.24" font-family="Inter, system-ui, sans-serif" font-size="9" font-weight="700" fill="#c0392b" text-anchor="middle">LITERAL · AVOID</text>
+<text x="62" y="194" font-family="Inter, system-ui, sans-serif" font-size="18" font-weight="700" fill="#0f172a" text-anchor="start">“It’s raining cats and dogs.”</text>
+<path d="M62 222 L440 222" stroke="#c0392b" stroke-width="3" stroke-linecap="round" marker-end="url(#arrow)"/>
+<text x="62" y="266" font-family="Inter, system-ui, sans-serif" font-size="16" font-weight="600" fill="#c0392b" text-anchor="start">“Mvua inanyesha paka na mbwa.”</text>
+<text x="62" y="306" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="500" fill="#c0392b" text-anchor="start">Word-for-word. Grammatically odd,</text>
+<text x="62" y="326" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="500" fill="#c0392b" text-anchor="start">and meaningless to a Swahili reader.</text>
+<line x1="62" y1="360" x2="430" y2="360" stroke="#f0c7c1" stroke-width="2" stroke-dasharray="5 5" stroke-linecap="round"/>
+<text x="62" y="398" font-family="Inter, system-ui, sans-serif" font-size="13" font-weight="800" fill="#c0392b" text-anchor="start">The idiom is not the message.</text>
+
+<rect x="500" y="126" width="420" height="320" rx="14" fill="#f2fbf7" stroke="#bfe8d7" stroke-width="1.5" />
+<rect x="522" y="144" width="110" height="24" rx="12.0" fill="#e8f8f1" stroke="none" stroke-width="1.5" /><text x="577.0" y="159.24" font-family="Inter, system-ui, sans-serif" font-size="9" font-weight="700" fill="#0f9d6b" text-anchor="middle">NATURAL · USE</text>
+<text x="522" y="194" font-family="Inter, system-ui, sans-serif" font-size="18" font-weight="700" fill="#0f172a" text-anchor="start">“It’s raining cats and dogs.”</text>
+<path d="M522 222 L900 222" stroke="#0f9d6b" stroke-width="3" stroke-linecap="round" marker-end="url(#arrow)"/>
+<text x="522" y="266" font-family="Inter, system-ui, sans-serif" font-size="18" font-weight="700" fill="#0f9d6b" text-anchor="start">“Mvua inanyesha sana.”</text>
+<text x="522" y="306" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="500" fill="#0f9d6b" text-anchor="start">Same meaning, natural Swahili.</text>
+<text x="522" y="326" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="500" fill="#0f9d6b" text-anchor="start">The reader feels the same thing.</text>
+<line x1="522" y1="360" x2="888" y2="360" stroke="#bfe8d7" stroke-width="2" stroke-dasharray="5 5" stroke-linecap="round"/>
+<text x="522" y="398" font-family="Inter, system-ui, sans-serif" font-size="13" font-weight="800" fill="#0f9d6b" text-anchor="start">Translate the meaning, not the words.</text>
+<rect x="180" y="470" width="600" height="42" rx="14" fill="#ffffff" stroke="#dbe3ee" stroke-width="1.5" />
+<text x="480" y="497" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="600" fill="#64748b" text-anchor="middle">If there is no equivalent idiom, say the plain meaning — never invent a local saying.</text>
+
+<text x="40" y="522" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="500" fill="#64748b" text-anchor="start" opacity="0.9">Illustration · not a live screenshot</text>
+</svg>

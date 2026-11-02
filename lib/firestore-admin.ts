@@ -31,6 +31,8 @@ import {
   type AdminUserDetailModel,
   type AdminUserRowModel,
 } from '@/lib/admin-domain'
+import type { AssessmentQuestion, TrainingSection } from '@/lib/afterworks-data'
+import { safeImageSrc } from '@/lib/afterworks-data'
 
 // ─── Admin SDK initialisation (singleton) ────────────────────────────────────
 
@@ -2496,9 +2498,9 @@ export type AdminJobInput = {
   /** Per-job training price in USD (admin-decided). Ignored when training is not required. */
   trainingFeeUsd?: number
   /** Admin-authored training sections workers step through. Empty list → built-in category modules. */
-  trainingNotes?: { title: string; content: string }[]
+  trainingNotes?: TrainingSection[]
   /** Admin-authored assessment questions. Empty list → built-in category bank. */
-  assessmentQuestions?: { question: string; options: string[]; correctIndex: number }[]
+  assessmentQuestions?: AssessmentQuestion[]
   requiresVerified: boolean
   status: string
   closesAt?: string
@@ -2534,9 +2536,15 @@ export function sanitizeJob(input: AdminJobInput, existing?: Record<string, unkn
   const trainingNotes = (Array.isArray(input.trainingNotes) ? input.trainingNotes : [])
     .map((raw) => {
       const section = (raw ?? {}) as Record<string, unknown>
+      const image = safeImageSrc(section.image)
+      const imageAlt = String(section.imageAlt ?? '').replace(/\s+/g, ' ').trim().slice(0, 240)
+      const imageCaption = String(section.imageCaption ?? '').replace(/\s+/g, ' ').trim().slice(0, 300)
       return {
         title: String(section.title ?? '').replace(/\s+/g, ' ').trim().slice(0, 140),
         content: String(section.content ?? '').trim().slice(0, 8_000),
+        ...(image ? { image } : {}),
+        ...(image && imageAlt ? { imageAlt } : {}),
+        ...(image && imageCaption ? { imageCaption } : {}),
       }
     })
     .filter((section) => section.title || section.content)
@@ -2552,10 +2560,16 @@ export function sanitizeJob(input: AdminJobInput, existing?: Record<string, unkn
         .filter(Boolean)
         .slice(0, 4)
       const correct = Math.max(0, Math.min(options.length - 1, Math.round(Number(question.correctIndex) || 0)))
+      const image = safeImageSrc(question.image)
+      const imageAlt = String(question.imageAlt ?? '').replace(/\s+/g, ' ').trim().slice(0, 240)
+      const explanation = String(question.explanation ?? '').replace(/\s+/g, ' ').trim().slice(0, 600)
       return {
         question: String(question.question ?? '').replace(/\s+/g, ' ').trim().slice(0, 500),
         options,
         correctIndex: correct,
+        ...(image ? { image } : {}),
+        ...(image && imageAlt ? { imageAlt } : {}),
+        ...(explanation ? { explanation } : {}),
       }
     })
     .filter((question) => question.question && question.options.length >= 2)
@@ -3044,8 +3058,8 @@ export type JobRow = {
   slotsRemaining: number
   trainingRequired: boolean
   trainingFeeUsd: number
-  trainingNotes: { title: string; content: string }[]
-  assessmentQuestions: { question: string; options: string[]; correctIndex: number }[]
+  trainingNotes: TrainingSection[]
+  assessmentQuestions: AssessmentQuestion[]
   requiresVerified: boolean
   status: string
   closesAt: string
@@ -3080,17 +3094,29 @@ export async function listJobsServer(opts: { status?: string; pageSize?: number 
         trainingRequired: data.trainingRequired === true,
         trainingFeeUsd: Number(data.trainingFeeUsd ?? 0) || 0,
         trainingNotes: Array.isArray(data.trainingNotes)
-          ? (data.trainingNotes as Record<string, unknown>[]).map((section) => ({
-              title: String(section?.title ?? ''),
-              content: String(section?.content ?? ''),
-            }))
+          ? (data.trainingNotes as Record<string, unknown>[]).map((section) => {
+              const image = safeImageSrc(section?.image)
+              return {
+                title: String(section?.title ?? ''),
+                content: String(section?.content ?? ''),
+                ...(image ? { image } : {}),
+                ...(image && section?.imageAlt ? { imageAlt: String(section.imageAlt) } : {}),
+                ...(image && section?.imageCaption ? { imageCaption: String(section.imageCaption) } : {}),
+              }
+            })
           : [],
         assessmentQuestions: Array.isArray(data.assessmentQuestions)
-          ? (data.assessmentQuestions as Record<string, unknown>[]).map((question) => ({
-              question: String(question?.question ?? ''),
-              options: Array.isArray(question?.options) ? (question.options as unknown[]).map(String) : [],
-              correctIndex: Number(question?.correctIndex ?? 0) || 0,
-            }))
+          ? (data.assessmentQuestions as Record<string, unknown>[]).map((question) => {
+              const image = safeImageSrc(question?.image)
+              return {
+                question: String(question?.question ?? ''),
+                options: Array.isArray(question?.options) ? (question.options as unknown[]).map(String) : [],
+                correctIndex: Number(question?.correctIndex ?? 0) || 0,
+                ...(image ? { image } : {}),
+                ...(image && question?.imageAlt ? { imageAlt: String(question.imageAlt) } : {}),
+                ...(question?.explanation ? { explanation: String(question.explanation) } : {}),
+              }
+            })
           : [],
         requiresVerified: data.requiresVerified !== false,
         status: String(data.status ?? 'open'),

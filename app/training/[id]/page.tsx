@@ -655,18 +655,17 @@ function TrainingPageInner({ params }: { params: Promise<{ id: string }> }) {
               <VerificationGate paid={false} />
             ) : (
               <>
-                {(job.trainingNotes?.length ?? 0) > 0 && (
-                  <div className="flex flex-col gap-3">
-                    <h2 className="flex items-center gap-2 text-lg font-bold">
-                      <GraduationCap className="size-5 text-primary" />
-                      Preparation Notes
-                    </h2>
-                    <p className="text-xs text-muted-foreground">
-                      Study these notes before taking the assessment — the questions are based on this material.
-                    </p>
-                    <TrainingNotesPreview job={job} />
-                  </div>
-                )}
+                <div className="flex flex-col gap-3">
+                  <h2 className="flex items-center gap-2 text-lg font-bold">
+                    <GraduationCap className="size-5 text-primary" />
+                    Preparation Course
+                  </h2>
+                  <p className="text-xs text-muted-foreground">
+                    Study the short course before taking the assessment — the questions are based on
+                    the same rules and examples.
+                  </p>
+                  <TrainingNotesPreview job={job} />
+                </div>
                 <AssessmentQuiz category={job.category} onPass={handleApplyAfterTraining} customQuestions={job.assessmentQuestions} />
                 {applyError && (
                   <p className="text-center text-xs text-destructive">{applyError}</p>

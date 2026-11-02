@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 540" width="960" height="540" role="img">
+<title>Data entry: copy exactly, then verify</title>
+<desc>A row is only useful if it can be traced back to the source document without a guess.</desc>
+<defs>
+  <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M 0 0 L 10 5 L 0 10 z" fill="#2f5bd3"/>
+  </marker>
+</defs>
+<rect width="960" height="540" fill="#f4f7fb"/>
+<circle cx="900" cy="20" r="150" fill="#2f5bd3" opacity="0.06"/>
+<circle cx="60" cy="530" r="120" fill="#0f9d6b" opacity="0.06"/>
+<rect x="40" y="26" width="190" height="24" rx="12.0" fill="#e8eefc" stroke="none" stroke-width="1.5" /><text x="135.0" y="41.6" font-family="Inter, system-ui, sans-serif" font-size="10" font-weight="700" fill="#1e3f9e" text-anchor="middle">AFTERWORKS · TRAINING</text>
+<text x="40" y="74" font-family="Inter, system-ui, sans-serif" font-size="27" font-weight="700" fill="#0f172a" text-anchor="start">Data entry: copy exactly, then verify</text>
+<text x="40" y="101" font-family="Inter, system-ui, sans-serif" font-size="14" font-weight="500" fill="#64748b" text-anchor="start">A row is only useful if it can be traced back to the source document without a guess.</text>
+
+<rect x="40" y="126" width="250" height="300" rx="14" fill="#ffffff" stroke="#dbe3ee" stroke-width="1.5" />
+<rect x="58" y="144" width="82" height="24" rx="12.0" fill="#eef3fd" stroke="none" stroke-width="1.5" /><text x="99.0" y="159.24" font-family="Inter, system-ui, sans-serif" font-size="9" font-weight="700" fill="#1e3f9e" text-anchor="middle">SOURCE</text>
+<rect x="70" y="184" width="190" height="214" rx="8" fill="#fbfcfe" stroke="#dbe3ee" stroke-width="1.5" />
+<text x="88" y="212" font-family="JetBrains Mono, ui-monospace, monospace" font-size="12" font-weight="700" fill="#0f172a" text-anchor="start">INVOICE 0042</text>
+<line x1="88" y1="226" x2="242" y2="226" stroke="#dbe3ee" stroke-width="2" stroke-linecap="round"/>
+<text x="88" y="250" font-family="JetBrains Mono, ui-monospace, monospace" font-size="10" font-weight="500" fill="#64748b" text-anchor="start">Date</text>
+<text x="196" y="250" font-family="JetBrains Mono, ui-monospace, monospace" font-size="10" font-weight="500" fill="#0f172a" text-anchor="end">12/05/2026</text>
+<text x="88" y="278" font-family="JetBrains Mono, ui-monospace, monospace" font-size="10" font-weight="500" fill="#64748b" text-anchor="start">Client</text>
+<text x="196" y="278" font-family="JetBrains Mono, ui-monospace, monospace" font-size="10" font-weight="500" fill="#0f172a" text-anchor="end">A. Otieno</text>
+<text x="88" y="306" font-family="JetBrains Mono, ui-monospace, monospace" font-size="10" font-weight="500" fill="#64748b" text-anchor="start">Total</text>
+<text x="196" y="306" font-family="JetBrains Mono, ui-monospace, monospace" font-size="10" font-weight="700" fill="#0f172a" text-anchor="end">KES 4,850</text>
+<rect x="88" y="330" width="154" height="42" rx="7" fill="#fff6df" stroke="none" stroke-width="1.5" />
+<text x="98" y="347" font-family="Inter, system-ui, sans-serif" font-size="9" font-weight="600" fill="#c8870a" text-anchor="start">copy exactly what is</text>
+<text x="98" y="360" font-family="Inter, system-ui, sans-serif" font-size="9" font-weight="600" fill="#c8870a" text-anchor="start">printed, not what you expect</text>
+
+<path d="M306 274 L354 274" stroke="#2f5bd3" stroke-width="3" stroke-linecap="round" marker-end="url(#arrow)"/>
+<rect x="370" y="126" width="250" height="300" rx="14" fill="#ffffff" stroke="#dbe3ee" stroke-width="1.5" />
+<rect x="388" y="144" width="138" height="24" rx="12.0" fill="#eef3fd" stroke="none" stroke-width="1.5" /><text x="457.0" y="159.24" font-family="Inter, system-ui, sans-serif" font-size="9" font-weight="700" fill="#1e3f9e" text-anchor="middle">STRUCTURED ROW</text>
+<text x="390" y="190" font-family="JetBrains Mono, ui-monospace, monospace" font-size="10" font-weight="700" fill="#64748b" text-anchor="start">date</text>
+<text x="510" y="190" font-family="JetBrains Mono, ui-monospace, monospace" font-size="10" font-weight="700" fill="#64748b" text-anchor="start">client</text>
+<text x="636" y="190" font-family="JetBrains Mono, ui-monospace, monospace" font-size="10" font-weight="700" fill="#64748b" text-anchor="start">total</text>
+<line x1="388" y1="202" x2="842" y2="202" stroke="#dbe3ee" stroke-width="2" stroke-linecap="round"/>
+<text x="390" y="232" font-family="JetBrains Mono, ui-monospace, monospace" font-size="10" font-weight="500" fill="#0f172a" text-anchor="start">2026-05-12</text>
+<text x="510" y="232" font-family="JetBrains Mono, ui-monospace, monospace" font-size="10" font-weight="500" fill="#0f172a" text-anchor="start">A. Otieno</text>
+<text x="636" y="232" font-family="JetBrains Mono, ui-monospace, monospace" font-size="10" font-weight="500" fill="#0f172a" text-anchor="start">4850</text>
+<text x="390" y="276" font-family="JetBrains Mono, ui-monospace, monospace" font-size="10" font-weight="500" fill="#0f172a" text-anchor="start">2026-05-12</text>
+<text x="510" y="276" font-family="JetBrains Mono, ui-monospace, monospace" font-size="10" font-weight="500" fill="#0f172a" text-anchor="start">B. Wanjiku</text>
+<text x="636" y="276" font-family="JetBrains Mono, ui-monospace, monospace" font-size="10" font-weight="500" fill="#0f172a" text-anchor="start">1200</text>
+<rect x="388" y="306" width="486" height="82" rx="9" fill="#e8f8f1" stroke="none" stroke-width="1.5" />
+<text x="406" y="333" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="700" fill="#0f9d6b" text-anchor="start">Every column has one rule.</text>
+<text x="406" y="353" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="500" fill="#0f9d6b" text-anchor="start">Dates normalized, amounts digit-only, blanks left blank —</text>
+<text x="406" y="370" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="500" fill="#0f9d6b" text-anchor="start">never guessed.</text>
+
+<text x="40" y="522" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="500" fill="#64748b" text-anchor="start" opacity="0.9">Illustration · not a live screenshot</text>
+</svg>

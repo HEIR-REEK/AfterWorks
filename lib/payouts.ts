@@ -28,6 +28,17 @@ export function roundUsd(value: number): number {
   return Math.round(value * 100) / 100
 }
 
+/**
+ * Everything the member owns in the wallet: cleared money plus money still clearing.
+ *
+ * `heldUsd` is deliberately not added again. A payout request claims part of `availableUsd`
+ * rather than moving it out, so `available + pending` already includes money that is on hold and
+ * not currently withdrawable. Adding held would count the same dollars twice.
+ */
+export function totalWalletUsd(input: { availableUsd: number; pendingUsd: number }): number {
+  return roundUsd(Math.max(0, input.availableUsd || 0) + Math.max(0, input.pendingUsd || 0))
+}
+
 /** True when a value is a sane monetary amount (0 … 1,000,000 USD). */
 export function isMoney(value: unknown, { min = 0, max = 1_000_000 }: { min?: number; max?: number } = {}): boolean {
   const n = Number(value)
@@ -485,6 +496,8 @@ export type WelcomeBonusState = {
 export type WalletSnapshot = {
   pendingUsd: number
   availableUsd: number
+  /** availableUsd + pendingUsd — every dollar in the account, withdrawable or not. */
+  totalUsd: number
   /** Claimed by open payout requests; still displayed to the member, no longer spendable. */
   heldUsd: number
   /** availableUsd − heldUsd. */

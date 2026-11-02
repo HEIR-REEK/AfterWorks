@@ -37,7 +37,7 @@ import {
   type DiditSessionStatus,
 } from '@/lib/didit'
 import { updateUserProfile, saveKycRecord } from '@/lib/firestore-admin'
-import { reconcileCompletedReferral } from '@/lib/referral-server'
+import { reconcileCompletedReferral, reconcileReferralsForReferrer } from '@/lib/referral-server'
 
 export async function POST(req: NextRequest) {
   let rawBody: string
@@ -135,6 +135,9 @@ export async function POST(req: NextRequest) {
       // A referral can be attributed or completed before Didit calls back. Re-check after approval
       // so webhook order cannot strand a completed referral in the pending state.
       await reconcileCompletedReferral(userId)
+      // The other order: their referees finished their profiles before this approval, so the
+      // pending rows now need to be paid against the newly verified referrer.
+      await reconcileReferralsForReferrer(userId)
       break
     }
 

@@ -24,8 +24,9 @@
  * server-side and none of them client-side:
  *   • a member cannot refer themselves, by uid or by email;
  *   • a referred account is bound to one referrer, permanently;
- *   • a referrer's own KYC must be complete before their code works (a rejected identity account
- *     must not be able to farm signups);
+ *   • no bonus is released until the referrer's own KYC is approved (a rejected identity account
+ *     must not be able to farm signups) — attribution is recorded earlier so a legitimate invite
+ *     is not lost while that verification is pending;
  *   • signups per referrer are capped per week.
  */
 
@@ -108,12 +109,13 @@ export const REFERRAL_STATUSES = ['pending', 'qualified'] as const
 export type ReferralStatus = (typeof REFERRAL_STATUSES)[number]
 
 export const REFERRAL_STATUS_LABEL: Record<ReferralStatus, string> = {
-  pending: 'Awaiting profile',
+  pending: 'Awaiting release',
   qualified: 'Qualified — bonus credited',
 }
 
 export const REFERRAL_STATUS_HINT: Record<ReferralStatus, string> = {
-  pending: 'They still need to finish their profile. The bonus is released the moment they do.',
+  pending:
+    'They still need to finish their profile. The bonus is released once they do and your own identity verification has been approved.',
   qualified: 'Their profile is complete, so the bonus is in your pending balance and clears with your other earnings.',
 }
 
@@ -160,6 +162,14 @@ export function referralStats(rows: readonly ReferralRow[]): ReferralStats {
   }
 }
 
+export type ReferralAttribution = {
+  code: string
+  referrerName: string
+  status: ReferralStatus
+  createdAt: string
+  qualifiedAt: string | null
+}
+
 export type ReferralDashboard = {
   /** The member's own code. Always present — the panel mints one on first view. */
   code: string
@@ -167,6 +177,11 @@ export type ReferralDashboard = {
   bonusUsd: number
   stats: ReferralStats
   rows: ReferralRow[]
+  /** The referral this member joined through, if any. Read-only; one account, one referrer. */
+  attribution: ReferralAttribution | null
+  /** True while the member can still add a code they were invited with. */
+  canAttachReferral: boolean
+  attachWindowDays: number
   /** Why the code cannot be shared yet, phrased for the member. Null when it is ready to use. */
   blockedReason: string | null
   canShare: boolean
@@ -178,6 +193,49 @@ export type ReferralDashboard = {
 /** Rolling-week cap on signups attributed to one referrer. */
 export const REFERRAL_SIGNUP_WEEKLY_LIMIT = 25
 export const REFERRAL_SIGNUP_WEEK_MS = 7 * 24 * 60 * 60 * 1000
+
+/**
+ * How long after creating an account a member may still attach the code they were invited with.
+ *
+ * Normal sign-ups attach their code immediately. This window exists for the two cases where that
+ * first attempt can fail through no fault of the member: a transient Firestore write, or a referrer
+ * whose identity verification had not completed yet. Without it, those referrals are lost forever
+ * and the only recovery is a database edit.
+ */
+export const REFERRAL_ATTACH_WINDOW_DAYS = 30
+export const REFERRAL_ATTACH_WINDOW_MS = REFERRAL_ATTACH_WINDOW_DAYS * 24 * 60 * 60 * 1000
+
+function timestampMs(value: unknown): number | null {
+  if (typeof value === 'string') {
+    const ms = Date.parse(value)
+    return Number.isFinite(ms) ? ms : null
+  }
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null
+  if (value instanceof Date) return Number.isFinite(value.getTime()) ? value.getTime() : null
+  if (value && typeof value === 'object') {
+    const maybe = value as { toMillis?: () => number; seconds?: number }
+    if (typeof maybe.toMillis === 'function') {
+      const ms = maybe.toMillis()
+      return Number.isFinite(ms) ? ms : null
+    }
+    if (typeof maybe.seconds === 'number') return maybe.seconds * 1000
+  }
+  return null
+}
+
+/**
+ * Whether a member may still attach a referral code.
+ *
+ * A missing or unreadable `createdAt` is treated as open: the initial sign-up claim can run before
+ * the profile document's server timestamp has resolved, and refusing that would break the normal
+ * path. The age limit is a recovery guard, not the primary anti-fraud check — the one-account,
+ * one-referrer rule and the referrer's KYC gate do that work.
+ */
+export function referralAttachWindowOpen(createdAt: unknown, now: number = Date.now()): boolean {
+  const created = timestampMs(createdAt)
+  if (created === null) return true
+  return now - created <= REFERRAL_ATTACH_WINDOW_MS
+}
 
 /**
  * The referral terms, as short rules. Rendered in full on `/terms` and, in short, on the referral
@@ -205,9 +263,9 @@ export const REFERRAL_TERMS: readonly { title: string; body: string }[] = [
       'An account can only ever be attached to one referrer, and the attachment cannot be moved. You cannot refer yourself, and neither can anybody else refer you using their own address.',
   },
   {
-    title: 'Your identity must be verified',
+    title: 'Your identity must be verified before you are paid',
     body:
-      'Your code only works while your own identity verification is complete. If your verification is rejected, suspended or later revoked, referral credit stops and any bonus already released may be reversed.',
+      'A referral can be recorded as soon as someone uses your code, but the bonus is only released while your own identity verification is complete. If your verification is rejected, suspended or later revoked, referral credit stops and any bonus already released may be reversed.',
   },
   {
     title: 'Fair use',
@@ -223,7 +281,14 @@ export const REFERRAL_TERMS: readonly { title: string; body: string }[] = [
 // ─── Guards (shared by the route and the tests) ──────────────────────────────
 
 export type ReferralClaimDecision =
-  | { ok: true }
+  | {
+      ok: true
+      /**
+       * Attribution is allowed, but the referrer's identity is not verified yet. The referral is
+       * recorded as pending and the bonus is released when the referrer completes KYC.
+       */
+      deferred?: 'referrer_unverified'
+    }
   | { ok: false; code: string; message: string }
 
 /**
@@ -253,13 +318,10 @@ export function evaluateReferralClaim(input: {
   if (input.referrerEmail.trim().toLowerCase() === input.referredEmail.trim().toLowerCase()) {
     return { ok: false, code: 'self_referral', message: 'You cannot refer yourself.' }
   }
-  if (!input.referrerKycVerified) {
-    return {
-      ok: false,
-      code: 'referrer_unverified',
-      message: 'That referral code is not active yet — its owner has not completed identity verification.',
-    }
-  }
+  // Identity verification is enforced where the money is written, not here. A referrer who is not
+  // verified yet still gets the attribution recorded, and the release pass waits for their KYC
+  // approval. Refusing the claim outright was how a legitimate signup was permanently lost when
+  // the invitation arrived before the referrer finished verification.
   if (input.referrerAccountState && input.referrerAccountState !== 'active') {
     return {
       ok: false,
@@ -274,5 +336,5 @@ export function evaluateReferralClaim(input: {
       message: 'That account has reached its weekly referral limit. Try again next week.',
     }
   }
-  return { ok: true }
+  return input.referrerKycVerified ? { ok: true } : { ok: true, deferred: 'referrer_unverified' }
 }

@@ -164,6 +164,8 @@ type WalletMeta = {
  * it is computed by the server (`lib/wallet-server.ts`) and copied here verbatim.
  */
 export type PayoutState = {
+  /** available + pending — the dashboard total, including money still clearing. */
+  totalUsd: number
   heldUsd: number
   minWithdrawalUsd: number
   withdrawableUsd: number
@@ -189,6 +191,7 @@ const BLANK_META: WalletMeta = {
   asOf: null,
 }
 const BLANK_PAYOUTS: PayoutState = {
+  totalUsd: 0,
   heldUsd: 0,
   minWithdrawalUsd: 50,
   withdrawableUsd: 0,
@@ -473,6 +476,9 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
       })
       const bonus = (data.welcomeBonus ?? {}) as Partial<WelcomeBonusState>
       setPayouts({
+        totalUsd:
+          Number(data.totalUsd ?? 0) ||
+          (Number(data.availableUsd ?? 0) || 0) + (Number(data.pendingUsd ?? 0) || 0),
         heldUsd: Number(data.heldUsd ?? 0) || 0,
         minWithdrawalUsd: Number(data.minWithdrawalUsd ?? 50) || 50,
         withdrawableUsd: Number(data.withdrawableUsd ?? 0) || 0,

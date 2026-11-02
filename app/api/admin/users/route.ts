@@ -207,6 +207,12 @@ export async function PATCH(req: NextRequest) {
         const approve = payload.approve === true
         if (!approve && reason.length < 4) return fail(400, 'Tell the worker what to fix.', { code: 'reason_required' })
         await firestore.verifyKycAdmin(uid, approve, reason, guard.value.email)
+        if (approve) {
+          // Admin approval is a KYC path too. A pending referral whose referee already completed
+          // their profile must not wait forever just because the webhook was not the source.
+          const { reconcileReferralsForReferrer } = await import('@/lib/referral-server')
+          await reconcileReferralsForReferrer(uid)
+        }
         await audit({ action: approve ? 'KYC_MANUAL_APPROVED' : 'KYC_MANUAL_REJECTED', actorEmail: guard.value.email, details: { uid, reason }, req })
         return json({ ok: true, kycVerified: approve })
       }

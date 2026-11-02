@@ -11,9 +11,10 @@ import Link from 'next/link'
 import {
   ArrowRight,
   Banknote,
-  CheckCircle2,
+  Clock,
   Eye,
   EyeOff,
+  Hourglass,
   Star,
   Wallet as WalletIcon,
 } from 'lucide-react'
@@ -30,6 +31,16 @@ import {
 } from '@/lib/afterworks-data'
 import { formatTimestamp } from '@/lib/datetime'
 
+function HiddenMoney({ value, hidden, className }: { value: string; hidden: boolean; className: string }) {
+  if (!hidden) return <span className={className}>{value}</span>
+  return (
+    <span className={className}>
+      <span aria-hidden="true" className="select-none blur-[7px] transition-all duration-150">{value}</span>
+      <span className="sr-only">Balance hidden</span>
+    </span>
+  )
+}
+
 export default function DashboardPage() {
   const { worker, wallet, walletMeta, payouts, onboarding, jobs, applications, getJob, catalogueLive } = useAfterWorks()
   const [balanceHidden, setBalanceHidden] = useState(false)
@@ -45,34 +56,9 @@ export default function DashboardPage() {
   const trainingJobs = openJobs.filter((job) => job.trainingRequired)
   const topTrainingPay = trainingJobs.reduce((highest, job) => Math.max(highest, job.payAmountUsd), 0)
 
-  const stats = [
-    {
-      label: 'Withdrawable',
-      value: formatUsd(payouts.withdrawableUsd),
-      sub: payouts.heldUsd > 0 ? `${formatUsd(payouts.heldUsd)} held by a request` : `≈ ${formatKes(payouts.withdrawableUsd)}`,
-      icon: WalletIcon,
-      sensitive: true,
-      moneySub: true,
-    },
-    {
-      label: 'Pending (clearing)',
-      value: formatUsd(wallet.pendingUsd),
-      sub: walletMeta.nextClearingAt
-        ? `Next clears ${formatTimestamp(walletMeta.nextClearingAt, { day: '2-digit', month: 'short' })}`
-        : `Clears after ${walletMeta.clearingHours}h`,
-      icon: CheckCircle2,
-      sensitive: true,
-      moneySub: false,
-    },
-    {
-      label: 'Quality score',
-      value: `${worker.qualityScore}`,
-      sub: 'Good standing',
-      icon: Star,
-      sensitive: false,
-      moneySub: false,
-    },
-  ]
+  // The server sums available + pending. Held money is already inside available (a payout request
+  // claims it rather than moving it), so it must not be added a second time.
+  const totalBalance = payouts.totalUsd || wallet.availableUsd + wallet.pendingUsd
 
   return (
     <div className="flex flex-col gap-6 sm:gap-8">
@@ -96,77 +82,127 @@ export default function DashboardPage() {
         </section>
       )}
 
-      {/* Hero / wallet summary */}
-      <section className="overflow-hidden rounded-2xl bg-primary text-primary-foreground">
-        <div className="flex flex-col gap-6 p-5 sm:p-8 md:grid md:grid-cols-2">
-          <div className="flex flex-col justify-center">
-            <p className="text-sm font-medium text-primary-foreground/70">
-              Welcome back, {worker.name && worker.name !== 'Loading…' ? worker.name.split(' ')[0] : 'there'}
-            </p>
-            <h1 className="mt-2 text-pretty text-2xl font-semibold leading-tight sm:text-4xl">
-              Real, verified work. Paid to your mobile money.
-            </h1>
-            <p className="mt-3 max-w-md text-sm leading-relaxed text-primary-foreground/80">
-              Browsing and applying is always free. You only ever get paid — never
-              charged to apply or verify your identity.
-            </p>
-            <div className="mt-5 flex flex-wrap gap-2">
-              <Button
-                render={<Link href="/jobs" />}
-                size="lg"
-                className="bg-primary-foreground text-primary hover:bg-primary-foreground/90"
-              >
-                Browse open jobs
-                <ArrowRight className="size-4" />
-              </Button>
-              <Button
-                render={<Link href="/wallet" />}
-                size="lg"
-                variant="outline"
-                className="border-primary-foreground/40 bg-transparent text-primary-foreground hover:bg-primary-foreground/10 hover:text-primary-foreground"
-              >
-                <Banknote className="size-4" />
-                {payouts.withdrawableUsd >= (payouts.minWithdrawalUsd || 50) ? 'Withdraw earnings' : 'Wallet & payouts'}
-              </Button>
-            </div>
-          </div>
+      {/* Hero */}
+      <section className="overflow-hidden rounded-2xl bg-primary p-5 text-primary-foreground sm:p-8">
+        <p className="text-sm font-medium text-primary-foreground/70">
+          Welcome back, {worker.name && worker.name !== 'Loading…' ? worker.name.split(' ')[0] : 'there'}
+        </p>
+        <h1 className="mt-2 max-w-2xl text-pretty text-2xl font-semibold leading-tight sm:text-4xl">
+          Real, verified work. Paid to your mobile money.
+        </h1>
+        <p className="mt-3 max-w-xl text-sm leading-relaxed text-primary-foreground/80">
+          Browsing and applying is always free. You only ever get paid — never
+          charged to apply or verify your identity.
+        </p>
+        <div className="mt-5 flex flex-wrap items-center gap-2">
+          <Button
+            render={<Link href="/jobs" />}
+            size="lg"
+            className="bg-primary-foreground text-primary hover:bg-primary-foreground/90"
+          >
+            Browse open jobs
+            <ArrowRight className="size-4" />
+          </Button>
+          <Button
+            render={<Link href="/wallet" />}
+            size="lg"
+            variant="outline"
+            className="border-primary-foreground/40 bg-transparent text-primary-foreground hover:bg-primary-foreground/10 hover:text-primary-foreground"
+          >
+            <Banknote className="size-4" />
+            {payouts.withdrawableUsd >= (payouts.minWithdrawalUsd || 50) ? 'Withdraw earnings' : 'Wallet & payouts'}
+          </Button>
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-primary-foreground/10 px-3 py-1.5 text-xs font-medium text-primary-foreground/85">
+            <Star className="size-3.5" />
+            Quality score {worker.qualityScore} · Good standing
+          </span>
+        </div>
+      </section>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div className="col-span-2 flex justify-end">
-              <button
-                type="button"
-                onClick={() => setBalanceHidden((hidden) => !hidden)}
-                aria-label={balanceHidden ? 'Show balances' : 'Hide balances'}
-                aria-pressed={balanceHidden}
-                className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-primary-foreground/80 transition-colors hover:bg-primary-foreground/10 hover:text-primary-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-foreground/70"
-              >
-                {balanceHidden ? <Eye className="size-4" /> : <EyeOff className="size-4" />}
-                {balanceHidden ? 'Show balances' : 'Hide balances'}
-              </button>
-            </div>
-            {stats.map((s) => {
-              const Icon = s.icon
-              return (
-                <div
-                  key={s.label}
-                  className="rounded-xl bg-primary-foreground/10 p-4 backdrop-blur first:col-span-2"
-                >
-                  <Icon className="size-5 text-primary-foreground/70" />
-                  <p className="mt-3 font-mono text-2xl font-semibold">
-                    {s.sensitive && balanceHidden ? (
-                      <>
-                        <span aria-hidden="true" className="select-none blur-[7px] transition-all duration-150">{s.value}</span>
-                        <span className="sr-only">Balance hidden</span>
-                      </>
-                    ) : s.value}
-                  </p>
-                  <p className="text-xs text-primary-foreground/70">{s.label}</p>
-                  <p className="mt-0.5 text-xs text-primary-foreground/60">
-                    {balanceHidden && s.moneySub ? 'Balance hidden' : s.sub}
-                  </p>
-                </div>
-              )
-            })}
+      {/* Balances — one container for every dollar in the account, not only what can be withdrawn. */}
+      <section className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm" aria-label="Balances">
+        <div className="flex flex-wrap items-start justify-between gap-4 p-5 sm:p-6">
+          <div className="min-w-0">
+            <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+              <WalletIcon className="size-3.5 text-primary" />
+              Total balance
+            </p>
+            <HiddenMoney
+              value={formatUsd(totalBalance)}
+              hidden={balanceHidden}
+              className="mt-2 block font-mono text-3xl font-semibold tabular-nums sm:text-4xl"
+            />
+            <p className="mt-1 max-w-xl text-xs leading-relaxed text-muted-foreground">
+              Everything in your account — withdrawable money, earnings still clearing, amounts on hold
+              and referral bonuses. It all counts here, even when it is not ready to withdraw.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setBalanceHidden((hidden) => !hidden)}
+            aria-label={balanceHidden ? 'Show balances' : 'Hide balances'}
+            aria-pressed={balanceHidden}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+          >
+            {balanceHidden ? <Eye className="size-4" /> : <EyeOff className="size-4" />}
+            {balanceHidden ? 'Show balances' : 'Hide balances'}
+          </button>
+        </div>
+
+        <div className="grid border-t border-border sm:grid-cols-3">
+          <div className="border-b border-border p-4 sm:border-b-0 sm:border-r">
+            <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-primary">
+              <Banknote className="size-3.5" />
+              Withdrawable
+            </p>
+            <HiddenMoney
+              value={formatUsd(payouts.withdrawableUsd)}
+              hidden={balanceHidden}
+              className="mt-1.5 block font-mono text-xl font-semibold tabular-nums"
+            />
+            <p className="mt-0.5 text-[11px] text-muted-foreground">
+              {balanceHidden ? 'Balance hidden' : `≈ ${formatKes(payouts.withdrawableUsd)}`}
+            </p>
+          </div>
+          <div className="border-b border-border p-4 sm:border-b-0 sm:border-r">
+            <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+              <Hourglass className="size-3.5" />
+              Pending (clearing)
+            </p>
+            <HiddenMoney
+              value={formatUsd(wallet.pendingUsd)}
+              hidden={balanceHidden}
+              className="mt-1.5 block font-mono text-xl font-semibold tabular-nums"
+            />
+            <p className="mt-0.5 text-[11px] text-muted-foreground">
+              {balanceHidden
+                ? 'Balance hidden'
+                : walletMeta.nextClearingAt
+                  ? `Next clears ${formatTimestamp(walletMeta.nextClearingAt, { day: '2-digit', month: 'short' })}`
+                  : `Clears after ${walletMeta.clearingHours}h`}
+            </p>
+          </div>
+          <div className="p-4">
+            <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+              <Clock className="size-3.5" />
+              Held by a request
+            </p>
+            <HiddenMoney
+              value={formatUsd(payouts.heldUsd)}
+              hidden={balanceHidden}
+              className="mt-1.5 block font-mono text-xl font-semibold tabular-nums"
+            />
+            <p className="mt-0.5 text-[11px] text-muted-foreground">
+              {balanceHidden ? 'Balance hidden' : payouts.openPayout ? 'Claimed by your open payout' : 'Nothing held right now'}
+            </p>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border bg-muted/20 px-5 py-3 text-xs">
+          <span className="text-muted-foreground">Referral bonuses and your welcome reward are included in the total.</span>
+          <div className="flex gap-3">
+            <Link href="/referrals" className="font-medium text-primary hover:underline">Referral earnings →</Link>
+            <Link href="/wallet" className="font-medium text-primary hover:underline">Wallet & payouts →</Link>
           </div>
         </div>
       </section>

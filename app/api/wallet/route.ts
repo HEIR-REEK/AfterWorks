@@ -37,6 +37,7 @@ export async function GET(req: NextRequest) {
         ok: true,
         pendingUsd: 0,
         availableUsd: 0,
+        totalUsd: 0,
         heldUsd: 0,
         withdrawableUsd: 0,
         payoutNumber: '',

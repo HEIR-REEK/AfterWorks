@@ -13,6 +13,7 @@ import {
   nextPayoutStatuses,
   requiresPayoutReference,
   roundUsd,
+  totalWalletUsd,
   validatePayoutDestination,
   validateWithdrawalAmount,
   withdrawalQuote,
@@ -28,6 +29,17 @@ test('roundUsd keeps money to the cent and refuses nonsense', () => {
   assert.equal(roundUsd(0), 0)
   assert.equal(roundUsd(Number.NaN), 0)
   assert.equal(roundUsd(Number.POSITIVE_INFINITY), 0)
+})
+
+test('totalWalletUsd counts available and pending once, without double-counting the payout hold', () => {
+  // 50 available includes 20 claimed by an open payout request; 30 is withdrawable and 10 is
+  // clearing. The member's total is 60 — adding held again would report 80.
+  assert.equal(totalWalletUsd({ availableUsd: 50, pendingUsd: 10 }), 60)
+  assert.equal(totalWalletUsd({ availableUsd: 0, pendingUsd: 3 }), 3)
+  assert.equal(totalWalletUsd({ availableUsd: 12.345, pendingUsd: 0.005 }), 12.35)
+  // Bad data is clamped rather than producing a negative or NaN total.
+  assert.equal(totalWalletUsd({ availableUsd: -20, pendingUsd: 5 }), 5)
+  assert.equal(totalWalletUsd({ availableUsd: Number.NaN, pendingUsd: 5 }), 5)
 })
 
 test('withdrawalQuote subtracts the hold and never goes negative', () => {

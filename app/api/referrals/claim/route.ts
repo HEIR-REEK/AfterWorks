@@ -7,8 +7,10 @@ import { normaliseReferralCode } from '@/lib/referrals'
 /**
  * POST /api/referrals/claim — attach a signup to the referrer whose code was used.
  *
- * Called once, immediately after the account exists, while the fresh ID token is still valid.
- * `requireUser` (not `requireVerifiedUser`) is the right gate: a referral is attributed at
+ * Normally called once, immediately after the account exists, while the fresh ID token is still
+ * valid. The same endpoint backs the recovery form on `/referrals`, which lets a member attach a
+ * code that failed to land at sign-up; the server accepts that only inside the referral attach
+ * window. `requireUser` (not `requireVerifiedUser`) is the right gate: a referral is attributed at
  * signup, before the inbox is proven, because that is when the member has a code in hand and no
  * reason to keep it. Nothing about the bonus depends on it — the bonus waits for the profile.
  *

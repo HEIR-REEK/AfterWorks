@@ -20,6 +20,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getKycSessionStatus } from '@/lib/didit'
 import { consumeBucket } from '@/lib/guards'
 import { saveKycRecord, verifyIdToken, getUserProfile, updateUserProfile } from '@/lib/firestore-admin'
+import { reconcileReferralsForReferrer } from '@/lib/referral-server'
 
 export async function GET(req: NextRequest) {
   try {
@@ -98,6 +99,7 @@ export async function GET(req: NextRequest) {
         kycRejectionReason: null,
         kycFailedChecks: null,
       })
+      await reconcileReferralsForReferrer(userId)
     } else if (didit.is_rejected && !firestoreRejected) {
       console.log(`[KYC status] Auto-syncing Declined state for uid=${userId}`)
       await updateUserProfile(userId, {

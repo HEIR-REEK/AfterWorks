@@ -1234,6 +1234,11 @@ const ADMIN_MUTABLE_USER_FIELDS = new Set([
   'isAdmin',
   'kycStatus',
   'kycRejectionReason',
+  // The console's "Flag for deletion" action writes these alongside the ban. They used to be
+  // silently dropped by this allowlist, so the audit log said "marked deleted" while the profile
+  // carried no deletion marker at all.
+  'deletedAt',
+  'moderationReason',
 ])
 
 export async function adminUpdateUser(
@@ -1824,9 +1829,22 @@ export async function createMemberAccount(input: {
 }
 
 /**
- * Hard deletion: the profile, the credential and — importantly — the ability to sign in again with the
- * same account. Financial rows are kept by default because a payout record without a counterparty is
- * worse for everybody than a tombstone; pass `eraseLedger` to remove the earnings entries too.
+ * Hard deletion: the profile, the credential and — importantly — the ability to sign in again with
+ * the same account.
+ *
+ * The previous implementation deleted the profile first, then tried to delete three collections in
+ * one unbounded batch. Anything it did not know about (KYC, payout guards, referral rows, payment
+ * transactions, admin sessions) survived the "erase", and a single oversized document or missing
+ * index aborted the whole batch *after* the profile was already gone. The operator saw a generic
+ * note; the database could plausibly look untouched.
+ *
+ * This version:
+ *  - deletes the Firebase Auth credential first, so a failed cleanup cannot leave a live login;
+ *  - reads every related row before writing anything, so a query failure aborts with no changes;
+ *  - chunks all writes to Firestore's batch limit;
+ *  - keeps financial history by default but redacts the personal fields, including payouts and
+ *    Paystack transactions (not just wallet ledger rows);
+ *  - deletes the profile last, so a partial run is retryable from the console.
  */
 export async function hardDeleteAccount(
   uid: string,
@@ -1835,58 +1853,243 @@ export async function hardDeleteAccount(
   const db = dbOrNull()
   const auth = authOrNull()
   if (!db) return { ok: false, error: 'The datastore is unreachable, so nothing was deleted.', code: 'storage_unavailable' }
+  if (!auth) {
+    return {
+      ok: false,
+      error: 'The sign-in service is unreachable, so nothing was deleted. Check the Firebase Admin credentials on this deployment and retry.',
+      code: 'auth_unavailable',
+    }
+  }
 
-  const removed: Record<string, number> = { profile: 0, applications: 0, ledger: 0, notifications: 0, auth: 0, phoneClaims: 0 }
+  const removed: Record<string, number> = {
+    profile: 0,
+    applications: 0,
+    ledger: 0,
+    notifications: 0,
+    auth: 0,
+    phoneClaims: 0,
+    kyc: 0,
+    payoutOpen: 0,
+    payoutRequests: 0,
+    transactions: 0,
+    referrals: 0,
+    referralCodes: 0,
+    emailVerifications: 0,
+    adminSessions: 0,
+  }
+
   try {
-    const [profile, apps, ledger, notes] = await Promise.all([
-      db.collection('users').doc(uid).get(),
-      db.collection('applications').where('workerUid', '==', uid).limit(400).get().catch(() => null),
-      db.collection('wallet_ledger').where('uid', '==', uid).limit(400).get().catch(() => null),
-      db.collection('notifications').where('uid', '==', uid).limit(400).get().catch(() => null),
-    ])
-    if (profile.exists) {
-      await profile.ref.delete()
-      removed.profile = 1
-    }
-    const batch = db.batch()
-    apps?.docs.forEach((d) => batch.delete(d.ref))
-    notes?.docs.forEach((d) => batch.delete(d.ref))
+    const profileRef = db.collection('users').doc(uid)
+    const profile = await profileRef.get()
+    const profileData = (profile.data() ?? {}) as Record<string, unknown>
+    const targetEmail = String(profileData.email ?? '').trim().toLowerCase()
+    const phoneKey = String(profileData.phoneKey ?? '').trim()
+    const profileReferralCode = String(profileData.referralCode ?? '').trim().toUpperCase()
 
-    // Release this account's phone claim. Without this the number stays owned by a uid that no
-    // longer exists, and "one phone number, one account" becomes "one phone number, one account
-    // ever" — the number could never be registered again. Safe to do only *after* the profile is
-    // gone, which is the line above.
-    const phoneKey = String(((profile.data() ?? {}) as Record<string, unknown>).phoneKey ?? '')
-    if (phoneKey) {
-      batch.delete(db.collection('phone_claims').doc(phoneKey))
-      removed.phoneClaims = 1
-    }
-    if (opts.eraseLedger) ledger?.docs.forEach((d) => batch.delete(d.ref))
-    else
-      ledger?.docs.forEach((d) =>
-        batch.set(d.ref, { redactedAt: new Date().toISOString(), redactedBy: opts.actorEmail, jobTitle: '[redacted]', note: '[redacted]' }, { merge: true }),
-      )
-    await batch.commit()
-    removed.applications = apps?.size ?? 0
-    removed.ledger = ledger?.size ?? 0
-    removed.notifications = notes?.size ?? 0
-
-    if (auth) {
+    // 1. Kill the credential first. If this fails, no Firestore data has been touched and the
+    //    operator can fix the credential problem and retry. "user-not-found" is not a failure:
+    //    an account can legitimately have a profile and no Auth user (or a previous run may have
+    //    removed the credential before failing on data).
+    try {
       await auth.deleteUser(uid)
       removed.auth = 1
+    } catch (err) {
+      const code = String((err as { code?: string }).code ?? '')
+      if (code !== 'auth/user-not-found') {
+        return {
+          ok: false,
+          error: `The sign-in credential could not be deleted (${code || 'auth error'}). No profile or data was changed; retry once the sign-in service is healthy.`,
+          code: 'auth_delete_failed',
+          removed,
+        }
+      }
     }
-    invalidateGuardCaches?.(uid)
+
+    // 2. Read everything before the first write. A missing index or a transient read error must
+    //    not leave the account half-erased.
+    const [
+      apps,
+      ledger,
+      notes,
+      payouts,
+      transactions,
+      transactionsByEmail,
+      verifications,
+      referralCodes,
+      referralsAsReferrer,
+      referralsAsReferred,
+      sessions,
+      kycSnap,
+      payoutOpenSnap,
+      referralSelfSnap,
+      referralCodeSelfSnap,
+      phoneSnap,
+      phoneClaims,
+    ] = await Promise.all([
+      db.collection('applications').where('workerUid', '==', uid).get(),
+      db.collection('wallet_ledger').where('uid', '==', uid).get(),
+      db.collection('notifications').where('uid', '==', uid).get(),
+      db.collection('payout_requests').where('uid', '==', uid).get(),
+      db.collection('transactions').where('userId', '==', uid).get(),
+      // Older payment rows were written before `userId` was populated; the address is the
+      // remaining stable link, and the account is being deleted, so catch both shapes.
+      targetEmail ? db.collection('transactions').where('email', '==', targetEmail).get() : Promise.resolve(null),
+      db.collection('email_verifications').where('uid', '==', uid).get(),
+      db.collection('referral_codes').where('uid', '==', uid).get(),
+      db.collection('referrals').where('referrerUid', '==', uid).get(),
+      db.collection('referrals').where('referredUid', '==', uid).get(),
+      targetEmail ? db.collection('admin_sessions').where('email', '==', targetEmail).get() : Promise.resolve(null),
+      db.collection('kyc_records').doc(uid).get(),
+      db.collection('payout_open').doc(uid).get(),
+      db.collection('referrals').doc(uid).get(),
+      profileReferralCode ? db.collection('referral_codes').doc(profileReferralCode).get() : Promise.resolve(null),
+      phoneKey ? db.collection('phone_claims').doc(phoneKey).get() : Promise.resolve(null),
+      db.collection('phone_claims').where('uid', '==', uid).get(),
+    ])
+
+    const redactedAt = new Date().toISOString()
+    const financialRedactions = {
+      email: '[redacted]',
+      name: '[redacted]',
+      accountName: '[redacted]',
+      accountNumber: '[redacted]',
+      bankAccountNumber: '[redacted]',
+      bankName: '[redacted]',
+      bankBranch: '[redacted]',
+      destinationLabel: '[redacted]',
+      redactedAt,
+      redactedBy: opts.actorEmail,
+    }
+
+    // 3. Financial history is evidence, not personal data we need to keep. Delete it when the
+    //    operator asked for that; otherwise keep amounts, statuses and references and remove the
+    //    fields that identify the member.
+    if (opts.eraseLedger) {
+      removed.ledger = await deleteRefsInChunks(db, ledger.docs.map((d) => d.ref))
+      removed.payoutRequests = await deleteRefsInChunks(db, payouts.docs.map((d) => d.ref))
+      removed.transactions = await deleteRefsInChunks(db, [
+        ...transactions.docs.map((d) => d.ref),
+        ...(transactionsByEmail?.docs.map((d) => d.ref) ?? []),
+      ])
+    } else {
+      removed.ledger = await redactRefsInChunks(db, ledger.docs.map((d) => d.ref), {
+        redactedAt,
+        redactedBy: opts.actorEmail,
+        description: '[redacted]',
+        jobTitle: '[redacted]',
+        note: '[redacted]',
+      })
+      removed.payoutRequests = await redactRefsInChunks(db, payouts.docs.map((d) => d.ref), financialRedactions)
+      removed.transactions = await redactRefsInChunks(db, [
+        ...transactions.docs.map((d) => d.ref),
+        ...(transactionsByEmail?.docs.map((d) => d.ref) ?? []),
+      ], {
+        email: '[redacted]',
+        metadata: { redacted: true, redactedAt },
+        redactedAt,
+        redactedBy: opts.actorEmail,
+      })
+    }
+
+    // 4. Non-financial rows carry no reconciliation value for a deleted account.
+    removed.applications = await deleteRefsInChunks(db, apps.docs.map((d) => d.ref))
+    removed.notifications = await deleteRefsInChunks(db, notes.docs.map((d) => d.ref))
+    removed.emailVerifications = await deleteRefsInChunks(db, verifications.docs.map((d) => d.ref))
+    removed.referralCodes = await deleteRefsInChunks(db, [
+      ...referralCodes.docs.map((d) => d.ref),
+      // Only remove the code index if it still points at this uid; a stale profile code must not
+      // delete a code that now belongs to somebody else.
+      ...(referralCodeSelfSnap?.exists && String((referralCodeSelfSnap.data() ?? {}).uid ?? '') === uid
+        ? [referralCodeSelfSnap.ref]
+        : []),
+    ])
+    removed.adminSessions = await deleteRefsInChunks(db, sessions?.docs.map((d) => d.ref) ?? [])
+    removed.referrals = await deleteRefsInChunks(db, [
+      ...referralsAsReferrer.docs.map((d) => d.ref),
+      ...referralsAsReferred.docs.map((d) => d.ref),
+      ...(referralSelfSnap.exists ? [referralSelfSnap.ref] : []),
+    ])
+    removed.kyc = await deleteRefsInChunks(db, kycSnap.exists ? [kycSnap.ref] : [])
+    removed.payoutOpen = await deleteRefsInChunks(db, payoutOpenSnap.exists ? [payoutOpenSnap.ref] : [])
+    // Release the phone claim only after the profile is about to go. Without this the number stays
+    // owned by a uid that no longer exists and can never be registered again.
+    removed.phoneClaims = await deleteRefsInChunks(db, [
+      ...phoneClaims.docs.map((d) => d.ref),
+      ...(phoneSnap?.exists ? [phoneSnap.ref] : []),
+    ])
+
+    // 5. Profile last: if anything above failed, the member still has a profile, so the console
+    //    can retry the erase instead of reporting a 404 for a half-deleted account. recursiveDelete
+    //    also removes any user subcollections the product adds later.
+    if (profile.exists) {
+      await db.recursiveDelete(profileRef)
+      removed.profile = 1
+    }
+
+    invalidateGuardCaches(uid)
     await createAuditEntry(
       'ACCOUNT_HARD_DELETED',
       { uid, removed, eraseLedger: opts.eraseLedger === true, reason: opts.reason.slice(0, 400) },
       opts.actorEmail,
     )
-    return { ok: true, removed, note: opts.eraseLedger ? 'Ledger rows deleted.' : 'Ledger amounts kept with the personal fields redacted.' }
+    const note = opts.eraseLedger
+      ? `Erased ${removed.profile} profile and ${removed.auth} sign-in credential; financial rows deleted.`
+      : `Erased ${removed.profile} profile and ${removed.auth} sign-in credential; financial rows kept with personal fields redacted.`
+    return { ok: true, removed, note }
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error'
     console.error('[FirestoreAdmin] hardDeleteAccount failed:', err)
-    return { ok: false, error: `Deletion stopped part-way: ${message.slice(0, 160)}. Retry or finish it by hand.`, code: 'partial_delete', removed }
+    return {
+      ok: false,
+      error: `Deletion stopped part-way: ${message.slice(0, 160)}. ${describeRemoved(removed)} Retry from the console or finish it by hand.`,
+      code: 'partial_delete',
+      removed,
+    }
   }
+}
+
+/** Firestore's hard limit is 500 writes per batch; 400 leaves room for a retry-safe margin. */
+const DELETE_BATCH_SIZE = 400
+
+function uniqueRefs(refs: DocumentReference[]): DocumentReference[] {
+  return [...new Map(refs.map((ref) => [ref.path, ref])).values()]
+}
+
+async function deleteRefsInChunks(db: Firestore, refs: DocumentReference[]): Promise<number> {
+  const unique = uniqueRefs(refs)
+  let deleted = 0
+  for (let index = 0; index < unique.length; index += DELETE_BATCH_SIZE) {
+    const slice = unique.slice(index, index + DELETE_BATCH_SIZE)
+    const batch = db.batch()
+    for (const ref of slice) batch.delete(ref)
+    await batch.commit()
+    deleted += slice.length
+  }
+  return deleted
+}
+
+async function redactRefsInChunks(
+  db: Firestore,
+  refs: DocumentReference[],
+  patch: Record<string, unknown>,
+): Promise<number> {
+  const unique = uniqueRefs(refs)
+  let redacted = 0
+  for (let index = 0; index < unique.length; index += DELETE_BATCH_SIZE) {
+    const slice = unique.slice(index, index + DELETE_BATCH_SIZE)
+    const batch = db.batch()
+    for (const ref of slice) batch.set(ref, patch, { merge: true })
+    await batch.commit()
+    redacted += slice.length
+  }
+  return redacted
+}
+
+function describeRemoved(removed: Record<string, number>): string {
+  const parts = Object.entries(removed)
+    .filter(([, count]) => count > 0)
+    .map(([key, count]) => `${key}=${count}`)
+  return parts.length > 0 ? `Already removed: ${parts.join(', ')}.` : 'Nothing had been removed yet.'
 }
 
 // ─── Ledger: earnings, withdrawals and payments in one feed ────────────────────

@@ -376,7 +376,7 @@ export async function middleware(request: NextRequest) {
 
   // Tell crawlers not to index private/API routes even if they discover them through links.
   // This is belt-and-suspenders alongside robots.txt (which they should respect first).
-  const NOINDEX_PATHS = /^\/(api|admin|dashboard|profile|applications|referrals|kyc|training|verify-email|forgot-password)(\/|$)/
+  const NOINDEX_PATHS = /^\/(api|admin|dashboard|profile|applications|jobs|referrals|kyc|training|wallet|verify-email|forgot-password)(\/|$)/
   if (NOINDEX_PATHS.test(pathname)) {
     response.headers.set('X-Robots-Tag', 'noindex, nofollow')
   }

@@ -8,9 +8,40 @@
  * handed to the client through `NEXT_PUBLIC_*` — never the other way round.
  */
 
-import { env, envInt, isEmailLike, sanitizeLine } from '@/lib/security-core'
+import { env, envInt, isEmailLike, isProduction, sanitizeLine } from '@/lib/security-core'
 
 export type SiteService = { id: string; label: string; description: string }
+
+/**
+ * Canonical public origin used in metadata, sitemaps and outbound links.
+ *
+ * Falling back to `http://localhost:3000` in a production build silently poisons every canonical
+ * URL and the sitemap (search engines would be told the site lives on localhost). Prefer the
+ * operator's configured origin; refuse a loopback origin in production; and use the known domain
+ * as a last resort rather than publishing a local URL.
+ */
+function publicSiteUrl(): string {
+  const configured = sanitizeLine(
+    env('NEXT_PUBLIC_APP_URL') ||
+      env('APP_URL') ||
+      env('RENDER_EXTERNAL_URL') ||
+      env('VERCEL_URL'),
+    200,
+  ).replace(/\/+$/, '')
+  if (configured) {
+    const withProtocol = /^https?:\/\//i.test(configured) ? configured : `https://${configured}`
+    try {
+      const parsed = new URL(withProtocol)
+      const loopback = ['localhost', '127.0.0.1', '0.0.0.0', '[::1]'].includes(parsed.hostname)
+      if ((parsed.protocol === 'http:' || parsed.protocol === 'https:') && !(isProduction() && loopback)) {
+        return `${parsed.protocol}//${parsed.host}`
+      }
+    } catch {
+      /* fall through to a safe origin */
+    }
+  }
+  return isProduction() ? 'https://afterworks.site' : 'http://localhost:3000'
+}
 
 export const site = {
   name: 'AfterWorks',
@@ -18,7 +49,7 @@ export const site = {
   tagline: 'Real, verified microwork. Paid for work that is checked.',
   description:
     'AfterWorks connects verified workers with paid microwork — transcription, labelling, content review and data entry. Browse the board, verify once, and work when it suits you.',
-  url: sanitizeLine(env('NEXT_PUBLIC_APP_URL') || env('APP_URL') || 'http://localhost:3000', 200).replace(/\/$/, ''),
+  url: publicSiteUrl(),
   supportEmail: (isEmailLike(env('NEXT_PUBLIC_SUPPORT_EMAIL')) ? env('NEXT_PUBLIC_SUPPORT_EMAIL') : 'supportafterworks@gmail.com').trim().toLowerCase(),
   opsEmail: (isEmailLike(env('NEXT_PUBLIC_OPS_EMAIL')) ? env('NEXT_PUBLIC_OPS_EMAIL') : 'payouts@afterworks.io').trim().toLowerCase(),
   pressEmail: 'press@afterworks.io',

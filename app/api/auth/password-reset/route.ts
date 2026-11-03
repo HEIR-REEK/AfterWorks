@@ -90,7 +90,6 @@ export async function POST(req: NextRequest) {
           }
           return fail(status, result.error, {
             code: result.code,
-            attemptsLeft: result.attemptsLeft,
             retryAfterSec: result.retryAfterSec,
             headers: result.retryAfterSec ? { 'Retry-After': String(result.retryAfterSec) } : undefined,
           })

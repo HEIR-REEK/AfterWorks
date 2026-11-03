@@ -14,6 +14,9 @@ import { sanitizeLine } from '@/lib/security-core'
 export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest) {
+  // Staff need the job list to pause and reopen cards. The same payload also carries authored
+  // assessment questions (including `correctIndex`), which is owner-only authoring material: keep
+  // the list for staff but strip the answer key before it leaves the server.
   const guard = await requireAdmin(req)
   if (!guard.ok) return guard.response
   try {
@@ -22,7 +25,11 @@ export async function GET(req: NextRequest) {
       status: req.nextUrl.searchParams.get('status') ?? 'all',
       pageSize: Number(req.nextUrl.searchParams.get('pageSize') ?? 100),
     })
-    return json({ ok: true, jobs, count: jobs.length })
+    const visible =
+      guard.value.role === 'owner'
+        ? jobs
+        : jobs.map((job) => ({ ...job, assessmentQuestions: [] }))
+    return json({ ok: true, jobs: visible, count: visible.length })
   } catch (err) {
     return routeError('admin/jobs:GET', err)
   }
@@ -139,6 +146,11 @@ export async function PATCH(req: NextRequest) {
   const status = String(body.status ?? '')
   if (!jobId) return fail(400, 'A job id is required.', { code: 'missing_id' })
   if (!['open', 'paused', 'closed'].includes(status)) return fail(400, 'Unknown job status.', { code: 'invalid_status' })
+  // Staff may pause and reopen a card (day-to-day ops), but closing it is a business decision that
+  // takes the opportunity away from workers. That stays with the owner, matching the capability table.
+  if (status === 'closed' && guard.value.role !== 'owner') {
+    return fail(403, 'Only the main administrator can close a job card.', { code: 'owner_only' })
+  }
 
   try {
     const firestore = await import('@/lib/firestore-admin')

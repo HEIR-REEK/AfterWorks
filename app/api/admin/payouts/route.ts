@@ -17,10 +17,10 @@ import { WalletError, getPayoutQueueSummary, listPayoutRequests, settlePayoutReq
  * PATCH /api/admin/payouts  — move one request through the payout state machine.
  *
  * Guarded by `requireAdmin`, which is deliberately *not* `requireOwner`: staff run the desk and
- * should be able to approve, send and settle payouts, or mark one failed when M-Pesa bounces it.
- * What keeps that safe is not the role check but the arithmetic — every transition re-reads the
- * member's wallet inside a transaction, so a payout can only debit money that was actually held, and
- * a rejection/failure can only return what is still held.
+ * should be able to approve and process payouts, or mark one failed when M-Pesa bounces it. The
+ * final `paid` transition is owner-only (it debits the held balance); what keeps the rest safe is
+ * the arithmetic — every transition re-reads the member's wallet inside a transaction, so a payout
+ * can only debit money that was actually held, and a rejection/failure can only return what is held.
  *
  * Manual balance edits remain owner-only (`/api/admin/users` action `wallet`); this route never
  * invents a balance, it only settles requests that already exist.
@@ -80,7 +80,11 @@ export async function PATCH(req: NextRequest) {
 
   let body: Record<string, unknown> = {}
   try {
-    body = (await req.json()) as Record<string, unknown>
+    // Bound the body before parsing: an authenticated operator account should not be able to make
+    // the route allocate an arbitrarily large JSON object.
+    const raw = await req.text()
+    if (raw.length > 16_000) return fail(413, 'Payload is too large.', { code: 'payload_too_large' })
+    body = JSON.parse(raw || '{}') as Record<string, unknown>
   } catch {
     return fail(400, 'Send the payout request id and the new status.', { code: 'bad_request' })
   }
@@ -102,6 +106,13 @@ export async function PATCH(req: NextRequest) {
   if (requiresPayoutReference(to) && payoutReference.length < 3) {
     return fail(400, 'Add the provider reference (M-Pesa code or bank reference) before marking this paid.', { code: 'reference_required' })
   }
+  // Staff may queue and process a payout, but only the main administrator may close it as paid:
+  // that transition debits the held balance and is the one place a fraudulent operator could
+  // pocket a member's money by inventing a provider reference. Two-person control on the money
+  // step, one-person speed everywhere else.
+  if (to === 'paid' && guard.value.role !== 'owner') {
+    return fail(403, 'Only the main administrator can mark a payout as paid.', { code: 'owner_only' })
+  }
 
   try {
     const result = await settlePayoutRequest({
@@ -118,7 +129,7 @@ export async function PATCH(req: NextRequest) {
       details: {
         requestId,
         to,
-        from: result.request.status,
+        from: result.fromStatus,
         amountUsd: result.request.amountUsd,
         releasedUsd: result.releasedUsd,
         debitedUsd: result.debitedUsd,

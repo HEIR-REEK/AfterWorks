@@ -166,18 +166,22 @@ export async function requestPasswordReset(input: { email: string; ipHash: strin
 
   const now = Date.now()
   const ref = db.collection(COLLECTION).doc(docId)
+
+  // Count the request against the address budget *before* looking at the challenge, whether or not
+  // the account exists. Otherwise an unknown address never consumes the budget and an attacker can
+  // distinguish it from a real one by hammering the endpoint.
+  registerFailedAttempt(resetKey)
+
   const existing = (await ref.get().catch(() => null))?.data() as ChallengeDoc | undefined
   if (existing && !existing.consumedAt) {
     const sinceLast = now - Date.parse(existing.createdAt)
     if (Number.isFinite(sinceLast) && sinceLast < PASSWORD_RESET_RESEND_COOLDOWN_SEC * 1000) {
-      const wait = Math.ceil((PASSWORD_RESET_RESEND_COOLDOWN_SEC * 1000 - sinceLast) / 1000)
-      return { ok: false, error: `A code was sent moments ago. Check your inbox and spam folder, or try again in ${wait}s.`, code: 'cooldown', retryAfterSec: wait }
+      // A real account with a live code gets the same generic success as an unknown address; it
+      // simply does not receive another mail inside the cooldown. Returning a distinct cooldown
+      // error here was an account-existence oracle.
+      return { ok: true, sent: false, expiresAt: existing.expiresAt, cooldownSec: PASSWORD_RESET_RESEND_COOLDOWN_SEC }
     }
   }
-
-  // Count the request against the address budget whether or not the account exists, so probing
-  // unknown addresses costs the same as hammering a real one.
-  registerFailedAttempt(resetKey)
 
   const target = await firestore.findPasswordResetTarget(email)
   if (!target || target.disabled) {
@@ -197,7 +201,13 @@ export async function requestPasswordReset(input: { email: string; ipHash: strin
     text: passwordResetEmailText({ name: target.name, email: target.email, code: formatCodeForDisplay(code), expiresMinutes: PASSWORD_RESET_CODE_TTL_MINUTES }),
     tag: 'password-reset',
   })
-  if (!sent.ok) return { ok: false, error: sent.error, code: sent.code }
+  if (!sent.ok) {
+    // A provider failure only happens on the real-account branch (unknown addresses never send),
+    // so surfacing it would be an enumeration oracle. Audit it server-side and keep the public
+    // response identical; the member can retry/contact support if the mail never arrives.
+    console.warn('[password-reset] outbound reset mail failed:', sent.code, sent.error)
+    return { ok: true, sent: false, expiresAt: now + PASSWORD_RESET_CODE_TTL_MS, cooldownSec: PASSWORD_RESET_RESEND_COOLDOWN_SEC }
+  }
 
   const doc: ChallengeDoc = {
     jti,
@@ -311,15 +321,15 @@ export async function verifyPasswordResetCode(input: { email: string; code: stri
   switch (outcome.kind) {
     case 'missing':
       registerFailedAttempt(otpKey)
-      return { ok: false, error: 'No active reset for this address. Request a new code.', code: 'missing' }
+      return { ok: false, error: generic, code: 'invalid_code' }
     case 'expired':
-      return { ok: false, error: 'That code has expired. Request a new one.', code: 'expired' }
+      return { ok: false, error: generic, code: 'invalid_code' }
     case 'burned':
-      return { ok: false, error: 'That code was locked after too many wrong attempts. Request a new one.', code: 'burned' }
+      return { ok: false, error: generic, code: 'invalid_code' }
     case 'wrong': {
       registerFailedAttempt(otpKey)
       if (outcome.burned) {
-        return { ok: false, error: 'Too many wrong attempts — that code is now locked. Request a new one.', code: 'burned', attemptsLeft: 0 }
+        return { ok: false, error: generic, code: 'invalid_code' }
       }
       return { ok: false, error: generic, code: 'invalid_code', attemptsLeft: outcome.attemptsLeft }
     }

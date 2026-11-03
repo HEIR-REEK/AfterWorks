@@ -84,6 +84,7 @@ export default function AdminApplicationsPage() {
 
 function ApplicationsPageInner() {
   const session = useAdminSession()
+  const isOwner = session.status === 'authorized' && session.role === 'owner'
   const searchParams = useSearchParams()
   const { push, toasts } = useToasts()
 
@@ -220,7 +221,9 @@ function ApplicationsPageInner() {
         {selectedIds.length > 0 && (
           <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-border bg-secondary/50 px-3 py-2">
             <span className="text-xs font-semibold text-foreground">{selectedIds.length} selected</span>
-            {(['approve', 'approve_qa', 'reject'] as ApplicationAction[]).map((action) => (
+            {(['approve', 'approve_qa', 'reject'] as ApplicationAction[])
+              .filter((action) => action !== 'approve_qa' || isOwner)
+              .map((action) => (
               <Button
                 key={action}
                 size="sm"
@@ -251,7 +254,9 @@ function ApplicationsPageInner() {
             </div>
           ) : (
             rows.map((row) => {
-              const actions = ACTIONS_BY_STATUS[row.status] ?? []
+              const actions = (ACTIONS_BY_STATUS[row.status] ?? []).filter(
+                (entry) => entry.action !== 'approve_qa' || isOwner,
+              )
               const isOpen = expanded === row.id
               return (
                 <article key={row.id} className={cn('rounded-xl border p-3 transition-colors', row.overdue ? 'border-warning/50 bg-warning/[0.06]' : 'border-border/80 bg-card', isOpen && 'shadow-sm')}>

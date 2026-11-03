@@ -9,7 +9,7 @@
  * The API key is server-only. A missing key fails closed: we do not pretend the mail was sent.
  */
 
-import { env, isEmailLike, isProduction, sanitizeLine } from '@/lib/security-core'
+import { env, envInt, isEmailLike, isProduction, sanitizeLine } from '@/lib/security-core'
 import { site } from '@/lib/site'
 import { EMAIL_BRAND_LOGO_HTML, prepareEmailBranding } from '@/lib/email-brand'
 
@@ -28,6 +28,40 @@ export type SendEmailResult =
   | { ok: false; error: string; code: string; status?: number }
 
 const RESEND_ENDPOINT = 'https://api.resend.com/emails'
+
+/**
+ * A slow or hanging Resend call used to hold a request (and a Next worker slot) open for as long as
+ * the upstream socket stayed alive. Every send now has a hard timeout and a process-wide concurrency
+ * + per-minute cap, so a burst of signups cannot exhaust the server's outbound capacity.
+ */
+type EmailThrottle = { inFlight: number; windowStartedAt: number; windowCount: number }
+const emailThrottle = globalThis as unknown as { __awEmailThrottle?: EmailThrottle }
+function emailState(): EmailThrottle {
+  if (!emailThrottle.__awEmailThrottle) {
+    emailThrottle.__awEmailThrottle = { inFlight: 0, windowStartedAt: Date.now(), windowCount: 0 }
+  }
+  return emailThrottle.__awEmailThrottle
+}
+function acquireEmailSlot(): { ok: true } | { ok: false; error: string; code: string } {
+  const state = emailState()
+  const now = Date.now()
+  if (now - state.windowStartedAt >= 60_000) {
+    state.windowStartedAt = now
+    state.windowCount = 0
+  }
+  const maxInFlight = Math.max(1, envInt('EMAIL_MAX_CONCURRENT', 4))
+  const maxPerMinute = Math.max(1, envInt('EMAIL_MAX_PER_MINUTE', 60))
+  if (state.inFlight >= maxInFlight || state.windowCount >= maxPerMinute) {
+    return { ok: false, error: 'The email service is busy. Please try again in a minute.', code: 'email_busy' }
+  }
+  state.inFlight += 1
+  state.windowCount += 1
+  return { ok: true }
+}
+function releaseEmailSlot(): void {
+  const state = emailState()
+  state.inFlight = Math.max(0, state.inFlight - 1)
+}
 
 /** Resend's onboarding sender — works without a verified domain, for local/preview only. */
 const RESEND_TEST_FROM = 'AfterWorks <beth.t@example.com>'
@@ -135,6 +169,9 @@ export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult>
   if (isEmailLike(replyTo)) payload.reply_to = replyTo
   if (input.tag) payload.tags = [{ name: 'category', value: sanitizeLine(input.tag, 40) }]
 
+  const slot = acquireEmailSlot()
+  if (!slot.ok) return { ok: false, error: slot.error, code: slot.code }
+
   try {
     const res = await fetch(RESEND_ENDPOINT, {
       method: 'POST',
@@ -145,6 +182,7 @@ export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult>
       },
       body: JSON.stringify(payload),
       cache: 'no-store',
+      signal: AbortSignal.timeout(Math.max(2_000, envInt('EMAIL_TIMEOUT_MS', 8_000))),
     })
     const body = (await res.json().catch(() => null)) as
       | { id?: string; message?: string; name?: string; statusCode?: number }
@@ -170,6 +208,8 @@ export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult>
       error: 'The email service is unreachable. Please try again shortly.',
       code: 'email_unreachable',
     }
+  } finally {
+    releaseEmailSlot()
   }
 }
 

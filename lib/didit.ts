@@ -153,28 +153,18 @@ export async function createKycSession(
   const missingKey = !DIDIT_API_KEY || DIDIT_API_KEY.startsWith('your_')
   const missingWorkflow = !DIDIT_WORKFLOW_ID || DIDIT_WORKFLOW_ID.startsWith('your_')
 
+  // Identity verification must never fall back to a self-asserted "demo" session. A demo
+  // session previously rendered an Approved result, which meant a missing environment variable
+  // silently turned KYC into a no-op. Fail loudly instead: the health check already reports the
+  // degraded state, and the member is told verification is unavailable rather than being
+  // marked verified without a document.
+  if (missingKey || missingWorkflow) {
+    throw new Error('Didit is not configured: DIDIT_API_KEY and DIDIT_WORKFLOW_ID are required.')
+  }
+
   const baseCbUrl = getCallbackUrl(origin)
   // Include device type so the callback page can render the correct UI branch
   const cbUrl = isMobile ? `${baseCbUrl}?device=mobile` : `${baseCbUrl}?device=cross_device`
-
-  // ── Demo / development fallback ───────────────────────────────────────────
-  if (missingKey || missingWorkflow) {
-    console.warn(
-      '[Didit] API Key or Workflow ID not configured — generating a DEMO session. ' +
-        'This should never happen in production.',
-    )
-    const mockSessionId = `demo_session_${Date.now()}`
-    const mockToken = `demo_token_${Date.now()}`
-    const verificationUrl = `${cbUrl}&session_id=${mockSessionId}&vendor_data=${encodeURIComponent(userId)}&status=Approved`
-
-    return {
-      session_id: mockSessionId,
-      session_token: mockToken,
-      verification_url: verificationUrl,
-      status: 'Pending',
-      is_demo: true,
-    }
-  }
 
   // ── Real Didit API call ───────────────────────────────────────────────────
   const response = await fetch(`${DIDIT_BASE_URL}/v3/session/`, {
@@ -183,6 +173,7 @@ export async function createKycSession(
       'x-api-key': DIDIT_API_KEY,
       'Content-Type': 'application/json',
     },
+    signal: AbortSignal.timeout(10_000),
     body: JSON.stringify({
       workflow_id: DIDIT_WORKFLOW_ID,
       vendor_data: userId,      // Ties the session to your Firebase UID
@@ -230,6 +221,12 @@ export type KycStatusResult = {
   rejection_reason?: string
   /** Which document / liveness checks failed, if available. */
   failed_checks?: string[]
+  /**
+   * The Firebase uid this session was opened for (`vendor_data`). The status endpoint must
+   * compare this with the authenticated caller before it writes any verification result: a
+   * session id is not a bearer credential for somebody else's identity check.
+   */
+  vendor_data: string
   /** Full raw payload returned from Didit (for debugging). */
   raw: Record<string, unknown>
 }
@@ -241,23 +238,13 @@ export type KycStatusResult = {
  * Falls back to /v3/session/{id}/ if the decision endpoint returns 404.
  */
 export async function getKycSessionStatus(sessionId: string): Promise<KycStatusResult> {
-  // ── Demo session shortcut ─────────────────────────────────────────────────
-  if (sessionId.startsWith('demo_session_')) {
-    return {
-      session_id: sessionId,
-      status: 'Approved',
-      raw_status: 'Approved',
-      is_approved: true,
-      is_rejected: false,
-      is_expired: false,
-      is_abandoned: false,
-      is_on_hold: false,
-      needs_resubmission: false,
-      raw: { session_id: sessionId, status: 'Approved' },
-    }
-  }
-
   if (!DIDIT_API_KEY) throw new Error('DIDIT_API_KEY is not configured.')
+
+  // A session id is never sufficient proof on its own. Reject the old demo namespace
+  // explicitly so a stale client or a crafted query cannot resurrect the approval shortcut.
+  if (!sessionId || sessionId.startsWith('demo_session_') || sessionId.startsWith('demo_token_')) {
+    throw new Error('Unknown identity-verification session.')
+  }
 
   // Try the decision endpoint first (most authoritative for completed sessions)
   let response = await fetch(`${DIDIT_BASE_URL}/v3/session/${sessionId}/decision/`, {
@@ -267,6 +254,7 @@ export async function getKycSessionStatus(sessionId: string): Promise<KycStatusR
       'Content-Type': 'application/json',
     },
     cache: 'no-store',
+    signal: AbortSignal.timeout(10_000),
   })
 
   // Fallback for sessions that haven't reached a decision yet
@@ -278,6 +266,7 @@ export async function getKycSessionStatus(sessionId: string): Promise<KycStatusR
         'Content-Type': 'application/json',
       },
       cache: 'no-store',
+      signal: AbortSignal.timeout(10_000),
     })
   }
 
@@ -305,8 +294,24 @@ export async function getKycSessionStatus(sessionId: string): Promise<KycStatusR
     needs_resubmission: status === 'Resubmission',
     rejection_reason: extractRejectionReason(data),
     failed_checks,
+    vendor_data: extractVendorData(data),
     raw: data,
   }
+}
+
+/** Didit has shipped both camelCase and nested metadata shapes; accept the known spellings. */
+function extractVendorData(data: Record<string, unknown>): string {
+  const candidates = [
+    data.vendor_data,
+    data.vendorData,
+    (data.metadata as Record<string, unknown> | undefined)?.vendor_data,
+    (data.metadata as Record<string, unknown> | undefined)?.vendorData,
+    (data.session as Record<string, unknown> | undefined)?.vendor_data,
+  ]
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim()) return candidate.trim()
+  }
+  return ''
 }
 
 /** Extracts a human-readable rejection reason from the Didit payload, if present. */

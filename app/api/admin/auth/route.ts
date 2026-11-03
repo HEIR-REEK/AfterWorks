@@ -12,7 +12,7 @@ import {
   verifyPasscode,
 } from '@/lib/security'
 import { env, envBool, envInt, isEmailLike, isProduction, parseEmailList, NO_STORE_HEADERS } from '@/lib/security-core'
-import { audit, consumeBucket, fail, json, requestContext, type AdminRole } from '@/lib/guards'
+import { audit, consumeBucket, fail, json, requestContext, resolveAdmin, type AdminRole } from '@/lib/guards'
 
 /**
  * POST /api/admin/auth — the only door into the operations console.
@@ -112,8 +112,7 @@ export async function POST(req: NextRequest) {
   //   • staff  — an `admin_accounts` entry created by the owner in the console, with an
   //              individual password the owner chose. A worker account with the same email is
   //              unaffected: this password opens the console only, never the worker app.
-  //   • legacy — a pre-role-split `users.isAdmin` grant; still uses the master passcode but
-  //              only ever gets staff-level authority.
+  // There is no third path: `users.isAdmin` is a label, not a credential.
   const roster = parseEmailList(env('ADMIN_EMAILS'))
   let role: AdminRole | null = null
   let credential: 'master' | 'staff-account' = 'master'
@@ -138,16 +137,12 @@ export async function POST(req: NextRequest) {
         role = account.role === 'owner' ? 'owner' : 'staff'
         credential = 'staff-account'
         passcodeOk = verifyPasscode(account.passcodeHash, passcode)
-      } else if (await firestore.checkUserAdminRoleAdmin(email)) {
-        // Legacy role grant without a managed staff account.
-        role = 'staff'
-        if (cfg.passcode.source === 'none') {
-          return fail(503, 'No admin passcode is configured. Sign in with a staff Firebase account instead.', {
-            code: 'passcode_unconfigured',
-          })
-        }
-        passcodeOk = verifyPasscode(cfg.passcode.value, passcode)
       }
+      // No `users.isAdmin` fallback. That flag is a profile label an operator can set from the
+      // Users drawer (and the signup document used to carry), so treating it as a console
+      // credential was a privilege-escalation path: a member could be flagged, or flag themselves
+      // in older rules, then use the shared master passcode. Console roles come from ADMIN_EMAILS
+      // or an active admin_accounts entry only.
     } catch (err) {
       console.warn('[admin/auth] account lookup failed:', err)
     }
@@ -241,20 +236,10 @@ export async function POST(req: NextRequest) {
   // Clear the legacy cookie the previous client wrote (it was readable by JS).
   response.cookies.set('afterworks_admin_session', '', { httpOnly: true, secure, path: '/', maxAge: 0 })
 
-  // Keep the `admin` custom claim in sync so firestore.rules can trust the token rather than
-  // paying a document read on every request.
-  if (envBool('ADMIN_SYNC_CUSTOM_CLAIM', true)) {
-    try {
-      const { isFirebaseAdminUsable } = await import('@/lib/firestore-admin')
-      if (isFirebaseAdminUsable()) {
-        const { setUserAdminFlagByEmail } = await import('@/lib/firestore-admin')
-        await setUserAdminFlagByEmail(email, true, email)
-      }
-    } catch (err) {
-      console.warn('[admin/auth] custom claim sync skipped:', err)
-    }
-  }
-
+  // No custom-claim sync here. `admin` is not a Firestore credential any more: the rules do not
+  // trust it, and minting it from a mutable profile email was a privilege-escalation path. Console
+  // authority is the HttpOnly session cookie, re-resolved against ADMIN_EMAILS/admin_accounts on
+  // every request.
   for (const [key, value] of Object.entries(NO_STORE_HEADERS)) response.headers.set(key, value)
   return response
 }
@@ -263,14 +248,22 @@ export async function POST(req: NextRequest) {
  * GET /api/admin/auth — capability probe. The sign-in screen asks this before it renders, so a
  * misconfigured deployment shows "console unavailable" instead of a form that can never work.
  */
-export async function GET() {
+export async function GET(req: NextRequest) {
   const cfg = getSecurityConfig()
-  return json({
+  // The sign-in screen is anonymous, so it may only learn whether the door exists. Lockout
+  // thresholds, session TTL and deployment mode are useful reconnaissance and are only returned
+  // once the caller has a valid console session.
+  const publicCapabilities = {
     ok: true,
     consoleEnabled: cfg.secretReady,
     passcodeEnabled: cfg.passcode.source !== 'none',
-    passcodeSource: cfg.passcode.source,
     rosterConfigured: cfg.adminEmails.length > 0,
+  }
+  const admin = await resolveAdmin(req)
+  if (!admin) return json(publicCapabilities)
+  return json({
+    ...publicCapabilities,
+    passcodeSource: cfg.passcode.source,
     lockoutThreshold: cfg.lockoutThreshold,
     lockoutMinutes: Math.round(cfg.lockoutMs / 60_000),
     sessionMinutes: Math.round(cfg.sessionTtlMs / 60_000),

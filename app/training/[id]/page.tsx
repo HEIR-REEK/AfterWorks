@@ -646,7 +646,7 @@ function TrainingPageInner({ params }: { params: Promise<{ id: string }> }) {
                   </p>
                   <TrainingNotesPreview job={job} />
                 </div>
-                <AssessmentQuiz category={job.category} onPass={handleApplyAfterTraining} customQuestions={job.assessmentQuestions} />
+                <AssessmentQuiz category={job.category} jobId={job.id} onPass={handleApplyAfterTraining} />
                 {applyError && (
                   <p className="text-center text-xs text-destructive">{applyError}</p>
                 )}
@@ -728,7 +728,7 @@ function TrainingPageInner({ params }: { params: Promise<{ id: string }> }) {
                   <p className="text-xs text-muted-foreground">
                     Training complete — answer the assessment below to apply for this job card.
                   </p>
-                  <AssessmentQuiz category={job.category} onPass={handleApplyAfterTraining} customQuestions={job.assessmentQuestions} />
+                  <AssessmentQuiz category={job.category} jobId={job.id} onPass={handleApplyAfterTraining} />
                   {applyError && (
                     <p className="mt-4 text-center text-sm font-medium text-destructive bg-destructive/10 p-3 rounded-lg">{applyError}</p>
                   )}

@@ -165,7 +165,8 @@ test('the admin write path keeps safe figures and explanations, and drops unsafe
 })
 
 test('the built-in assessment carries figures and explanations that match the course', () => {
-  const quiz = readFileSync(join(ROOT, 'components/assessment-quiz.tsx'), 'utf8')
+  // The bank is server-only now: the browser receives questions without the answer key.
+  const quiz = readFileSync(join(ROOT, 'lib/assessment-bank.ts'), 'utf8')
   const figures = [...quiz.matchAll(/img:\s*'(\/training\/[^']+)'/g)].map((match) => match[1]!)
   assert.ok(figures.length >= 6, 'each category should have at least one question figure')
   for (const figure of figures) {

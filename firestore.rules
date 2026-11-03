@@ -10,10 +10,10 @@ rules_version = '2';
 //      wallet balances, job slots, maintenance switch, audit ledger — is written by the
 //      Admin SDK inside /api/* routes, which bypass rules. That gives us one validated,
 //      rate-limited, audited entry point per mutation instead of five.
-//   3. Administrator identity comes from a **custom claim** on the ID token, not from a
-//      document read and not from an email list. The previous rules hard-coded staff email
-//      addresses (published to the world, since rules are downloadable, and a PII leak on
-//      their own) and paid two `get()` reads per request; a claim is free and instant.
+//   3. The rules trust no administrator claim, profile label or email list. Console authority
+//      is a signed HttpOnly cookie that `/api/admin/*` re-resolves against the server-owned
+//      roster/staff collection on every request. (An earlier version trusted a custom claim;
+//      minting it from a mutable profile email turned a member profile into a console credential.)
 //   4. Self-service profile writes are allowed, but only for non-privileged fields, and an
 //      account can never create or promote itself.
 //
@@ -32,11 +32,9 @@ service cloud.firestore {
       return signedIn() && request.auth.uid == userId;
     }
 
-    // Minted by the Admin SDK when a staff account is verified (see lib/firestore-admin
-    // #syncAdminClaimForUid). No document read, so it costs nothing on hot paths.
-    function isStaff() {
-      return signedIn() && request.auth.token.admin == true;
-    }
+    // There is deliberately no `isStaff()` custom-claim helper here. Console operators use the
+    // Admin SDK through /api/admin/*, not the browser SDK, and a custom claim minted onto a
+    // member account was an escalation path. Every privileged read/write below is server-only.
 
     // Fields a member may never set or change about their own account. This is the list that
     // used to make "grant yourself admin" and "mark your work as completed" possible from the
@@ -52,15 +50,23 @@ service cloud.firestore {
     function privilegedKeys() {
       return ['role', 'isAdmin', 'kycVerified', 'kycStatus', 'kycVerifiedAt', 'kycRejectedAt',
               'kycOnHoldAt', 'kycProvider', 'kycLevel', 'kycRejectionReason', 'kycFailedChecks',
-              'accountState', 'qualityScore', 'jobsCompleted', 'wallet', 'paidTrainings',
+              'accountState', 'qualityScore', 'jobsCompleted', 'wallet', 'paidTrainings', 'assessmentPasses',
               'moderationReason', 'deletedAt', 'lastModifiedBy', 'phoneVerified', 'identityHash',
               'emailVerified', 'emailVerifiedAt', 'phoneKey', 'referralCode', 'referralCodeCreatedAt',
               'termsAcceptedAt', 'termsVersion', 'privacyAcceptedAt', 'privacyVersion',
-              'termsAcceptedEmail'];
+              'termsAcceptedEmail',
+              // The display number must move with `phoneKey`. Letting the browser write `phone` on
+              // its own let it point at a number another account had already claimed (the server's
+              // uniqueness transaction only sees the canonical key).
+              'phone', 'phoneCountry'];
     }
 
     function touchesPrivilegedKeys() {
       return request.resource.data.diff(resource.data).affectedKeys().hasAny(privilegedKeys());
+    }
+
+    function changesOnlyEmail() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['email']);
     }
 
     function onlySafeKeys(maxKeys) {
@@ -69,43 +75,84 @@ service cloud.firestore {
 
     // ── Members ─────────────────────────────────────────────────────────────
     match /users/{userId} {
-      allow get: if isSelf(userId) || isStaff();
+      allow get: if isSelf(userId);
       // The directory is not browsable: an unauthenticated or ordinary member listing /users
       // previously returned every profile in the system (names, emails, payout numbers).
-      allow list: if isStaff();
+      allow list: if false;
 
       // Sign-up bootstrap: an account may create its own document, but only in the inert state.
       allow create: if isSelf(userId)
         && request.resource.data.role == 'user'
         && request.resource.data.isAdmin == false
         && request.resource.data.kycVerified == false
-        && request.resource.data.get('emailVerified', false) == false
+        // A Google sign-up arrives with the address already proven by the provider; email sign-up
+        // must start unverified. Nothing else may claim a verified inbox at create time.
+        && (request.resource.data.get('emailVerified', false) == false
+            || request.auth.token.email_verified == true)
         && request.resource.data.accountState == 'active'
         && request.resource.data.wallet.pendingUsd == 0
         && request.resource.data.wallet.availableUsd == 0
         && request.resource.data.get('wallet', {}).get('payoutHoldUsd', 0) == 0
         && request.resource.data.get('signupBonusGranted', false) == false
+        // The profile email is not a free-text label: it is used by support lookups and was once
+        // used to mint an admin claim. It must be the address Firebase proved for this token.
+        && request.auth.token.email != null
+        && request.resource.data.email.lower() == request.auth.token.email.lower()
+        // The create rule used to allow fields that the update rule correctly calls privileged.
+        // A signup could therefore seed paid-training entitlement, a phone claim, a referral code
+        // or a fabricated terms acceptance before the account had done anything.
+        && request.resource.data.get('paidTrainings', []).size() == 0
+        && request.resource.data.get('assessmentPasses', []).size() == 0
+        && request.resource.data.get('phoneKey', '') == ''
+        && request.resource.data.get('phone', '') == ''
+        && request.resource.data.get('phoneCountry', '') == ''
+        && request.resource.data.get('referralCode', '') == ''
+        && request.resource.data.get('termsAcceptedAt', null) == null
+        && request.resource.data.get('privacyAcceptedAt', null) == null
+        // Google sign-up may create the profile with the address already proven by Google.
+        && (request.resource.data.get('emailVerifiedAt', null) == null
+            || (request.resource.data.get('emailVerified', false) == true
+                && request.auth.token.email_verified == true))
+        && request.resource.data.get('phoneVerified', false) == false
+        && request.resource.data.get('deletedAt', null) == null
+        && request.resource.data.get('moderationReason', '') == ''
+        && request.resource.data.get('lastModifiedBy', '') == ''
+        && request.resource.data.get('identityHash', '') == ''
+        && request.resource.data.get('qualityScore', 100) == 100
+        && request.resource.data.get('jobsCompleted', 0) == 0
         && request.resource.data.keys().size() <= 40;
 
       // Profile editing stays client-side (it is the worker's own copy), but privilege and money
       // fields are off-limits, the document cannot be grown without bound, and the inbox must
       // already be proven (`email_verified` on the ID token, set only after the Resend link).
-      allow update: if (isSelf(userId) && request.auth.token.email_verified == true
-                        && !touchesPrivilegedKeys() && onlySafeKeys(90))
-                    || isStaff();
-      allow delete: if isStaff();
+      allow update: if isSelf(userId)
+                        && request.auth.token.email_verified == true
+                        && !touchesPrivilegedKeys()
+                        && onlySafeKeys(90)
+                        // The profile email is an identity field. It may stay as it is, or be
+                        // changed to the address Firebase has already verified for this token —
+                        // never to an arbitrary address that another account/console looks up.
+                        // Changing the identity address is allowed only as an email-only write to
+                        // the address Firebase has already verified for this token. A profile save
+                        // that quietly swaps the email alongside other fields is rejected.
+                        && (request.resource.data.email.lower() == resource.data.email.lower()
+                            || (request.auth.token.email != null
+                                && request.resource.data.email.lower() == request.auth.token.email.lower()
+                                && changesOnlyEmail()));
+      allow delete: if false;
     }
 
-    // ── KYC (server-written; readable by its subject and staff) ─────────────
+    // ── KYC (server-written; readable by its subject; staff read via Admin SDK) ──
     match /kyc_records/{userId} {
-      allow read: if isSelf(userId) || isStaff();
+      allow read: if isSelf(userId);
       allow write: if false;
     }
 
     // ── Public maintenance notice ────────────────────────────────────────────
     // Readable by anyone, including unauthenticated edge traffic and uptime probes: the middleware
-    // gate and the /status page both read this same document. It is copy, not configuration secrets —
-    // the bypass list is deliberately NOT part of the public projection returned by /api/maintenance.
+    // gate and the /status page both read this public document. It contains copy and timing only.
+    // The bypass roster lives in `system/maintenance_bypass` (denied by the `system/{doc}` rule
+    // below) and is read with the Admin SDK only, so member/staff emails are not world-readable.
     match /system/maintenance {
       allow read: if true;
       allow write: if false;
@@ -118,17 +165,16 @@ service cloud.firestore {
 
     // ── Jobs catalogue ───────────────────────────────────────────────────────
     match /jobs/{jobId} {
-      allow read: if signedIn() || isStaff();
+      allow read: if signedIn();
       allow write: if false; // via PUT/PATCH/DELETE /api/admin/jobs
     }
 
     // ── Worker applications ──────────────────────────────────────────────────
     match /applications/{appId} {
-      allow get: if signedIn() && (resource.data.workerUid == request.auth.uid || isStaff());
-      allow list: if isStaff() ||
-                  (signedIn() && request.query.limit <= 100
+      allow get: if signedIn() && resource.data.workerUid == request.auth.uid;
+      allow list: if signedIn() && request.query.limit <= 100
                    && request.query.where.queryFilters.size() > 0
-                   && request.query.where.queryFilters[0].value == request.auth.uid);
+                   && request.query.where.queryFilters[0].value == request.auth.uid;
       // Applying is a POST to /api/applications (transaction-checked: KYC, slots, duplicates).
       // QA decisions and withdrawals are equally server-only.
       allow create, update, delete: if false;
@@ -136,12 +182,12 @@ service cloud.firestore {
 
     // ── Payments ─────────────────────────────────────────────────────────────
     match /transactions/{txId} {
-      allow read: if isStaff() || (signedIn() && resource.data.userId == request.auth.uid);
+      allow read: if signedIn() && resource.data.userId == request.auth.uid;
       allow write: if false; // written by verified Paystack webhook/callback only
     }
 
     match /wallet_ledger/{entryId} {
-      allow read: if isStaff() || (signedIn() && resource.data.uid == request.auth.uid);
+      allow read: if signedIn() && resource.data.uid == request.auth.uid;
       allow write: if false;
     }
 
@@ -151,7 +197,7 @@ service cloud.firestore {
     // `POST /api/payouts` (KYC + balance + destination + one-at-a-time all re-checked in a
     // transaction), settling one is `/api/admin/payouts`, cancelling is `PATCH /api/payouts`.
     match /payout_requests/{requestId} {
-      allow read: if isStaff() || (signedIn() && resource.data.uid == request.auth.uid);
+      allow read: if signedIn() && resource.data.uid == request.auth.uid;
       allow write: if false;
     }
 
@@ -159,7 +205,7 @@ service cloud.firestore {
     // two taps cannot open two payouts against the same balance; it is written and deleted only
     // inside the payout transactions.
     match /payout_open/{userId} {
-      allow read: if isStaff() || isSelf(userId);
+      allow read: if isSelf(userId);
       allow write: if false;
     }
 
@@ -194,7 +240,7 @@ service cloud.firestore {
 
     // ── Worker notifications ─────────────────────────────────────────────────
     match /notifications/{noteId} {
-      allow read: if isStaff() || (signedIn() && resource.data.uid == request.auth.uid);
+      allow read: if signedIn() && resource.data.uid == request.auth.uid;
       // The only client-side write allowed: marking one's own notification as read.
       allow update: if signedIn()
                     && resource.data.uid == request.auth.uid
@@ -206,7 +252,7 @@ service cloud.firestore {
     // Previously any signed-in user could append *and* delete entries, which made it a suggestion
     // box rather than a ledger.
     match /admin_logs/{logId} {
-      allow read: if isStaff();
+      allow read: if false;
       allow write: if false;
     }
 

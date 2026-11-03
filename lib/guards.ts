@@ -45,8 +45,9 @@ import { bearerAdminPrincipal } from '@/lib/admin-domain'
  *
  *  • `owner` — the main administrator: the env roster (ADMIN_EMAILS) plus the shared master
  *    passcode. Full authority over the console and the site configuration.
- *  • `staff` — a limited operator: an `admin_accounts` entry with an individual password set by
- *    the owner (or a legacy `users.isAdmin` grant). Day-to-day operations only.
+ *  • `staff` — a limited operator: an active `admin_accounts` entry with an individual password
+ *    set by the owner. A `users.isAdmin` profile label is not a credential and is never consulted.
+ *    Day-to-day operations only.
  */
 export type AdminRole = 'owner' | 'staff'
 
@@ -197,8 +198,12 @@ function isAuthRoute(pathname: string): boolean {
  *  1. `ADMIN_EMAILS` env roster        → `owner`  (the main administrator; master passcode)
  *  2. active `admin_accounts` document → the role stored on it (staff accounts the owner created
  *     in the console, each with its own password)
- *  3. legacy `users.isAdmin` grant     → `staff`  (pre-role-split grants keep working, limited)
- *  4. anything else                    → `null`   (no console access)
+ *  3. anything else                    → `null`   (no console access)
+ *
+ * There is deliberately no `users.isAdmin` fallback. That flag is written onto member documents
+ * (and used as a UI hint), so trusting it would let any member who ever logged into the console
+ * keep a staff role after the staff account was disabled or deleted. Console authority comes only
+ * from the roster or an active staff account, both of which the owner controls.
  */
 export async function resolveAdminRole(email: string): Promise<AdminRole | null> {
   const clean = email.trim().toLowerCase()
@@ -216,11 +221,6 @@ export async function resolveAdminRole(email: string): Promise<AdminRole | null>
     try {
       const firestore = await import('@/lib/firestore-admin')
       role = await firestore.getAdminAccountRole(clean)
-      if (!role) {
-        // Legacy grants (issued before staff accounts existed) still open the console, but only
-        // with the shared passcode and only with staff-level authority.
-        role = (await firestore.checkUserAdminRoleAdmin(clean)) ? 'staff' : null
-      }
     } catch (err) {
       console.warn('[guard] Firestore role lookup failed; denying privilege escalation:', err)
       role = null
@@ -287,12 +287,13 @@ export async function resolveAdmin(req: NextRequest): Promise<AdminPrincipal | n
     }
   }
 
-  // 2) Firebase ID token with a resolvable console role — used by tooling that already has an
-  //    operator identity. The `admin` custom claim is deliberately *not* sufficient on its own:
-  //    it is minted onto member accounts (and trusted by firestore.rules), so a bare claim would
-  //    turn an ordinary worker session into a passcode-free administration credential. See
-  //    `bearerAdminPrincipal` in `lib/admin-domain.ts`.
+  // 2) Firebase ID token with a resolvable console role — off by default. A Firebase session is
+  //    not a console session: enabling this path lets anyone who controls the Firebase account of
+  //    an ADMIN_EMAILS address skip the master passcode (which is exactly how a staff member could
+  //    turn a temporary password into owner access). Set ALLOW_ADMIN_BEARER_AUTH=true only for a
+  //    dedicated tooling deployment that has its own network controls.
   const authHeader = req.headers.get('authorization') || ''
+  if (!envBool('ALLOW_ADMIN_BEARER_AUTH', false)) return null
   const bearer = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : ''
   if (bearer) {
     try {
@@ -368,9 +369,9 @@ export async function requireUser(req: NextRequest): Promise<GuardResult<UserPri
       return { ok: false, response: fail(401, 'Your session expired. Please sign in again.', { code: 'auth_invalid' }) }
     }
     const email = (decoded.email || '').toLowerCase()
-    // The `admin` claim is deliberately not accepted on its own here either — it is minted onto
-    // member documents (and trusted by firestore.rules), so it is a UI hint, not a credential. Only
-    // the role table answers "is this person staff?". See `bearerAdminPrincipal`.
+    // The `admin` claim is deliberately not accepted on its own here either — it was minted onto
+    // member documents and is now ignored by firestore.rules, so it is a UI hint, not a credential.
+    // Only the server-owned role table answers "is this person staff?". See `bearerAdminPrincipal`.
     return {
       ok: true,
       value: {

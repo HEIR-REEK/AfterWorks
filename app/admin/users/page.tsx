@@ -536,7 +536,7 @@ function UsersPageInner() {
                     {selected.role === 'admin' ? 'Revoke staff' : 'Make staff'}
                   </Button>
                 )}
-                {(isOwner || selected.welcomeBonusPending === true) && !selected.signupBonusGranted ? (
+                {isOwner && !selected.signupBonusGranted ? (
                   <Button
                     size="sm"
                     variant="outline"
@@ -692,8 +692,14 @@ function UsersPageInner() {
               const eraseLedger = (document.getElementById('erase-ledger') as HTMLInputElement | null)?.checked === true
               return act({ ...base, action: 'erase', payload: { confirm: typed, eraseLedger } })
             }
-            case 'grant-bonus':
-              return act({ ...base, action: 'grant-welcome-bonus', payload: {} })
+            case 'grant-bonus': {
+              const confirmPasscode = (document.getElementById('bonus-passcode') as HTMLInputElement | null)?.value ?? ''
+              if (!confirmPasscode) {
+                push('error', 'Re-enter the owner passcode to grant the welcome reward.')
+                return undefined
+              }
+              return act({ ...base, action: 'grant-welcome-bonus', payload: { confirmPasscode } })
+            }
             case 'role':
               return act({ ...base, action: 'role', payload: { isAdmin: selected.role !== 'admin', email: selected.email } })
             case 'wallet': {
@@ -703,7 +709,16 @@ function UsersPageInner() {
                 push('error', 'Enter both balances as numbers.')
                 return undefined
               }
-              return act({ ...base, action: 'wallet', payload: { pendingUsd: pending, availableUsd: available } })
+              const confirmPasscode = (document.getElementById('adj-passcode') as HTMLInputElement | null)?.value ?? ''
+              if (!confirmPasscode) {
+                push('error', 'Re-enter the owner passcode to change a balance.')
+                return undefined
+              }
+              return act({
+                ...base,
+                action: 'wallet',
+                payload: { pendingUsd: pending, availableUsd: available, confirmPasscode },
+              })
             }
             default:
               return undefined
@@ -725,13 +740,42 @@ function UsersPageInner() {
                 </span>
               </label>
             </div>
-          ) : confirm?.action === 'wallet' && selected ? (
-            <div className="mt-3 grid grid-cols-2 gap-3">
-              <Field label="Pending (USD)">
-                <input id="adj-pending" type="number" step="0.01" min="0" defaultValue={selected.wallet.pendingUsd} className={inputClass} />
+          ) : confirm?.action === 'grant-bonus' && selected ? (
+            <div className="mt-3">
+              <Field
+                label="Owner passcode"
+                hint="Required for every balance mint, including the welcome reward."
+              >
+                <input
+                  id="bonus-passcode"
+                  type="password"
+                  autoComplete="current-password"
+                  className={inputClass}
+                  placeholder="Re-enter the master passcode"
+                />
               </Field>
-              <Field label="Available (USD)">
-                <input id="adj-available" type="number" step="0.01" min="0" defaultValue={selected.wallet.availableUsd} className={inputClass} />
+            </div>
+          ) : confirm?.action === 'wallet' && selected ? (
+            <div className="mt-3 flex flex-col gap-3">
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Pending (USD)">
+                  <input id="adj-pending" type="number" step="0.01" min="0" defaultValue={selected.wallet.pendingUsd} className={inputClass} />
+                </Field>
+                <Field label="Available (USD)">
+                  <input id="adj-available" type="number" step="0.01" min="0" defaultValue={selected.wallet.availableUsd} className={inputClass} />
+                </Field>
+              </div>
+              <Field
+                label="Owner passcode"
+                hint="Required again for every balance change. A copied console cookie cannot move money on its own."
+              >
+                <input
+                  id="adj-passcode"
+                  type="password"
+                  autoComplete="current-password"
+                  className={inputClass}
+                  placeholder="Re-enter the master passcode"
+                />
               </Field>
             </div>
           ) : undefined

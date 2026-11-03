@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import { audit, consumeBucket, fail, json, requireAdmin, routeError } from '@/lib/guards'
-import { sanitizeLine } from '@/lib/security-core'
+import { getSecurityConfig, verifyPasscode } from '@/lib/security'
+import { env, parseEmailList, sanitizeLine } from '@/lib/security-core'
 import { ADMIN_MUTABLE_STATES, isStateTransitionAllowed, staffUserActionVerdict } from '@/lib/admin-domain'
 
 /**
@@ -58,12 +59,36 @@ function detail_email(payload: Record<string, unknown>): string {
   return typeof payload.address === 'string' ? payload.address : ''
 }
 
+function maskBankValue(value: unknown): string {
+  const raw = String(value ?? '').trim()
+  if (!raw) return ''
+  return `••••${raw.slice(-4)}`
+}
+
+/**
+ * The detail drawer is a support view, not a payout runbook. It must never hand the browser a raw
+ * bank account number: masking used to add a `bankAccountNumberMasked` field while leaving the
+ * original field beside it, so the mask was decorative.
+ */
 function redactSecrets(input: Record<string, unknown>): Record<string, unknown> {
   const out = { ...input }
   for (const key of Object.keys(out)) {
     if (/private|token|secret|password|session/i.test(key)) out[key] = '[redacted]'
   }
-  if (out.bankAccountNumber) out.bankAccountNumberMasked = `••••${String(out.bankAccountNumber).slice(-4)}`
+  if (out.bankAccountNumber) {
+    out.bankAccountNumberMasked = maskBankValue(out.bankAccountNumber)
+    delete out.bankAccountNumber
+  }
+  if (out.bank && typeof out.bank === 'object') {
+    const bank = { ...(out.bank as Record<string, unknown>) }
+    for (const key of ['accountNumber', 'bankAccountNumber']) {
+      if (bank[key]) {
+        bank[`${key}Masked`] = maskBankValue(bank[key])
+        delete bank[key]
+      }
+    }
+    out.bank = bank
+  }
   return out
 }
 
@@ -103,6 +128,36 @@ export async function PATCH(req: NextRequest) {
     const firestore = await import('@/lib/firestore-admin')
     if (!firestore.isFirebaseAdminUsable()) {
       return fail(503, 'Firebase Admin is unavailable — no changes were made. Check FIREBASE_SERVICE_ACCOUNT_JSON / FIREBASE_PROJECT_ID on this deployment.', { code: 'storage_unavailable' })
+    }
+
+    // Staff authority is target-scoped. The capability table says what a staff member may do;
+    // this check says who they may do it to. Without it, a staff account could reset the owner's
+    // Firebase password (then use the owner's ID token as a passcode-free owner session), verify
+    // its own second account, or re-enable a credential an owner had deliberately disabled.
+    if (guard.value.role !== 'owner') {
+      const target = await firestore.getUserDetail(uid)
+      if (!target) return fail(404, 'No such user.', { code: 'user_not_found' })
+      const targetEmail = String(target.email ?? '').trim().toLowerCase()
+      const ownerEmails = parseEmailList(env('ADMIN_EMAILS'))
+      const targetIsAdmin = target.isAdmin === true || target.role === 'admin'
+      const targetIsStaff = targetEmail ? Boolean(await firestore.getAdminAccount(targetEmail)) : false
+      if (targetIsAdmin || targetIsStaff || (targetEmail && ownerEmails.includes(targetEmail))) {
+        return fail(403, 'That account is an administrator or staff account. Only the main administrator can change it.', { code: 'owner_only' })
+      }
+      if (targetEmail && targetEmail === guard.value.email.toLowerCase()) {
+        return fail(403, 'You cannot perform this action on your own account from the staff desk.', { code: 'self_target' })
+      }
+      if (action === 'account' && String(target.accountState ?? 'active') !== 'active') {
+        return fail(403, 'Only the main administrator can re-enable a restricted account.', { code: 'owner_only' })
+      }
+      // Staff may restore a *suspended* account (the day-to-day support case) but a ban is an
+      // owner decision. Without this, "restore" was a one-click unban.
+      if (action === 'moderate' && String(target.accountState ?? 'active') === 'banned') {
+        return fail(403, 'Only the main administrator can lift a ban.', { code: 'owner_only' })
+      }
+      if (action === 'kyc' && ['suspended', 'banned'].includes(String(target.accountState ?? 'active'))) {
+        return fail(403, 'A suspended or banned account cannot be verified back into service by staff.', { code: 'owner_only' })
+      }
     }
 
     switch (action) {
@@ -242,6 +297,22 @@ export async function PATCH(req: NextRequest) {
       }
 
       case 'wallet': {
+        // A console cookie alone must not be enough to rewrite a balance. Raw credits are the one
+        // console action with no counterpart in the member's own request flow, and a stolen
+        // HttpOnly cookie is replayed exactly like this. Require the owner's passcode again, and
+        // rate-limit the second-factor guesses separately from the session.
+        const confirmBucket = consumeBucket('admin-wallet-confirm', 8, 60_000, String(guard.value.jti).slice(0, 12))
+        if (!confirmBucket.ok) {
+          return fail(429, 'Too many balance-confirmation attempts. Please wait.', { headers: { 'Retry-After': String(confirmBucket.retryAfterSec) } })
+        }
+        const cfg = getSecurityConfig()
+        if (cfg.passcode.source === 'none') {
+          return fail(503, 'Balance edits are disabled until ADMIN_PASSWORD_SCRYPT is configured.', { code: 'passcode_unconfigured' })
+        }
+        const confirmPasscode = sanitizeLine(payload.confirmPasscode, 200)
+        if (!confirmPasscode || !verifyPasscode(cfg.passcode.value, confirmPasscode)) {
+          return fail(403, 'Re-enter the owner passcode to change a member balance.', { code: 'reauth_required' })
+        }
         const pending = Number(payload.pendingUsd)
         const available = Number(payload.availableUsd)
         const payoutNumber = payload.payoutNumber === undefined ? undefined : sanitizeLine(payload.payoutNumber, 24)
@@ -267,14 +338,23 @@ export async function PATCH(req: NextRequest) {
       }
 
       case 'grant-welcome-bonus': {
-        // Staff may pay this only to a member they onboarded with the reward deferred, so the
-        // action cannot be used to mint a balance for an arbitrary account. Owners are unrestricted.
+        // This is a balance mint, not a profile edit. It is owner-only (see STAFF_USER_ACTIONS) and
+        // needs the same passcode re-entry as a raw wallet adjustment, so a copied console cookie
+        // cannot create money on its own.
+        const confirmBucket = consumeBucket('admin-wallet-confirm', 8, 60_000, String(guard.value.jti).slice(0, 12))
+        if (!confirmBucket.ok) {
+          return fail(429, 'Too many balance-confirmation attempts. Please wait.', { headers: { 'Retry-After': String(confirmBucket.retryAfterSec) } })
+        }
+        const cfg = getSecurityConfig()
+        if (cfg.passcode.source === 'none') {
+          return fail(503, 'Welcome rewards are disabled until ADMIN_PASSWORD_SCRYPT is configured.', { code: 'passcode_unconfigured' })
+        }
+        const confirmPasscode = sanitizeLine(payload.confirmPasscode, 200)
+        if (!confirmPasscode || !verifyPasscode(cfg.passcode.value, confirmPasscode)) {
+          return fail(403, 'Re-enter the owner passcode to grant a welcome reward.', { code: 'reauth_required' })
+        }
         const detail = await firestore.getUserDetail(uid)
         if (!detail) return fail(404, 'No such user.', { code: 'user_not_found' })
-        const deferred = detail.welcomeBonusPending === true
-        if (guard.value.role !== 'owner' && !deferred) {
-          return fail(403, 'Staff can release the welcome reward only for an account onboarded with it deferred.', { code: 'owner_only' })
-        }
         if (reason.length < 4) return fail(400, 'Add a short reason — it is written to the audit log.', { code: 'reason_required' })
 
         const { grantWelcomeBonus } = await import('@/lib/wallet-server')

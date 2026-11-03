@@ -23,7 +23,7 @@ export const dynamic = 'force-dynamic'
 
 type CacheEntry = { at: number; payload: unknown }
 const globalCache = globalThis as unknown as { __awAdminStatsCache?: CacheEntry }
-const STATS_TTL_MS = () => Math.max(5_000, envInt('ADMIN_STATS_CACHE_MS', 20_000))
+const STATS_TTL_MS = () => Math.max(10_000, envInt('ADMIN_STATS_CACHE_MS', 60_000))
 
 export async function GET(req: NextRequest) {
   const guard = await requireAdmin(req)
@@ -31,7 +31,9 @@ export async function GET(req: NextRequest) {
 
   const cache = globalCache.__awAdminStatsCache
   const now = Date.now()
-  const forced = req.nextUrl.searchParams.get('refresh') === '1'
+  // A cache-busting refresh re-runs the whole aggregate fan-out. Staff get the cached view; only
+  // the main administrator may force the expensive read.
+  const forced = req.nextUrl.searchParams.get('refresh') === '1' && guard.value.role === 'owner'
   if (!forced && cache && now - cache.at < STATS_TTL_MS()) {
     const res = json({ ...forceObject(cache.payload), cached: true, ageSeconds: Math.round((now - cache.at) / 1000) })
     res.headers.set('X-Stats-Cache', `HIT age=${Math.round((now - cache.at) / 1000)}s`)
@@ -48,9 +50,13 @@ export async function GET(req: NextRequest) {
 
     // One round trip: aggregate metrics plus the tail of the audit ledger for the activity ticker.
     const [stats, activity] = await Promise.all([getPlatformStats(), recentActivity(10)])
+    // The aggregate cache is shared by every reader in this process. Never put the bypass roster
+    // (member/staff email addresses) into it: a staff request could then be served the owner's
+    // cached payload. The owner reads the full list from /api/admin/maintenance, which is owner-only.
+    const visibleStats = { ...stats, maintenance: { ...stats.maintenance, allowedEmails: [], updatedBy: null } }
     const payload = {
       ok: true,
-      ...stats,
+      ...visibleStats,
       activity,
       security: {
         ...stats.security,
@@ -67,7 +73,7 @@ export async function GET(req: NextRequest) {
           production: isProduction(),
         },
       },
-      maintenanceStatus: resolveMaintenance(stats.maintenance),
+      maintenanceStatus: resolveMaintenance(visibleStats.maintenance),
       generatedAt: new Date().toISOString(),
     }
 

@@ -19,13 +19,12 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createKycSession } from '@/lib/didit'
 import { saveKycRecord, verifyIdToken, getUserProfile } from '@/lib/firestore-admin'
 import { consumeBucket, audit } from '@/lib/guards'
-import { env, isHostAllowed } from '@/lib/security-core'
+import { env, isHostAllowed, readJsonBody } from '@/lib/security-core'
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json().catch(() => ({}))
-
-    // ── Authentication ────────────────────────────────────────────────────────
+    // Authenticate before reading the body. This route previously parsed an unbounded JSON
+    // payload before checking who was calling, which made it a cheap memory/CPU target.
     const authHeader = req.headers.get('authorization')
     const idToken = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null
     if (!idToken) {
@@ -48,9 +47,14 @@ export async function POST(req: NextRequest) {
       )
     }
 
+    const parsed = await readJsonBody<{ isMobile?: unknown }>(req, 8_000)
+    if (!parsed.ok) {
+      return NextResponse.json({ error: parsed.error }, { status: 400 })
+    }
+
     // Use the authenticated UID — never trust a userId from the request body
     const userId = decoded.uid
-    const isMobile: boolean = !!body?.isMobile
+    const isMobile = parsed.data.isMobile === true
 
     // Didit sessions are metered and each one writes a record, so creation is throttled per member.
     const bucket = consumeBucket('kyc-submit', 4, 5 * 60_000, userId)
@@ -67,6 +71,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         { error: 'Your identity is already verified. No further action is needed.' },
         { status: 409 },
+      )
+    }
+    // A restricted account cannot start another identity check. Without this, a banned member
+    // could open a session and let a later KYC callback overwrite the ban with a KYC state.
+    const accountState = String(userProfile?.accountState ?? 'active')
+    if (accountState === 'suspended' || accountState === 'banned') {
+      return NextResponse.json(
+        { error: 'This account is restricted. Contact support to appeal before starting identity verification.' },
+        { status: 403 },
       )
     }
 
@@ -91,21 +104,12 @@ export async function POST(req: NextRequest) {
       rawStatus: session.status,
     })
 
-    console.log(
-      `[KYC submit] Created session ${session.session_id} for uid=${userId}` +
-        (session.is_demo ? ' [DEMO]' : ''),
-    )
+    console.log(`[KYC submit] Created session ${session.session_id} for uid=${userId}`)
 
-    return NextResponse.json({
-      sessionId: session.session_id,
-      sessionToken: session.session_token,
-      verificationUrl: session.verification_url,
-      isDemo: !!session.is_demo,
-    })
     await audit({
       action: 'KYC_SESSION_CREATED',
       actorEmail: userId, // uid is the stable identifier; the token's email is re-checked by the webhook anyway
-      details: { sessionId: session.session_id, isMobile, demo: Boolean(session.is_demo) },
+      details: { sessionId: session.session_id, isMobile },
       req,
     })
 
@@ -113,7 +117,7 @@ export async function POST(req: NextRequest) {
       sessionId: session.session_id,
       sessionToken: session.session_token,
       verificationUrl: session.verification_url,
-      isDemo: !!session.is_demo,
+      isDemo: false,
     })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error'

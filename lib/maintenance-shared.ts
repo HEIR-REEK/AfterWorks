@@ -622,7 +622,7 @@ export async function fetchMaintenanceSnapshot(opts?: {
 }
 
 type EdgeCache = { snapshot: MaintenanceSnapshot; status: MaintenanceStatus; expiresAt: number }
-const globalCache = globalThis as unknown as { __awMaintenanceCache?: EdgeCache }
+const globalCache = globalThis as unknown as { __awMaintenanceCache?: EdgeCache; __awMaintenanceFlight?: Promise<MaintenanceSnapshot> }
 
 /**
  * Cached maintenance view for request-path code (middleware).
@@ -642,7 +642,16 @@ export async function getCachedMaintenanceStatus(opts?: {
     return { status: cached.status, usable: cached.snapshot.source !== 'unavailable' }
   }
 
-  const snapshot = await fetchMaintenanceSnapshot(opts)
+  // Single-flight: a burst of requests during a cache miss used to launch one Firestore REST call
+  // and one 1.5 s socket each. They share the in-process promise instead.
+  let flight = globalCache.__awMaintenanceFlight
+  if (!flight) {
+    flight = fetchMaintenanceSnapshot(opts).finally(() => {
+      if (globalCache.__awMaintenanceFlight === flight) globalCache.__awMaintenanceFlight = undefined
+    })
+    globalCache.__awMaintenanceFlight = flight
+  }
+  const snapshot = await flight
   if (snapshot.source === 'unavailable' && cached) {
     return { status: cached.status, usable: false }
   }

@@ -75,6 +75,7 @@ function ageHours(iso: string | null): number | null {
 
 export default function AdminPayoutsPage() {
   const session = useAdminSession()
+  const isOwner = session.status === 'authorized' && session.role === 'owner'
   const { push, toasts } = useToasts()
 
   const [status, setStatus] = useState('pending')
@@ -275,7 +276,7 @@ export default function AdminPayoutsPage() {
               </thead>
               <tbody>
                 {rows.map((row) => {
-                  const moves = transitions[row.status]?.next ?? []
+                  const moves = (transitions[row.status]?.next ?? []).filter((to) => to !== 'paid' || isOwner)
                   return (
                     <tr key={row.id} className="border-t border-border/60 align-top hover:bg-muted/40">
                       <td className="whitespace-nowrap px-2 py-2">

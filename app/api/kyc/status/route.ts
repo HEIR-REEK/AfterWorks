@@ -68,6 +68,16 @@ export async function GET(req: NextRequest) {
     // ── Live status from Didit (server-side, signed) ─────────────────────────
     const didit = await getKycSessionStatus(sessionId)
 
+    // A session id is not a bearer credential. It must belong to the authenticated caller,
+    // otherwise one verified person could replay their session id to verify any other account
+    // (and every approved session is also enough to reactivate a restricted account).
+    if (!didit.vendor_data || didit.vendor_data !== userId) {
+      return NextResponse.json(
+        { error: 'That identity-verification session does not belong to this account.' },
+        { status: 403 },
+      )
+    }
+
     // Persist the latest status to kyc_records so Firestore stays in sync
     // even when the webhook is delayed or missed.
     await saveKycRecord(userId, didit.session_id, '', didit.status, {
@@ -82,6 +92,11 @@ export async function GET(req: NextRequest) {
     const firestoreRejected = firestoreAccountState === 'kyc_rejected'
     const firestoreOnHold = firestoreAccountState === 'kyc_on_hold'
     const firestoreResubmission = firestoreAccountState === 'kyc_resubmission'
+    // KYC state transitions must never lift a suspension or ban. The old code only preserved the
+    // restriction on approval; a declined/resubmission/on-hold poll could overwrite it with a KYC
+    // state that the application gate treats as eligible.
+    const restricted = firestoreAccountState === 'suspended' || firestoreAccountState === 'banned'
+    const statePatch = (next: string) => (restricted ? {} : { accountState: next })
 
     // ── Self-healing: Sync Didit status to Profile if Webhook was missed ──
     const nowIso = new Date().toISOString()
@@ -89,9 +104,11 @@ export async function GET(req: NextRequest) {
 
     if (didit.is_approved && !firestoreVerified) {
       console.log(`[KYC status] Auto-syncing Approved state for uid=${userId} (webhook missed or delayed)`)
+      // Approval proves identity; it does not undo a suspension or ban. A user whose KYC was
+      // already in flight must not be able to use the callback to reopen a restricted account.
       await updateUserProfile(userId, {
         kycVerified: true,
-        accountState: 'active',
+        ...(restricted ? {} : { accountState: 'active' }),
         kycStatus: didit.raw_status,
         kycVerifiedAt: nowIso,
         kycProvider: 'Didit',
@@ -99,12 +116,12 @@ export async function GET(req: NextRequest) {
         kycRejectionReason: null,
         kycFailedChecks: null,
       })
-      await reconcileReferralsForReferrer(userId)
+      if (!restricted) await reconcileReferralsForReferrer(userId)
     } else if (didit.is_rejected && !firestoreRejected) {
       console.log(`[KYC status] Auto-syncing Declined state for uid=${userId}`)
       await updateUserProfile(userId, {
         kycVerified: false,
-        accountState: 'kyc_rejected',
+        ...statePatch('kyc_rejected'),
         kycStatus: didit.raw_status,
         kycRejectedAt: nowIso,
         kycRejectionReason: didit.rejection_reason ?? null,
@@ -114,7 +131,7 @@ export async function GET(req: NextRequest) {
       console.log(`[KYC status] Auto-syncing Resubmission state for uid=${userId}`)
       await updateUserProfile(userId, {
         kycVerified: false,
-        accountState: 'kyc_resubmission',
+        ...statePatch('kyc_resubmission'),
         kycStatus: didit.raw_status,
         kycRejectionReason: didit.rejection_reason ?? null,
         kycFailedChecks: didit.failed_checks ?? null,
@@ -123,7 +140,7 @@ export async function GET(req: NextRequest) {
       console.log(`[KYC status] Auto-syncing OnHold state for uid=${userId}`)
       await updateUserProfile(userId, {
         kycVerified: false,
-        accountState: 'kyc_on_hold',
+        ...statePatch('kyc_on_hold'),
         kycStatus: didit.raw_status,
         kycOnHoldAt: nowIso,
       })

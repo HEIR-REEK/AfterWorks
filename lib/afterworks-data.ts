@@ -412,38 +412,7 @@ export function seedJobs(): Job[] {
             'Consultations contain personal health information. Never copy excerpts outside the platform, never discuss cases anywhere else, and delete nothing you were given.\n\nBefore submitting, run the checklist:\n- Every [inaudible] has a timestamp\n- All drug names match the glossary exactly\n- Speaker labels (Doctor / Patient) are on every paragraph\n- The transcript is proofread once, top to bottom',
         },
       ],
-      assessmentQuestions: [
-        {
-          question: 'You cannot make out a medication name in the recording. What do you do?',
-          options: [
-            'Guess the most likely drug from the context of the consultation.',
-            'Transcribe it phonetically inside [phonetic] brackets and flag the segment for review.',
-            'Leave the word out of the transcript entirely.',
-            'Use a similar drug name from the glossary.',
-          ],
-          correctIndex: 1,
-        },
-        {
-          question: 'The glossary spells a condition "oedema". The doctor says it clearly. How do you type it?',
-          options: [
-            'Exactly as the glossary spells it: oedema.',
-            'However you normally spell it — both forms are accepted.',
-            'In capitals to highlight the term.',
-            'With a [sic] tag after it.',
-          ],
-          correctIndex: 0,
-        },
-        {
-          question: 'Which item is NOT part of the submission checklist?',
-          options: [
-            'Every [inaudible] tag has a timestamp.',
-            'Speaker labels appear on every paragraph.',
-            'A short summary of the diagnosis is added at the top.',
-            'The transcript has been proofread once from top to bottom.',
-          ],
-          correctIndex: 2,
-        },
-      ],
+      // Sample cards use the category bank. Answers live only in lib/assessment-bank.ts.
       requiresVerified: true,
       status: 'open',
       closesAt: daysFromNow(7),

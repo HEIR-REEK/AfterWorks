@@ -31,6 +31,9 @@ export const PUBLIC_ROUTES = [
   '/verify-email',
   // The identity-verification provider redirects the browser here, often in a fresh tab.
   '/kyc/callback',
+  // Public, server-rendered work catalogue. A signed-out visitor (and a crawler) must be able to
+  // read open cards; applying still goes through the authenticated workspace.
+  '/work',
   // Legal documents. Public, indexable and linked from the sign-up form.
   '/terms',
   '/privacy',

@@ -51,13 +51,14 @@ const nextConfig = {
   poweredByHeader: false,
   reactStrictMode: false, // effects here subscribe/unsubscribe live listeners; keep deterministic
   compress: true,
-  eslint: { ignoreDuringBuilds: true },
   typescript: { ignoreBuildErrors: false },
   // Self-hosted fonts already; nothing else may reference the framework version leak.
   productionBrowserSourceMaps: false,
   transpilePackages: [],
+  // Next 16 moved this out of `experimental`; leaving the old key made the build print an
+  // "Invalid next.config.js options" warning on every deploy.
+  serverExternalPackages: ['firebase-admin'],
   experimental: {
-    serverComponentsExternalPackages: ['firebase-admin'],
     // lucide-react ships hundreds of icons; tree-shake them at import time instead of bundling all.
     // Note: the self-hosted font packages must NOT be listed here. optimizePackageImports rewrites
     // sub-path imports for the listed packages, and Next then tries to parse their `index.css` as

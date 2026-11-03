@@ -391,8 +391,12 @@ export function adminUserDetailFromDoc(raw: unknown): AdminUserDetailModel {
   const bank = asRecord(doc.bank)
   if (Object.keys(bank).length) {
     const accountNumber = asText(bank.accountNumber) || asText(bank.bankAccountNumber)
+    const maskedBank: Record<string, unknown> = { ...bank }
+    // Never return the raw account number even if an older document has it under a different key.
+    delete maskedBank.bankAccountNumber
+    delete maskedBank.accountNumber
     detail.bank = {
-      ...bank,
+      ...maskedBank,
       ...(accountNumber ? { accountNumber: maskPayoutHandle(accountNumber), accountNumberMasked: maskPayoutHandle(accountNumber) } : {}),
     }
   } else if (doc.bank === null) {
@@ -599,16 +603,15 @@ export function normalisePlatformStats(raw: unknown): AdminPlatformStats {
 /**
  * The administrator a *verified* Firebase ID token may act as — or `null` if it may not act as one.
  *
- * The decision is deliberately made from the role table (the `ADMIN_EMAILS` roster, an active staff
- * account, or a legacy `users.isAdmin` grant) and **not** from the token's own `admin` claim.
+ * The decision is deliberately made from the server-owned role table (`ADMIN_EMAILS` or an active
+ * `admin_accounts` entry) and **not** from the token's own `admin` claim or a mutable
+ * `users.isAdmin` profile label.
  *
- * Why that matters enough to spell out: the claim is real — `firestore.rules` trusts it for direct
- * browser reads of every member document, and `ADMIN_SYNC_CUSTOM_CLAIM` mints it onto the *member*
- * document of whoever signs into the console. So honouring a bare claim here would mean that any
- * ordinary worker session (the owner's own Gmail account, for instance) is also an administration
- * credential that never had to pass the sign-in screen — exactly the "how can I get in without
- * logging in?" question this file is guarding against. A claim without a resolvable role is drift,
- * and drift is denied.
+ * Why that matters enough to spell out: a claim or profile flag is not proof of anything. It used
+ * to be minted from a member's editable profile email and trusted by `firestore.rules`; honouring
+ * a bare claim here would turn any ordinary worker session into an administration credential that
+ * never had to pass the sign-in screen. A claim without a resolvable role is drift, and drift is
+ * denied.
  *
  * Tooling that presents a roster email still works: the roster resolves, so the role comes back.
  */

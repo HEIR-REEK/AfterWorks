@@ -203,12 +203,21 @@ function configuredHosts(): string[] {
 export function isHostAllowed(hostHeader: string | null): boolean {
   if (!hostHeader) return false
   const host = hostHeader.toLowerCase().trim()
-  if (LOCAL_HOST.test(host)) return true
-  if (PREVIEW_HOST.test(host)) return true
-  if (host.endsWith('.onrender.com') || host.endsWith('.vercel.app')) return true
+  const production = isProduction()
   const allowList = configuredHosts()
-  if (allowList.length === 0) return true // nothing configured: cannot enforce, surfaced as a warning
-  return allowList.some((allowed) => host === allowed || host.endsWith(`.${allowed}`))
+  const listed = allowList.some((allowed) => host === allowed || host.endsWith(`.${allowed}`))
+  // Localhost is only a public host when an operator has listed it. Unit tests and `next dev` run
+  // with NODE_ENV=development; production containers get their real host from APP_URL/RENDER.
+  if (LOCAL_HOST.test(host)) return !production || listed
+  // Arena-style preview tunnels are a development convenience. In production an arbitrary
+  // `*.e2b.app` Host must be opted into explicitly (or be the configured APP_URL), otherwise a
+  // forged Host header could still poison absolute links built from the request.
+  if (PREVIEW_HOST.test(host)) return !production || envBool('ALLOW_E2B_PREVIEW_HOSTS') || listed
+  if (!production && (host.endsWith('.onrender.com') || host.endsWith('.vercel.app'))) return true
+  // Fail closed in production. The old fallback let any Host header through whenever the operator
+  // forgot APP_ALLOWED_HOSTS, which is exactly the case host-header poisoning exploits.
+  if (allowList.length === 0) return !production
+  return listed
 }
 
 /**

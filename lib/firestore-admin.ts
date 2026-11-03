@@ -31,7 +31,7 @@ import {
   type AdminUserDetailModel,
   type AdminUserRowModel,
 } from '@/lib/admin-domain'
-import type { AssessmentQuestion, TrainingSection } from '@/lib/afterworks-data'
+import { assessmentPassMark, type AssessmentQuestion, type TrainingSection } from '@/lib/afterworks-data'
 import { safeImageSrc } from '@/lib/afterworks-data'
 import { normaliseAssessmentQuestions, normaliseTrainingSections } from '@/lib/job-catalogue'
 
@@ -495,26 +495,10 @@ export async function recordPaymentTransactionAdmin(
 /**
  * Checks if a user has admin role in Firestore `users` collection.
  */
-export async function checkUserAdminRoleAdmin(email: string): Promise<boolean> {
-  try {
-    const app = getAdminApp()
-    const db = getFirestore(app)
-    const cleanEmail = email.trim().toLowerCase()
-    
-    const snap = await db
-      .collection('users')
-      .where('email', '==', cleanEmail)
-      .limit(1)
-      .get()
+// `checkUserAdminRoleAdmin` was removed deliberately. It read `users.isAdmin`/`users.role`, a
+// mutable profile label, and the sign-in route used it as a console credential. Roles are resolved
+// from ADMIN_EMAILS and active admin_accounts entries only (see `resolveAdminRole`).
 
-    if (snap.empty) return false
-    const userData = snap.docs[0].data()
-    return Boolean(userData.isAdmin === true || userData.role === 'admin')
-  } catch (err) {
-    console.error('[FirestoreAdmin] checkUserAdminRoleAdmin failed for email:', email, err)
-    return false
-  }
-}
 // ══════════════════════════════════════════════════════════════════════════════
 // SERVER-SIDE OPERATIONS (privileged)
 //
@@ -844,12 +828,77 @@ export async function createAdminAccount(input: {
   return { email }
 }
 
+/**
+ * End every live console session for an address. Used when a credential is rotated or an operator
+ * is disabled/removed; without it an already-issued cookie kept working until its TTL expired.
+ */
+async function revokeAdminSessionsForEmail(email: string, actorEmail: string): Promise<void> {
+  const db = dbOrNull()
+  if (!db) return
+  const clean = email.trim().toLowerCase()
+  try {
+    const snap = await db.collection(ADMIN_SESSIONS_COLLECTION).where('email', '==', clean).limit(200).get()
+    for (const doc of snap.docs) {
+      const data = (doc.data() ?? {}) as Record<string, unknown>
+      if (data.active === false || data.revoked === true) continue
+      await endAdminSession(String(data.jti ?? doc.id), 'revoked', actorEmail)
+    }
+  } catch (err) {
+    // A missing index must not let a disabled account keep working: the role re-resolution on the
+    // next request already denies it, and refresh tokens/claims are cleared below.
+    console.warn('[FirestoreAdmin] admin-session revocation fell back to role denial:', err instanceof Error ? err.message : err)
+  }
+}
+
+/**
+ * Remove every trace of console authority for an address:
+ *  • demote any member profile that was flagged as an admin;
+ *  • revoke active console sessions;
+ *  • clear the Firebase `admin` claim and every refresh token.
+ *
+ * This is the offboarding path. `resolveAdminRole` no longer trusts `users.isAdmin`, but a stale
+ * custom claim would still be a Firestore superuser if any future rule trusted it, and an existing
+ * refresh token would outlive the account deletion.
+ */
+async function clearAdminAccessForEmail(email: string, actorEmail: string): Promise<void> {
+  const clean = email.trim().toLowerCase()
+  const db = dbOrNull()
+  if (db) {
+    try {
+      const users = await db.collection('users').where('email', '==', clean).limit(50).get()
+      await Promise.all(
+        users.docs.map((doc) =>
+          doc.ref.set({ isAdmin: false, role: 'user', updatedAt: new Date().toISOString() }, { merge: true }).catch(() => undefined),
+        ),
+      )
+    } catch (err) {
+      console.warn('[FirestoreAdmin] admin profile cleanup skipped:', err instanceof Error ? err.message : err)
+    }
+  }
+  await revokeAdminSessionsForEmail(clean, actorEmail)
+  const auth = authOrNull()
+  if (auth) {
+    try {
+      const record = await auth.getUserByEmail(clean)
+      await auth.setCustomUserClaims(record.uid, { admin: false })
+      await auth.revokeRefreshTokens(record.uid)
+    } catch (err) {
+      // user-not-found is expected when a staff console identity has no Firebase account.
+      const message = err instanceof Error ? err.message : ''
+      if (!/user-not-found|USER_NOT_FOUND|no user record/i.test(message)) {
+        console.warn('[FirestoreAdmin] admin credential cleanup failed:', message)
+      }
+    }
+  }
+}
+
 export async function updateAdminAccountPasscode(email: string, passcodeHash: string, actorEmail: string): Promise<void> {
   const db = adminDb()
   const ref = adminAccountRef(db, email)
   const snap = await ref.get()
   if (!snap.exists) throw new Error('No staff account exists for that email.')
   await ref.set({ passcodeHash, updatedAt: new Date().toISOString() }, { merge: true })
+  await revokeAdminSessionsForEmail(email.trim().toLowerCase(), actorEmail)
   await createAuditEntry('STAFF_PASSWORD_RESET', { email: email.trim().toLowerCase() }, actorEmail)
 }
 
@@ -859,6 +908,7 @@ export async function setAdminAccountStatus(email: string, status: 'active' | 'd
   const snap = await ref.get()
   if (!snap.exists) throw new Error('No staff account exists for that email.')
   await ref.set({ status, updatedAt: new Date().toISOString() }, { merge: true })
+  if (status === 'disabled') await clearAdminAccessForEmail(email.trim().toLowerCase(), actorEmail)
   await createAuditEntry(status === 'active' ? 'STAFF_ACCOUNT_ENABLED' : 'STAFF_ACCOUNT_DISABLED', { email: email.trim().toLowerCase() }, actorEmail)
 }
 
@@ -868,6 +918,7 @@ export async function deleteAdminAccount(email: string, actorEmail: string): Pro
   const snap = await ref.get()
   if (!snap.exists) throw new Error('No staff account exists for that email.')
   await ref.delete()
+  await clearAdminAccessForEmail(email.trim().toLowerCase(), actorEmail)
   await createAuditEntry('STAFF_ACCOUNT_REMOVED', { email: email.trim().toLowerCase() }, actorEmail)
 }
 
@@ -998,9 +1049,44 @@ export async function getMaintenanceConfigServer(): Promise<MaintenanceConfig> {
   const db = dbOrNull()
   if (!db) return DEFAULT_MAINTENANCE_CONFIG
   try {
-    const snap = await db.collection('system').doc('maintenance').get()
+    const [snap, bypassSnap] = await Promise.all([
+      db.collection('system').doc('maintenance').get(),
+      db.collection('system').doc('maintenance_bypass').get().catch(() => null),
+    ])
     if (!snap.exists) return DEFAULT_MAINTENANCE_CONFIG
-    const config = normaliseMaintenanceConfig(snap.data())
+    const data = (snap.data() ?? {}) as Record<string, unknown>
+    // The bypass list is PII (staff/customer emails). It lives in a server-only document; the
+    // public `system/maintenance` document is readable by the edge middleware and must not carry it.
+    const privateData = bypassSnap?.exists ? (bypassSnap.data() ?? {}) : {}
+    const privateList = privateData.allowedEmails ?? []
+    const legacyList = Array.isArray(data.allowedEmails) ? data.allowedEmails : []
+    const bypassList = [...new Set([...(Array.isArray(privateList) ? privateList : []), ...legacyList])]
+    // One-time migration: older deployments stored the bypass roster in the public document.
+    // Remove it from the public copy as soon as any server read sees it, so the migration does not
+    // depend on an operator opening the maintenance page.
+    if (legacyList.length > 0) {
+      const batch = db.batch()
+      batch.set(
+        db.collection('system').doc('maintenance_bypass'),
+        { allowedEmails: bypassList, updatedAt: new Date().toISOString(), updatedBy: 'system:migration' },
+        { merge: true },
+      )
+      batch.set(
+        db.collection('system').doc('maintenance'),
+        { allowedEmails: FieldValue.delete(), updatedBy: FieldValue.delete() },
+        { merge: true },
+      )
+      await batch.commit().catch((err) => console.warn('[FirestoreAdmin] maintenance bypass migration skipped:', err))
+    }
+    const config = normaliseMaintenanceConfig({
+      ...data,
+      allowedEmails: bypassList,
+      // The operator email lives only in the private companion; keep it visible to the console
+      // without putting it back into the world-readable document.
+      ...(typeof privateData.updatedBy === 'string' && privateData.updatedBy
+        ? { updatedBy: privateData.updatedBy }
+        : {}),
+    })
     primeMaintenanceCache(config)
     return config
   } catch (err) {
@@ -1068,7 +1154,20 @@ export async function saveMaintenanceConfigServer(
     if (!changed.includes('allowSignIn')) changed.push('allowSignIn')
   }
 
-  await db.collection('system').doc('maintenance').set(next as unknown as Record<string, unknown>)
+  // Split the public operational document from the private bypass roster. The middleware reads the
+  // public one with an unauthenticated REST call, which cannot carry an Admin credential or field
+  // masking; anything that should not be public simply never lands in that document.
+  // `updatedBy` is an operator email and `allowedEmails` is a roster of member/staff addresses.
+  // Neither may land in the world-readable document; both live in the server-only companion.
+  const { allowedEmails, updatedBy: _updatedBy, ...publicConfig } = next
+  const batch = db.batch()
+  batch.set(db.collection('system').doc('maintenance'), publicConfig as unknown as Record<string, unknown>)
+  batch.set(db.collection('system').doc('maintenance_bypass'), {
+    allowedEmails,
+    updatedAt: next.updatedAt,
+    updatedBy: actorEmail,
+  })
+  await batch.commit()
   primeMaintenanceCache(next)
 
   await createAuditEntry(
@@ -1263,10 +1362,6 @@ export async function adminUpdateUser(
   clean.lastModifiedBy = actorEmail
   await db.collection('users').doc(uid).set(clean, { merge: true })
 
-  if ('role' in clean || 'isAdmin' in clean) {
-    await syncAdminClaimForUid(db, uid, clean.isAdmin === true || clean.role === 'admin')
-  }
-
   await createAuditEntry(auditAction, { uid, fields: Object.keys(clean), values: redactAuditValues(clean) }, actorEmail)
   return { applied: Object.keys(clean) }
 }
@@ -1279,43 +1374,18 @@ function redactAuditValues(values: Record<string, unknown>): Record<string, unkn
   return out
 }
 
-/**
- * Keeps the `admin` custom claim in sync with the Firestore role so the middleware, the guards
- * and firestore.rules can all trust the token instead of paying a document read per request.
- */
-async function syncAdminClaimForUid(db: Firestore, uid: string, isAdmin: boolean): Promise<void> {
-  try {
-    await getAuth(getAdminApp()).setCustomUserClaims(uid, { admin: isAdmin })
-  } catch (err) {
-    console.warn('[FirestoreAdmin] setCustomUserClaims skipped:', err instanceof Error ? err.message : err)
-  }
-  try {
-    invalidateGuardCaches(uid)
-  } catch {
-    /* guard module optional */
-  }
-  void db
-}
-
 export async function setUserAdminFlagByUid(uid: string, isAdmin: boolean, actorEmail: string): Promise<boolean> {
   const db = adminDb()
   const userRef = db.collection('users').doc(uid)
   const snap = await userRef.get()
   if (!snap.exists) return false
   const email = String((snap.data() ?? {}).email ?? '').trim().toLowerCase()
+  // This flag is a profile label (and a UI hint), not a console credential. Console authority is
+  // resolved from ADMIN_EMAILS or an active admin_accounts entry; firestore.rules does not trust
+  // any custom claim. Never mint a claim from a mutable profile email here.
   await userRef.set({ isAdmin, role: isAdmin ? 'admin' : 'user', updatedAt: new Date().toISOString() }, { merge: true })
-  await syncAdminClaimForUid(db, uid, isAdmin)
   await createAuditEntry(isAdmin ? 'ADMIN_ROLE_GRANTED' : 'ADMIN_ROLE_REVOKED', { uid, email }, actorEmail)
   return true
-}
-
-/** Legacy helper retained for scripts that have only an email (console actions use the stable uid). */
-export async function setUserAdminFlagByEmail(email: string, isAdmin: boolean, actorEmail: string): Promise<boolean> {
-  const db = adminDb()
-  const clean = email.trim().toLowerCase()
-  const snap = await db.collection('users').where('email', '==', clean).limit(1).get()
-  if (snap.empty) return false
-  return setUserAdminFlagByUid(snap.docs[0].id, isAdmin, actorEmail)
 }
 
 // ─── Firebase Auth: the account side of the directory ────────────────────────
@@ -1512,6 +1582,7 @@ export async function setTemporaryPassword(uid: string, actorEmail: string): Pro
   const secret = await import('crypto').then((crypto) => crypto.randomBytes(9).toString('base64url'))
   try {
     await auth.updateUser(uid, { password: secret })
+    await auth.revokeRefreshTokens(uid)
   } catch (err) {
     if (isMissingAuthUser(err)) {
       return { ok: false, error: 'No Firebase Auth account for this profile.', code: 'account_missing' }
@@ -2246,12 +2317,17 @@ export async function verifyKycAdmin(
 ): Promise<void> {
   const db = adminDb()
   const now = new Date().toISOString()
+  const existing = await db.collection('users').doc(uid).get()
+  const currentState = String((existing.data() ?? {}).accountState ?? 'active')
+  // Manual KYC approval proves identity; it must not silently lift a suspension or ban that an
+  // owner applied. Support can verify the document, but only an owner can restore the account.
+  const restricted = currentState === 'suspended' || currentState === 'banned'
   await db.collection('users').doc(uid).set(
     approve
       ? {
           kycVerified: true,
           kycStatus: 'approved',
-          accountState: 'active',
+          ...(restricted ? {} : { accountState: 'active' }),
           kycVerifiedAt: now,
           kycRejectionReason: null,
           kycProvider: 'admin-review',
@@ -2260,7 +2336,9 @@ export async function verifyKycAdmin(
       : {
           kycVerified: false,
           kycStatus: 'declined',
-          accountState: 'kyc_rejected',
+          // A review decision about identity must not lift an account restriction. Clearing a
+          // suspension/ban is a separate, owner-only moderation action.
+          ...(restricted ? {} : { accountState: 'kyc_rejected' }),
           kycRejectedAt: now,
           kycRejectionReason: reason.slice(0, 300),
           updatedAt: now,
@@ -2619,9 +2697,70 @@ export function sanitizeJob(input: AdminJobInput, existing?: Record<string, unkn
     requiresVerified: input.requiresVerified !== false,
     status: (JOB_STATUSES as readonly string[]).includes(input.status) ? input.status : 'open',
     closesAt: input.closesAt || (existing?.closesAt as string) || new Date(Date.now() + 7 * 86400_000).toISOString(),
+    // Keep the original publication timestamp across edits; older cards fall back to updatedAt
+    // in the public projection, so a JobPosting still gets a truthful datePosted.
+    postedAt: (existing?.postedAt as string) || new Date().toISOString(),
     postedAgo: (existing?.postedAgo as string) || 'just now',
     updatedAt: new Date().toISOString(),
   }
+}
+
+// ─── Assessments: the answer key never leaves the server ──────────────────────
+//
+// The catalogue projection deliberately drops `correctIndex` and `explanation`. The browser asks
+// for the questions here, submits answers, and only receives the review *after* the server has
+// scored them. A pass is written to `users.assessmentPasses` with the Admin SDK, and
+// `createApplicationServer` requires that server-written marker.
+
+export type AssessmentSource = {
+  jobTitle: string
+  category: string
+  questions: { id: number; question: string; options: string[]; correctIndex: number; image?: string; imageAlt?: string; explanation?: string }[]
+  passMark: number
+  authored: boolean
+}
+
+export async function getAssessmentSource(jobId: string): Promise<AssessmentSource | null> {
+  const db = dbOrNull()
+  if (!db) return null
+  const snap = await db.collection('jobs').doc(jobId).get()
+  if (!snap.exists) return null
+  const data = (snap.data() ?? {}) as Record<string, unknown>
+  const category = String(data.category ?? 'Data Entry')
+  const authoredQuestions = normaliseAssessmentQuestions(data.assessmentQuestions)
+  const questions = authoredQuestions.length > 0
+    ? authoredQuestions.map((question, index) => ({
+        id: index + 1,
+        question: question.question,
+        options: question.options,
+        correctIndex: question.correctIndex,
+        ...(question.image ? { image: question.image } : {}),
+        ...(question.imageAlt ? { imageAlt: question.imageAlt } : {}),
+        ...(question.explanation ? { explanation: question.explanation } : {}),
+      }))
+    : (await import('@/lib/assessment-bank')).builtInQuestions(category as never)
+  return {
+    jobTitle: String(data.title ?? 'this job'),
+    category,
+    questions,
+    passMark: assessmentPassMark(questions.length),
+    authored: authoredQuestions.length > 0,
+  }
+}
+
+/** Records a server-scored assessment pass. The client cannot write this field. */
+export async function recordAssessmentPass(uid: string, jobId: string): Promise<void> {
+  const db = adminDb()
+  const ref = db.collection('users').doc(uid)
+  const snap = await ref.get()
+  if (!snap.exists) throw new TransitionError('Profile not found. Complete your profile before taking the assessment.', 409)
+  await ref.set(
+    {
+      assessmentPasses: FieldValue.arrayUnion(jobId),
+      updatedAt: new Date().toISOString(),
+    },
+    { merge: true },
+  )
 }
 
 export async function upsertJob(input: AdminJobInput, actorEmail: string): Promise<{ id: string }> {
@@ -2716,6 +2855,15 @@ export async function createApplicationServer(uid: string, jobId: string): Promi
   const job = (jobSnap.data() ?? {}) as Record<string, unknown>
   if (job.status !== 'open') throw new TransitionError('This job is no longer open.', 409)
   if (job.requiresVerified !== false && user.kycVerified !== true) throw new TransitionError('This job requires a verified profile.', 403)
+
+  // The assessment used to be a browser-only gate: anyone could POST /api/applications and skip
+  // the quiz (or edit the local "passed" flag). Passes are now written by the scoring route and
+  // checked here, inside the same authority that already checks KYC and payment.
+  const assessmentPasses = Array.isArray(user.assessmentPasses) ? (user.assessmentPasses as string[]) : []
+  if (!assessmentPasses.includes(jobId)) {
+    throw new TransitionError('Pass the assessment for this job before applying.', 403)
+  }
+
   if (job.trainingRequired === true) {
     let paid = Array.isArray(user.paidTrainings) ? (user.paidTrainings as string[]) : []
     if (!paid.includes(jobId)) {
@@ -2795,27 +2943,54 @@ export async function createApplicationServer(uid: string, jobId: string): Promi
 export async function withdrawApplicationServer(uid: string, applicationId: string): Promise<void> {
   const db = adminDb()
   const ref = db.collection('applications').doc(applicationId)
-  const snap = await ref.get()
-  if (!snap.exists) throw new TransitionError('Application not found.', 404)
-  const data = (snap.data() ?? {}) as Record<string, unknown>
-  if (data.workerUid !== uid) throw new TransitionError('You can only withdraw your own applications.', 403)
-  const status = String(data.status)
-  if (status !== 'under_review' && status !== 'approved') {
-    throw new TransitionError(`Work already ${status.replace(/_/g, ' ')} cannot be withdrawn. Contact support.`, 409)
-  }
-  await ref.set({ status: 'withdrawn', history: FieldValue.arrayUnion({ status: 'withdrawn', at: new Date().toISOString() }), updatedAt: new Date().toISOString() }, { merge: true })
-  await createAuditEntry('APPLICATION_WITHDRAWN', { applicationId, uid }, String(data.workerEmail ?? uid))
+  let workerEmail = uid
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref)
+    if (!snap.exists) throw new TransitionError('Application not found.', 404)
+    const data = (snap.data() ?? {}) as Record<string, unknown>
+    if (data.workerUid !== uid) throw new TransitionError('You can only withdraw your own applications.', 403)
+    const status = String(data.status)
+    if (status !== 'under_review' && status !== 'approved') {
+      throw new TransitionError(`Work already ${status.replace(/_/g, ' ')} cannot be withdrawn. Contact support.`, 409)
+    }
+    workerEmail = String(data.workerEmail ?? uid)
+    const jobId = String(data.jobId ?? '')
+    // Withdrawing an approved application gives its reserved slot back. Doing that after the status
+    // write (or not at all) left the job permanently one worker short.
+    const jobRef = status === 'approved' && jobId ? db.collection('jobs').doc(jobId) : null
+    const jobSnap = jobRef ? await tx.get(jobRef) : null
+    tx.set(
+      ref,
+      {
+        status: 'withdrawn',
+        history: FieldValue.arrayUnion({ status: 'withdrawn', at: new Date().toISOString() }),
+        updatedAt: new Date().toISOString(),
+      },
+      { merge: true },
+    )
+    if (jobRef && jobSnap?.exists) {
+      const job = (jobSnap.data() ?? {}) as Record<string, unknown>
+      const capacity = Math.max(1, Number(job.capacity ?? 1) || 1)
+      const slots = Math.min(capacity, (Number(job.slotsRemaining ?? 0) || 0) + 1)
+      const approved = Math.max(0, (Number(job.applicationsApproved ?? 0) || 0) - 1)
+      tx.set(jobRef, { slotsRemaining: slots, applicationsApproved: approved }, { merge: true })
+    }
+  })
+  await createAuditEntry('APPLICATION_WITHDRAWN', { applicationId, uid }, workerEmail)
 }
 
 /**
- * Admin QA transition. Writes the status, the ledger side-effects (pending earnings on
- * completion, slot release on rejection after approval) and a worker notification atomically
- * enough for a prototype, and is idempotent: re-running the same transition is a no-op.
+ * Admin QA transition. Completion — the status flip, the pending earning, the worker counters and
+ * the `wallet_ledger` entry — runs in one Firestore transaction with a deterministic ledger id, so
+ * two operators or a retried request cannot pay twice or leave a completed application uncredited.
+ * Non-completion transitions put the application state and the job's slot/approval counters in the
+ * same transaction; notifications and the audit row are the only follow-up side effects.
  */
 export async function transitionApplicationAdmin(input: {
   applicationId: string
   to: ApplicationStatusValue
   actorEmail: string
+  actorUid?: string
   note?: string
   reason?: string
 }): Promise<{ status: ApplicationStatusValue; creditedUsd: number }> {
@@ -2841,6 +3016,14 @@ export async function transitionApplicationAdmin(input: {
   const uid = String(app.workerUid ?? '')
   const payUsd = Number(app.payAmountUsd ?? 0) || 0
   let creditedUsd = 0
+  let appliedFrom = from
+
+  // A console operator may never pay their own submission. The route already restricts the final
+  // approval to the owner; this closes the same hole for any future caller of this function.
+  const workerEmail = String(app.workerEmail ?? '').trim().toLowerCase()
+  if (to === 'completed' && workerEmail && workerEmail === input.actorEmail.trim().toLowerCase()) {
+    throw new TransitionError('You cannot approve and pay your own application.', 403)
+  }
 
   const update: Record<string, unknown> = {
     status: to,
@@ -2851,58 +3034,113 @@ export async function transitionApplicationAdmin(input: {
   if (input.note) update.revisionNote = String(input.note).slice(0, 500)
   if (input.reason) update.rejectionReason = String(input.reason).slice(0, 500)
 
-  await ref.set(update, { merge: true })
-
-  if (to === 'completed' && uid && payUsd > 0) {
-    creditedUsd = payUsd
+  if (to === 'completed') {
     const ledgerId = `wd_${input.applicationId}`
     const ledgerRef = db.collection('wallet_ledger').doc(ledgerId)
-    const already = await ledgerRef.get()
-    if (already.exists) {
-      creditedUsd = 0 // idempotent replay — never double-pay
-    } else {
-      const userRef = db.collection('users').doc(uid)
-      await db.runTransaction(async (tx) => {
-        const userSnapTx = await tx.get(userRef)
-        const userData = (userSnapTx.data() ?? {}) as Record<string, unknown>
-        const wallet = (userData.wallet ?? {}) as Record<string, unknown>
-        const nextPending = Math.round(((Number(wallet.pendingUsd ?? 0) || 0) + payUsd) * 100) / 100
-        tx.set(
-          userRef,
-          {
-            'wallet.pendingUsd': nextPending,
-            jobsCompleted: (Number(userData.jobsCompleted ?? 0) || 0) + 1,
-            qualityScore: Math.min(100, (Number(userData.qualityScore ?? 100) || 100) + 1),
-            updatedAt: now,
-          },
-          { merge: true },
+    const userRef = db.collection('users').doc(uid)
+    await db.runTransaction(async (tx) => {
+      // Reads first — Firestore transactions require every read before the first write.
+      const fresh = await tx.get(ref)
+      if (!fresh.exists) throw new TransitionError('Application not found.', 404)
+      const freshData = (fresh.data() ?? {}) as Record<string, unknown>
+      const current = String(freshData.status ?? '') as ApplicationStatusValue
+      appliedFrom = current
+      const wasCompleted = current === 'completed'
+      if (!wasCompleted && !(TRANSITIONS[current] ?? []).includes('completed')) {
+        throw new TransitionError(
+          `Cannot move an application from ${current.replace(/_/g, ' ')} to completed.`,
+          409,
         )
-        tx.set(ledgerRef, {
-          id: ledgerId,
-          uid,
-          kind: 'earning',
-          amountUsd: payUsd,
-          currency: 'USD',
-          applicationId: input.applicationId,
-          jobId,
-          status: 'pending',
-          clearedAt: new Date(Date.now() + 72 * 3600_000).toISOString(),
-          createdAt: now,
-          createdBy: input.actorEmail,
-        })
+      }
+      const freshUid = String(freshData.workerUid ?? uid)
+      const freshPayUsd = Number(freshData.payAmountUsd ?? payUsd) || 0
+      const creditsMoney = Boolean(freshUid) && freshPayUsd > 0
+      const ledgerSnap = creditsMoney ? await tx.get(ledgerRef) : null
+      const userSnap = creditsMoney && !ledgerSnap?.exists ? await tx.get(userRef) : null
+
+      if (!wasCompleted) tx.set(ref, update, { merge: true })
+      if (!creditsMoney || ledgerSnap?.exists) {
+        creditedUsd = 0 // replay or a zero-value job — never double-pay
+        return
+      }
+      if (!userSnap?.exists) {
+        throw new TransitionError('The worker profile is missing, so the earning was not credited.', 409)
+      }
+      const userData = (userSnap.data() ?? {}) as Record<string, unknown>
+      const wallet = (userData.wallet ?? {}) as Record<string, unknown>
+      const nextPending = Math.round(((Number(wallet.pendingUsd ?? 0) || 0) + freshPayUsd) * 100) / 100
+      tx.set(
+        userRef,
+        {
+          'wallet.pendingUsd': nextPending,
+          jobsCompleted: (Number(userData.jobsCompleted ?? 0) || 0) + 1,
+          qualityScore: Math.min(100, (Number(userData.qualityScore ?? 100) || 100) + 1),
+          updatedAt: now,
+        },
+        { merge: true },
+      )
+      // create() (not set) makes the ledger id a hard idempotency key: a concurrent retry that
+      // somehow missed the existing read fails the transaction instead of paying twice.
+      tx.create(ledgerRef, {
+        id: ledgerId,
+        uid: freshUid,
+        kind: 'earning',
+        amountUsd: freshPayUsd,
+        currency: 'USD',
+        applicationId: input.applicationId,
+        jobId,
+        status: 'pending',
+        clearedAt: new Date(Date.now() + 72 * 3600_000).toISOString(),
+        createdAt: now,
+        createdBy: input.actorEmail,
       })
-    }
-  }
-
-  if ((to === 'rejected' || to === 'failed_qa') && jobId && (from === 'approved' || from === 'in_progress' || from === 'submitted_for_review')) {
-    await db.collection('jobs').doc(jobId).set({ slotsRemaining: FieldValue.increment(1) }, { merge: true })
-  }
-
-  if (to === 'approved' && jobId) {
-    await db
-      .collection('jobs')
-      .doc(jobId)
-      .set({ slotsRemaining: FieldValue.increment(-1), applicationsApproved: FieldValue.increment(1) }, { merge: true })
+      creditedUsd = freshPayUsd
+    })
+  } else {
+    // One transaction for the application state *and* the job counters it changes. Previously the
+    // slot increment/decrement happened after the status write, so two operators approving the last
+    // slot could both pass the worker-side capacity check and oversubscribe the job, and a failed
+    // counter write left the application and the job disagreeing until someone noticed.
+    await db.runTransaction(async (tx) => {
+      const fresh = await tx.get(ref)
+      if (!fresh.exists) throw new TransitionError('Application not found.', 404)
+      const freshData = (fresh.data() ?? {}) as Record<string, unknown>
+      const current = String(freshData.status ?? '') as ApplicationStatusValue
+      appliedFrom = current
+      if (current === to) return
+      if (!(TRANSITIONS[current] ?? []).includes(to)) {
+        throw new TransitionError(
+          `Cannot move an application from ${current.replace(/_/g, ' ')} to ${to.replace(/_/g, ' ')}.`,
+          409,
+        )
+      }
+      const jobRef = jobId ? db.collection('jobs').doc(jobId) : null
+      const jobSnap = jobRef ? await tx.get(jobRef) : null
+      const jobData = (jobSnap?.data() ?? {}) as Record<string, unknown>
+      if (to === 'approved' && jobSnap?.exists) {
+        const slots = Number(jobData.slotsRemaining)
+        if (Number.isFinite(slots) && slots <= 0) {
+          throw new TransitionError('This job has no slots remaining, so the application cannot be approved.', 409)
+        }
+      }
+      tx.set(ref, update, { merge: true })
+      if (jobRef && jobSnap?.exists) {
+        if (to === 'approved') {
+          tx.set(
+            jobRef,
+            { slotsRemaining: FieldValue.increment(-1), applicationsApproved: FieldValue.increment(1) },
+            { merge: true },
+          )
+        } else if (
+          (to === 'rejected' || to === 'failed_qa') &&
+          ['approved', 'in_progress', 'submitted_for_review', 'revision_requested'].includes(current)
+        ) {
+          // The slot was reserved when the application was approved; releasing it here and in the
+          // same transaction means a failed QA can never leave the job permanently short a slot.
+          tx.set(jobRef, { slotsRemaining: FieldValue.increment(1) }, { merge: true })
+        }
+      }
+    })
   }
 
   if (uid) {
@@ -2920,7 +3158,7 @@ export async function transitionApplicationAdmin(input: {
 
   await createAuditEntry(
     'APPLICATION_STATUS_CHANGED',
-    { applicationId: input.applicationId, from, to, jobId, creditedUsd, reason: input.reason?.slice(0, 200) },
+    { applicationId: input.applicationId, from: appliedFrom, to, jobId, creditedUsd, reason: input.reason?.slice(0, 200) },
     input.actorEmail,
   )
 

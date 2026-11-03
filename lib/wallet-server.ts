@@ -1009,7 +1009,7 @@ export type PayoutTransitionInput = {
  *    member can request again immediately;
  *  • every move is audited with the actor and (for money leaving) the reference.
  */
-export async function settlePayoutRequest(input: PayoutTransitionInput): Promise<{ request: PayoutRequestRow; releasedUsd: number; debitedUsd: number }> {
+export async function settlePayoutRequest(input: PayoutTransitionInput): Promise<{ request: PayoutRequestRow; releasedUsd: number; debitedUsd: number; fromStatus: PayoutRequestStatus }> {
   const db = adminDb()
   const requestRef = db.collection('payout_requests').doc(input.requestId)
 
@@ -1020,7 +1020,7 @@ export async function settlePayoutRequest(input: PayoutTransitionInput): Promise
     if (input.expectUid && row.uid !== input.expectUid) {
       throw new WalletError('That payout request belongs to another account.', 403, 'payout_not_yours')
     }
-    if (row.status === input.to) return { row, releasedUsd: 0, debitedUsd: 0, noop: true }
+    if (row.status === input.to) return { row, releasedUsd: 0, debitedUsd: 0, fromStatus: row.status, noop: true }
     if (!canTransitionPayout(row.status, input.to)) {
       throw new WalletError(
         `A ${row.status.replace(/_/g, ' ')} request cannot be moved to ${input.to.replace(/_/g, ' ')}.`,
@@ -1127,11 +1127,12 @@ export async function settlePayoutRequest(input: PayoutTransitionInput): Promise
       row: mapPayoutRequest(row.id, { ...(snap.data() ?? {}), ...updates, history: [...row.history, { status: input.to, at: now, by: input.actorEmail, note: note || undefined }] }),
       releasedUsd,
       debitedUsd,
+      fromStatus: row.status,
       noop: false,
     }
   })
 
-  if (outcome.noop) return { request: outcome.row, releasedUsd: 0, debitedUsd: 0 }
+  if (outcome.noop) return { request: outcome.row, releasedUsd: 0, debitedUsd: 0, fromStatus: outcome.fromStatus }
 
   await createAuditEntry(
     `PAYOUT_${input.to.toUpperCase()}`,
@@ -1173,5 +1174,5 @@ export async function settlePayoutRequest(input: PayoutTransitionInput): Promise
   const message = messages[input.to]
   if (message) await notifyUser(outcome.row.uid, { ...message, link: '/wallet' })
 
-  return { request: outcome.row, releasedUsd: outcome.releasedUsd, debitedUsd: outcome.debitedUsd }
+  return { request: outcome.row, releasedUsd: outcome.releasedUsd, debitedUsd: outcome.debitedUsd, fromStatus: outcome.fromStatus }
 }

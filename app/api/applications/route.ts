@@ -125,8 +125,8 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Could not record your application.'
     // Worker-facing refusals are expected (slots, KYC, duplicates) → 409/403, not a 500.
-    if (/verify|verification|suspended|eligible|closed|full|already|training|complete|no longer|not found/i.test(message)) {
-      const status = /suspended|eligible|verify|verification|training|complete/i.test(message) ? 403 : 409
+    if (/verify|verification|suspended|eligible|closed|full|already|training|assessment|complete|no longer|not found/i.test(message)) {
+      const status = /suspended|eligible|verify|verification|training|assessment|complete/i.test(message) ? 403 : 409
       return fail(status, message, { code: 'application_refused' })
     }
     return routeError('applications:POST', err)

@@ -163,7 +163,9 @@ export function normaliseJobRecord(docId: string, raw: unknown, now: number = Da
     trainingRequired: data.trainingRequired === true,
     ...(fee > 0 ? { trainingFeeUsd: Math.round(fee * 10_000) / 10_000 } : {}),
     trainingNotes: normaliseTrainingSections(data.trainingNotes),
-    assessmentQuestions: normaliseAssessmentQuestions(data.assessmentQuestions),
+    // The answer key is server-only. The browser asks /api/assessments for questions without
+    // `correctIndex`/`explanation` and receives the review only after the server scores it.
+    assessmentQuestions: [],
     requiresVerified: data.requiresVerified !== false,
     status: JOB_STATUSES.includes(status) ? status : 'open',
     closesAt,

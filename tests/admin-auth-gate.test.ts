@@ -101,7 +101,7 @@ test('return paths are validated: console-only, same-origin, no tricks', () => {
 // ─── What a verified token is allowed to become ──────────────────────────────
 
 test('a bare `admin` claim is not an administration credential', () => {
-  // Exactly the shape ADMIN_SYNC_CUSTOM_CLAIM leaves on a member account: the claim is there,
+  // Exactly the shape a legacy claim-sync left on a member account: the claim is there,
   // the role table says nothing. This used to return a staff principal (no passcode needed).
   const decoded = { email: 'owner@gmail.example', uid: 'member-uid', exp: 2_000_000_000, admin: true }
   assert.equal(bearerAdminPrincipal(decoded, null), null)

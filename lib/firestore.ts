@@ -195,7 +195,10 @@ export async function createUserDocument(
       userRef,
       {
         name,
-        email,
+        // Store the same lowercase form the server uses for ownership checks. The signup rule
+        // requires this field to equal the verified token email, and two spellings of one address
+        // must not become two identities.
+        email: email.trim().toLowerCase(),
         location: '',
         memberSince: currentMonthYear(),
         qualityScore: 100,

@@ -21,7 +21,10 @@ import { site } from '@/lib/site'
 export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest) {
-  const { status } = await getCachedMaintenanceStatus({ force: req.headers.get('cache-control')?.includes('no-cache') ?? false })
+  // Ignore client cache-control: honouring it let any anonymous caller force a fresh Firestore REST
+  // read per request, which is exactly the load the cache exists to absorb. Operators get a forced
+  // read from the authenticated Admin SDK in /api/admin/maintenance.
+  const { status } = await getCachedMaintenanceStatus()
   const config = status.config
   const etag = `"m${config.version}-${status.active ? 'on' : 'off'}-${config.mode}"`
 
@@ -58,7 +61,6 @@ export async function GET(req: NextRequest) {
     contactEmail: config.contactEmail || site.supportEmail,
     version: config.version,
     updatedAt: config.updatedAt,
-    bypassHint: config.allowedEmails.length > 0,
     /** Opaque hint for ops dashboards — never a bypass token. */
     configHash: fnv1a(`${config.version}:${config.enabled}:${config.mode}:${config.estimatedEnd ?? ''}`, 8),
     serverTime: new Date().toISOString(),

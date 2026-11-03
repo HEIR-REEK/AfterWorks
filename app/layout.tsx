@@ -37,13 +37,20 @@ function readFirebaseConfig(): FirebaseConfig {
 export const dynamic = 'force-dynamic'
 
 export async function generateMetadata(): Promise<Metadata> {
+  const noIndex = envBool('SITE_NO_INDEX', !isProduction())
+  const verification: Metadata['verification'] = {
+    ...(env('GOOGLE_SITE_VERIFICATION') ? { google: env('GOOGLE_SITE_VERIFICATION') } : {}),
+    ...(env('BING_SITE_VERIFICATION')
+      ? { other: { 'msvalidate.01': env('BING_SITE_VERIFICATION') } }
+      : {}),
+  }
   const base = {
     title: {
       default: `${site.name} — ${site.tagline}`,
       template: `%s · ${site.name}`,
     },
     description: site.description,
-    metadataBase: new URL(site.url.startsWith('http') ? site.url : 'https://afterworks.site'),
+    metadataBase: new URL(site.url),
     applicationName: site.name,
     generator: 'AfterWorks',
     keywords: [
@@ -73,11 +80,14 @@ export async function generateMetadata(): Promise<Metadata> {
       description: site.description,
       creator: '@afterworks',
     },
-    robots: {
-      index: true,
-      follow: true,
-      googleBot: { index: true, follow: true, 'max-image-preview': 'large' },
-    },
+    ...(Object.keys(verification).length > 0 ? { verification } : {}),
+    robots: noIndex
+      ? { index: false, follow: false }
+      : {
+          index: true,
+          follow: true,
+          googleBot: { index: true, follow: true, 'max-image-preview': 'large' },
+        },
     alternates: { canonical: '/' },
     icons: {
       icon: [{ url: '/icon.png', type: 'image/png', sizes: '64x64' }],
@@ -112,7 +122,6 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
   const headerList = await headers()
   const maintenanceMode = headerList.get('x-afterworks-maintenance-mode') ?? 'off'
   const requestId = headerList.get('x-request-id') ?? undefined
-  const noIndex = envBool('SITE_NO_INDEX', !isProduction())
 
   const jsonLd = {
     '@context': 'https://schema.org',
@@ -120,6 +129,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
     name: site.name,
     legalName: site.legalName,
     url: site.url,
+    logo: `${site.url}/brand/icon-512.png`,
     email: site.supportEmail,
     description: site.description,
     areaServed: ['KE', 'UG', 'TZ', 'RW', 'NG', 'ZA'],
@@ -146,7 +156,6 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
       suppressHydrationWarning
     >
       <head>
-        {noIndex ? <meta name="robots" content="noindex, nofollow" /> : null}
         <meta name="color-scheme" content="light" />
         <link rel="preconnect" href="https://firestore.googleapis.com" />
         <link rel="preconnect" href="https://identitytoolkit.googleapis.com" />

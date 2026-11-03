@@ -29,6 +29,25 @@ admin email addresses, and the old build exposed `NEXT_PUBLIC_ADMIN_PASSWORD` in
 | `sessionStorage` token ⇒ "is admin" | HttpOnly, `SameSite=strict`, signed `aw_admin_session` cookie; the browser is never told anything it can reuse |
 | token expiry never checked | signature + `exp` + revocation + roster membership re-verified per privileged request |
 | rate limiting counted a spoofable `x-forwarded-for` on an unpruned `Map` | budget keyed on an HMAC of IP **and** target email, exponential back-off up to 8× the lockout window, bounded LRU |
+
+### Rate limits are per process, not global
+
+`lib/security.ts` and `lib/guards.ts` keep their buckets in process memory (a bounded Map, swept on
+use). That is deliberate for a single Render instance and for local development: it has no extra
+database dependency and cannot be taken down by a Firestore outage. It also means:
+
+* each instance has **its own** budget, so an attacker with many connections can get *N ×* the
+  configured allowance on an *N*-instance deployment;
+* a restart, deploy or cold start clears the buckets;
+* the OTP challenge itself (`password_resets/{hmac}`) is persisted, so a code is still burned after
+  the configured number of wrong guesses even if the process restarts — the in-memory `otp:` and
+  `reset:` counters are the part that is not shared.
+
+For a multi-instance production deployment, add a platform/WAF rate limit (Render, Cloudflare or the
+CDN in front of the service) as the outer bound, or replace `attempts()`/`consumeBucket()` with a
+Redis/Firestore-backed counter. The application-level limits remain the correct backstop for a
+single instance; they are not a distributed guarantee. This is recorded here rather than hidden in a
+comment because “we have rate limiting” is otherwise easy to over-trust.
 | one hardcoded fallback secret | missing `ADMIN_SESSION_SECRET` ⇒ the console is disabled (fail closed); a dev-only ephemeral secret is generated and logged once |
 | passcode compared with `===` after a length check | `scrypt` digest (`ADMIN_PASSWORD_SCRYPT`), parsed by prefix, compared with `timingSafeEqual`; length-independent timing |
 | any signed-in user could write `users/{uid}` | Firestore rules: ownership on writes, privileged fields (`isAdmin`, `role`, `kycVerified`, `wallet`, `paidTrainings`) server-written only |
@@ -212,14 +231,37 @@ member has exhausted their guesses and the window has not lapsed.
 
 | Staff may | Owner only |
 | --- | --- |
-| Approve / reject KYC, run the QA desk, pause or reopen job cards | Suspend, ban, hold or delete accounts |
+| Approve / reject KYC, triage applications and request revisions, pause or reopen job cards | Suspend, ban, hold or delete accounts |
 | Issue a temporary password (`temp-password`) | Wallet adjustments and the money ledger |
-| Restore a suspended account (`moderate` → `active` only) | Staff accounts, role grants, maintenance mode |
-| Re-enable a disabled sign-in credential (`account` → `enable: true` only) | Audit log, Security Centre, session revocation |
-| Clear sign-in / reset lockouts for an email (`unlock`) and leave audit notes | Cache flushes |
+| Restore a suspended account (`moderate` → `active` only) | **Approve work and release payment** (`approve_qa`) and mark a payout **paid** |
+| Re-enable a disabled sign-in credential (`account` → `enable: true` only) | Staff accounts, role grants, maintenance mode |
+| Clear sign-in / reset lockouts for an email (`unlock`) and leave audit notes | Audit log, Security Centre, session revocation |
+|  | Cache flushes |
+
+Two further money controls sit on top of the role table:
+
+* A KYC approval, rejection or Didit callback never lifts a `suspended`/`banned` state. Only the
+  owner's `moderate` action restores an account; staff cannot “verify” a banned member back in.
+* Raw wallet edits and the owner's welcome-reward grant require the owner's **passcode again** in
+  the same request (`confirmPasscode`), even though the console session is already authenticated. A
+  copied HttpOnly cookie cannot mint or rewrite a balance on its own. Confirmation guesses have their
+  own rate-limit bucket, and the change is written to the audit log with the reason and operator
+  email.
 
 The rule of thumb: staff can *give access back*, never *take it away* or move money. Every staff
 action is still reason-gated and audited under the staff member's own email.
+
+## Quiz keys and lesson checks
+
+Job assessments are graded **server-side** (`POST /api/assessments`): the browser receives the
+questions and options, never `correctIndex`, and only a passing server record unlocks an
+application. A failed attempt returns no answer key.
+
+Training sections may also carry an optional inline “quick check”. Those are reading aids: they
+only tick a section in the learner's own progress and do not unlock work. Their answer index stays in
+the job payload so the lesson can mark itself, and a curious learner can read it in devtools — that
+is the accepted residual, because it grants nothing the server-scored assessment does not already
+control.
 
 ## Money
 
@@ -236,8 +278,9 @@ action is still reason-gated and audited under the staff member's own email.
 
 * The console no longer subscribes to whole collections in the browser: reads are one cursor page at
   a time, projected server-side, with payout handles masked.
-* Metrics are aggregated once on the server and cached for 20 s instead of six concurrent listeners
-  recomputing the same numbers per tab.
+* Metrics are aggregated once on the server and cached for 60 s instead of six concurrent listeners
+  recomputing the same numbers per tab. Only the owner may force a cache-busting recompute; staff
+  get the cached view.
 * `@prisma/client`, `prisma`, `express`, `express-validator`, `body-parser`, `dotenv`, `nodemon`,
   `@supabase/*` and `react-paystack` were removed: nothing imported them, and they described a backend
   that does not exist.

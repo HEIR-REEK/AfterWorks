@@ -47,10 +47,12 @@ const MAINTENANCE_GATE_ON = (process.env.MAINTENANCE_EDGE_GATE ?? 'true') !== 'f
  * MAINTENANCE_STATIC_SHELL=false to fall back to the rendered /maintenance route.
  */
 const MAINTENANCE_STATIC_SHELL = (process.env.MAINTENANCE_STATIC_SHELL ?? 'true') !== 'false'
+/** Preview tunnels are allowed in development, or in a production preview that opts in. */
+const ALLOW_E2B_PREVIEW_HOSTS = (process.env.ALLOW_E2B_PREVIEW_HOSTS ?? 'false') !== 'false'
 const SUPPORT_EMAIL_EDGE = (process.env.NEXT_PUBLIC_SUPPORT_EMAIL ?? 'supportafterworks@gmail.com').trim().toLowerCase()
 const RATE_CAPACITY = Number(process.env.MIDDLEWARE_RATE_LIMIT_PER_MINUTE ?? 40)
 const ALLOWED_HOSTS = new Set(
-  [process.env.APP_ALLOWED_HOSTS, process.env.NEXT_PUBLIC_APP_URL, process.env.RENDER_EXTERNAL_URL]
+  [process.env.APP_ALLOWED_HOSTS, process.env.NEXT_PUBLIC_APP_URL, process.env.APP_URL, process.env.RENDER_EXTERNAL_URL, process.env.VERCEL_URL]
     .filter(Boolean)
     .flatMap((raw) => String(raw).split(/[\s,]+/))
     .map((token) => {
@@ -95,13 +97,18 @@ function isOpenPath(pathname: string): boolean {
 function hostAllowed(host: string | null): boolean {
   if (!host) return false
   const value = host.toLowerCase().trim()
-  if (LOCAL_HOST.test(value) || PREVIEW_HOST.test(value)) return true
-  if (value.endsWith('.onrender.com') || value.endsWith('.vercel.app')) return true
-  if (ALLOWED_HOSTS.size === 0) return true // nothing configured → cannot enforce (reported in Security Center)
-  for (const allowed of ALLOWED_HOSTS) {
-    if (value === allowed || value.endsWith(`.${allowed}`)) return true
-  }
-  return false
+  const listed = [...ALLOWED_HOSTS].some((allowed) => value === allowed || value.endsWith(`.${allowed}`))
+  // `localhost` is a development convenience, not a public host. In production it must be listed
+  // explicitly; otherwise a forged Host: localhost reaches request handlers that build absolute
+  // URLs (verification links, callbacks) from the request.
+  if (LOCAL_HOST.test(value)) return !PRODUCTION || listed
+  if (PREVIEW_HOST.test(value)) return !PRODUCTION || ALLOW_E2B_PREVIEW_HOSTS || listed
+  // Platform wildcards are a development convenience, not an allow-list. In production every
+  // host must match APP_ALLOWED_HOSTS / APP_URL / RENDER_EXTERNAL_URL; otherwise any tenant on the
+  // shared onrender.com or vercel.app domain could make the app believe a forged Host header.
+  if (!PRODUCTION && (value.endsWith('.onrender.com') || value.endsWith('.vercel.app'))) return true
+  if (ALLOWED_HOSTS.size === 0) return !PRODUCTION
+  return listed
 }
 
 /** Scanner noise & traversal probes: answered with 404 before any handler or database is touched. */
@@ -148,7 +155,9 @@ function buildCsp(production: boolean): string {
     `style-src 'self' 'unsafe-inline'`,
     `font-src 'self' data:`,
     `img-src 'self' data: blob: https:`,
-    `connect-src 'self' https: wss:${production ? '' : ' ws:'} ${FIREBASE_HOSTS} ${PAYSTACK_HOSTS}`,
+    // No blanket `https: wss:`. A successful script injection could otherwise exfiltrate the
+    // member's data to any host; the app only talks to Firebase, Paystack and Didit.
+    `connect-src 'self' ${production ? '' : 'ws: '}${FIREBASE_HOSTS} ${PAYSTACK_HOSTS} ${DIDIT_HOSTS} wss://*.firebaseio.com wss://*.firebaseapp.com`,
     `frame-src 'self' ${FIREBASE_HOSTS} ${PAYSTACK_HOSTS} ${DIDIT_HOSTS} https://apis.google.com`,
     `worker-src 'self' blob:`,
     `manifest-src 'self'`,
@@ -244,20 +253,33 @@ export async function middleware(request: NextRequest) {
   //    production and falls back to a process-local dev key otherwise, where the in-app gate
   //    still applies). That keeps local development without ADMIN_SESSION_SECRET working instead
   //    of bouncing an operator around the login form forever.
-  if (SIGNING_OK && isAdminConsolePath(pathname)) {
-    const session = await readSession(
-      request.cookies.get(ADMIN_SESSION_COOKIE)?.value,
-      SESSION_SECRET,
-      'admin',
-    )
-    if (!session) {
-      const res = NextResponse.redirect(
-        new URL(adminConsoleLoginPath(pathname, request.nextUrl.search), request.url),
-        307,
+  if (isAdminConsolePath(pathname)) {
+    // With no signing secret the edge cannot verify a session, but it must still not serve console
+    // pages. In production that is a configuration failure: send the operator to the sign-in page
+    // (which explains the console is disabled) instead of rendering console chrome and relying on a
+    // client-side gate. Local development without a secret keeps the in-app gate.
+    if (!SIGNING_OK) {
+      if (PRODUCTION) {
+        const res = NextResponse.redirect(new URL('/admin/login?reason=console_unconfigured', request.url), 307)
+        res.headers.set('Cache-Control', 'no-store')
+        applySecurityHeaders(res)
+        return res
+      }
+    } else {
+      const session = await readSession(
+        request.cookies.get(ADMIN_SESSION_COOKIE)?.value,
+        SESSION_SECRET,
+        'admin',
       )
-      res.headers.set('Cache-Control', 'no-store')
-      applySecurityHeaders(res)
-      return res
+      if (!session) {
+        const res = NextResponse.redirect(
+          new URL(adminConsoleLoginPath(pathname, request.nextUrl.search), request.url),
+          307,
+        )
+        res.headers.set('Cache-Control', 'no-store')
+        applySecurityHeaders(res)
+        return res
+      }
     }
   }
 
@@ -354,7 +376,7 @@ export async function middleware(request: NextRequest) {
 
   // Tell crawlers not to index private/API routes even if they discover them through links.
   // This is belt-and-suspenders alongside robots.txt (which they should respect first).
-  const NOINDEX_PATHS = /^\/(api|admin|dashboard|profile|applications|referrals|kyc|training|verify-email|forgot-password)(\/|$)/
+  const NOINDEX_PATHS = /^\/(api|admin|dashboard|profile|applications|jobs|referrals|kyc|training|wallet|verify-email|forgot-password)(\/|$)/
   if (NOINDEX_PATHS.test(pathname)) {
     response.headers.set('X-Robots-Tag', 'noindex, nofollow')
   }

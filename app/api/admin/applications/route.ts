@@ -60,6 +60,11 @@ export async function PATCH(req: NextRequest) {
   if (!applicationId) return fail(400, 'An application id is required.', { code: 'missing_id' })
   const to = ACTION_TO_STATUS[action]
   if (!to) return fail(400, `Unsupported QA action "${action || '(blank)'}".`, { code: 'unknown_action' })
+  // Paying a submission moves money to a worker. Staff can triage and request revisions, but the
+  // final "approve work & pay" step is a double-control decision reserved to the owner.
+  if (action === 'approve_qa' && guard.value.role !== 'owner') {
+    return fail(403, 'Only the main administrator can approve work and release payment.', { code: 'owner_only' })
+  }
   if (REQUIRED_REASON.includes(action) && !note && !reason) {
     return fail(400, 'Tell the worker what to change — a short written reason is required.', { code: 'reason_required' })
   }
@@ -109,11 +114,14 @@ export async function POST(req: NextRequest) {
     return fail(400, 'Expected a JSON body.', { code: 'bad_request' })
   }
 
-  const ids = Array.isArray(body.applicationIds) ? (body.applicationIds as unknown[]).map((v) => sanitizeLine(v, 128)).filter(Boolean).slice(0, 25) : []
+  const ids = Array.isArray(body.applicationIds) ? (body.applicationIds as unknown[]).map((v) => sanitizeLine(v, 128)).filter(Boolean).slice(0, 10) : []
   const action = String(body.action ?? '') as ApplicationAction
   const to = ACTION_TO_STATUS[action]
   if (!ids.length) return fail(400, 'Select at least one application.', { code: 'missing_ids' })
   if (!to) return fail(400, 'Unsupported bulk action.', { code: 'unknown_action' })
+  if (action === 'approve_qa' && guard.value.role !== 'owner') {
+    return fail(403, 'Only the main administrator can approve work and release payment.', { code: 'owner_only' })
+  }
   if (REQUIRED_REASON.includes(action) && !body.reason && !body.note) {
     return fail(400, 'A reason is required for rejection or revision requests.', { code: 'reason_required' })
   }

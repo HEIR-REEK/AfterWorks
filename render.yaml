@@ -26,10 +26,15 @@ services:
         sync: false
       - key: APP_ALLOWED_HOSTS
         sync: false # comma-separated public hostnames; anything else gets 400
+      - key: ALLOW_E2B_PREVIEW_HOSTS
+        value: "false" # leave false in production; set true only on an e2b preview service
       - key: TRUST_PROXY_HEADERS
         value: "true"
       - key: FORCE_SECURE_COOKIES
         value: "true"
+      # Console authority is the HttpOnly cookie. Leave bearer/ID-token admin auth off.
+      - key: ALLOW_ADMIN_BEARER_AUTH
+        value: "false"
 
       # ── Firebase (client config; read server-side and passed to the provider) ──
       - key: FIREBASE_PROJECT_ID
@@ -83,6 +88,18 @@ services:
         value: "true"
       - key: API_RATE_LIMIT_PER_MINUTE
         value: "120"
+      - key: MIDDLEWARE_RATE_LIMIT
+        value: "true"
+      - key: MIDDLEWARE_RATE_LIMIT_PER_MINUTE
+        value: "300"
+      - key: ADMIN_STATS_CACHE_MS
+        value: "60000"
+      - key: EMAIL_TIMEOUT_MS
+        value: "8000"
+      - key: EMAIL_MAX_CONCURRENT
+        value: "4"
+      - key: EMAIL_MAX_PER_MINUTE
+        value: "60"
 
       # ── Payments ───────────────────────────────────────────────────────────
       - key: PAYSTACK_SECRET_KEY

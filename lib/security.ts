@@ -504,7 +504,7 @@ export function securityChecks(extra?: { firestoreAdminOk?: boolean; maintenance
     severity: cfg.adminEmails.length ? 'pass' : 'warn',
     detail: cfg.adminEmails.length
       ? `${cfg.adminEmails.length} staff ${cfg.adminEmails.length === 1 ? 'account' : 'accounts'} whitelisted (never exposed to clients).`
-      : 'ADMIN_EMAILS is empty; only Firestore `role: admin` accounts can enter the console.',
+      : 'ADMIN_EMAILS is empty; only active entries in the server-owned admin_accounts collection can enter the console.',
     fix: 'Set ADMIN_EMAILS=ops@afterworks.io (comma separated) or grant roles from the Users page.',
   })
 
@@ -531,10 +531,14 @@ export function securityChecks(extra?: { firestoreAdminOk?: boolean; maintenance
   checks.push({
     id: 'host-allow-list',
     label: 'Host / origin integrity',
-    severity: env('APP_ALLOWED_HOSTS') || !production ? 'pass' : 'warn',
-    detail: env('APP_ALLOWED_HOSTS')
-      ? `Host header must match APP_ALLOWED_HOSTS; cross-site state changes are rejected.`
-      : 'Local/preview hosts always pass; set APP_ALLOWED_HOSTS=https://afterworks.io in production to block host-header poisoning.',
+    severity:
+      env('APP_ALLOWED_HOSTS') || env('APP_URL') || env('NEXT_PUBLIC_APP_URL') || env('RENDER_EXTERNAL_URL') || !production
+        ? 'pass'
+        : 'fail',
+    detail:
+      env('APP_ALLOWED_HOSTS') || env('APP_URL') || env('NEXT_PUBLIC_APP_URL') || env('RENDER_EXTERNAL_URL')
+        ? 'Host header must match the configured deployment host(s); cross-site state changes are rejected.'
+        : 'Production is fail-closed: without APP_ALLOWED_HOSTS (or APP_URL / RENDER_EXTERNAL_URL) every request is rejected rather than letting a forged Host through.',
     fix: 'Set APP_ALLOWED_HOSTS to your canonical domain(s).',
   })
 
@@ -559,6 +563,24 @@ export function securityChecks(extra?: { firestoreAdminOk?: boolean; maintenance
         : 'Resend key is set. Set EMAIL_FROM to a domain verified in Resend before production traffic.'
       : 'RESEND_API_KEY is missing — new accounts cannot prove they own the inbox, so profile/KYC stay locked.',
     fix: 'Create an API key at resend.com, verify the sending domain, set RESEND_API_KEY and EMAIL_FROM.',
+  })
+
+  const diditKey = env('DIDIT_API_KEY')
+  const diditWorkflow = env('DIDIT_WORKFLOW_ID')
+  const diditWebhook = env('DIDIT_WEBHOOK_SECRET')
+  const diditConfigured = Boolean(diditKey && diditWorkflow && diditWebhook)
+  checks.push({
+    id: 'didit',
+    label: 'Identity verification (Didit)',
+    severity: diditConfigured ? 'pass' : production ? 'fail' : 'warn',
+    detail: diditConfigured
+      ? 'KYC sessions are created server-side, callbacks are signature-verified, and the webhook re-reads the session before changing a profile.'
+      : `KYC is fail-closed: missing ${[
+          !diditKey ? 'DIDIT_API_KEY' : '',
+          !diditWorkflow ? 'DIDIT_WORKFLOW_ID' : '',
+          !diditWebhook ? 'DIDIT_WEBHOOK_SECRET' : '',
+        ].filter(Boolean).join(', ')}. New sessions and unsigned callbacks are rejected; nobody is auto-approved.`,
+    fix: 'Set DIDIT_API_KEY, DIDIT_WORKFLOW_ID and DIDIT_WEBHOOK_SECRET from the Didit dashboard (the webhook secret is required; there is no unsigned demo mode).',
   })
 
   checks.push({

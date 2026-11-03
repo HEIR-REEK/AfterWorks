@@ -76,6 +76,44 @@ If public job pages are added, give each one a unique title, description, H1, ca
 `JobPosting` structured data, pay range, location/remote status and closing date. Do not publish
 empty or duplicate pages; adding many thin pages is a common way to lose trust.
 
+## Why only the homepage is indexed
+
+This is the usual order of causes, from most likely to least likely:
+
+1. **The live sitemap or canonicals contain `localhost`.** Older builds fell back to
+   `http://localhost:3000` when `NEXT_PUBLIC_APP_URL` was missing. Google cannot crawl those URLs,
+   so it may only know the homepage from an external link. Check:
+   ```bash
+   curl -sS https://afterworks.site/sitemap.xml | grep -o '<loc>[^<]*' | head
+   curl -sS https://afterworks.site/sign-in | grep -o '<link rel="canonical"[^>]*>'
+   ```
+   Every URL must be `https://afterworks.site/...`. If they are localhost, set
+   `NEXT_PUBLIC_APP_URL` and `APP_URL`, rebuild, redeploy, then resubmit the sitemap.
+2. **The deployment still has an old build.** The canonical/robots fixes are in commit
+   `266c4e4`. A Git push alone does not change the live site; trigger a production deploy and
+   verify the live files with the commands above.
+3. **`/jobs` is intentionally noindex.** It requires a session, so it is excluded from the
+   sitemap, robots and page metadata. If you want job pages indexed, they must become public
+   pages with real job content and `JobPosting` structured data; removing the noindex from the
+   signed-in board would only publish a login redirect.
+4. **`/sign-in` and `/sign-up` are utility pages.** Google often decides not to index login and
+   signup forms because they have little unique content and are duplicated across the web. This is
+   normal; the pages are not broken. Do not chase them. Build a public `/join` or category page
+   instead if you want a signup-related result.
+5. **The pages are new and have no external links.** “Discovered — currently not indexed” and
+   “Crawled — currently not indexed” are quality/authority decisions, not crawl errors. Internal
+   links from the homepage help; sitemap submission does not guarantee indexing.
+6. **The exact reason is in Search Console.** Open **Indexing → Pages**, click the URL, and read
+   the reason. The important ones are:
+   - *Excluded by noindex tag* → check the live `<meta name="robots">` and `X-Robots-Tag`.
+   - *Blocked by robots.txt* → check the live `/robots.txt`; do not use `Disallow: /` in production.
+   - *Alternate page with proper canonical tag* → the canonical points at another URL.
+   - *Crawled/Discovered — currently not indexed* → content/authority issue.
+   - *Soft 404* → the page looked empty or like a login redirect to Google.
+
+The `site:afterworks.site` search operator is not a complete index report; it is a sample and can
+show only the homepage even when more pages are indexed. Use Search Console → Pages instead.
+
 ## 4. Content that earns links and trust
 
 Search engines rank pages that answer a query better than the alternatives. For AfterWorks that

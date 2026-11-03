@@ -307,12 +307,13 @@ export default function LandingPage() {
                   <ArrowRight className="size-4" />
                 </Button>
                 <Button
-                  render={<Link href="/sign-in" />}
+                  render={<Link href="/work" />}
                   size="lg"
                   variant="outline"
                   className="h-11 bg-card px-5 text-sm"
                 >
-                  Log in
+                  Browse open work
+                  <ArrowRight className="size-4" aria-hidden />
                 </Button>
               </div>
 
@@ -990,6 +991,11 @@ export default function LandingPage() {
                   <a href="#how-it-works" className="transition-colors hover:text-foreground">
                     How it works
                   </a>
+                </li>
+                <li>
+                  <Link href="/work" className="transition-colors hover:text-foreground">
+                    Open work
+                  </Link>
                 </li>
                 <li>
                   <a href="#work" className="transition-colors hover:text-foreground">

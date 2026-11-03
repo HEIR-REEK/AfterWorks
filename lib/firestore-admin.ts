@@ -2697,6 +2697,9 @@ export function sanitizeJob(input: AdminJobInput, existing?: Record<string, unkn
     requiresVerified: input.requiresVerified !== false,
     status: (JOB_STATUSES as readonly string[]).includes(input.status) ? input.status : 'open',
     closesAt: input.closesAt || (existing?.closesAt as string) || new Date(Date.now() + 7 * 86400_000).toISOString(),
+    // Keep the original publication timestamp across edits; older cards fall back to updatedAt
+    // in the public projection, so a JobPosting still gets a truthful datePosted.
+    postedAt: (existing?.postedAt as string) || new Date().toISOString(),
     postedAgo: (existing?.postedAgo as string) || 'just now',
     updatedAt: new Date().toISOString(),
   }

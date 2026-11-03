@@ -8,6 +8,9 @@ outside the repository.
 
 - `/` is a server-rendered public landing page with a unique title, description, canonical URL,
   Open Graph/Twitter cards, `Organization` and `FAQPage` structured data.
+- `/work` is a server-rendered public catalogue; `/work/category/<slug>` has category guides and
+  `/work/<id>` is a public job preview with `JobPosting` + `BreadcrumbList` structured data. The
+  public projection deliberately excludes assessment questions, answer indexes and training notes.
 - `app/layout.tsx` sets `metadataBase` from the configured public origin, not from a hard-coded
   host. A production build refuses to publish a `localhost` origin.
 - `app/robots.ts` serves `robots.txt`, and `app/sitemap.ts` serves `sitemap.xml`.
@@ -58,23 +61,23 @@ The homepage must not contain `noindex`, and the sitemap must contain the real d
 
 ## 3. Know what can actually rank
 
-Today the indexable pages are `/`, `/sign-in`, `/sign-up`, `/terms`, `/privacy` and `/status`.
-That is enough for brand searches such as “AfterWorks”, but not for competitive queries such as
-“microwork jobs in Kenya” or “transcription work from home Kenya”.
+The public catalogue now lives at `/work`, with category pages at `/work/category/<slug>` and a
+public preview for each open card at `/work/<id>`. The authenticated workspace at `/jobs` remains
+private: it contains the member's application state and working board, not a marketing page.
 
-The job board (`/jobs` and job details) is session-gated and therefore deliberately excluded.
-To compete for job-seeker queries, the product needs **public, useful pages**, for example:
+To compete for job-seeker queries, keep adding **public, useful pages**, for example:
 
-- public category pages for transcription, data entry, image labelling, content review,
-  translation and research;
-- public job previews with a clear apply/sign-in path;
-- guides such as “how microwork payouts work”, “what KYC means for workers” and
+- the category pages for transcription, data entry, image labelling, content review,
+  translation and research (already present — keep the copy current);
+- a guide for “how microwork payouts work”, “what KYC means for workers” and
   “how training and assessments work”;
-- a public FAQ/help page that expands on the landing-page FAQ.
+- a public FAQ/help page that expands on the landing-page FAQ;
+- public updates when pay, fees or categories change.
 
-If public job pages are added, give each one a unique title, description, H1, canonical URL,
-`JobPosting` structured data, pay range, location/remote status and closing date. Do not publish
-empty or duplicate pages; adding many thin pages is a common way to lose trust.
+The `/work/<id>` pages carry a unique title, description, H1, canonical URL, `JobPosting` and
+`BreadcrumbList` structured data, pay, remote/Kenya eligibility and closing date. They are
+generated only for open cards with a free slot and a future deadline. Do not publish empty or
+duplicate pages; adding many thin pages is a common way to lose trust.
 
 ## Why only the homepage is indexed
 
@@ -93,9 +96,8 @@ This is the usual order of causes, from most likely to least likely:
    `266c4e4`. A Git push alone does not change the live site; trigger a production deploy and
    verify the live files with the commands above.
 3. **`/jobs` is intentionally noindex.** It requires a session, so it is excluded from the
-   sitemap, robots and page metadata. If you want job pages indexed, they must become public
-   pages with real job content and `JobPosting` structured data; removing the noindex from the
-   signed-in board would only publish a login redirect.
+   sitemap, robots and page metadata. The public, indexable catalogue is `/work` and its category
+   and job-preview pages; keep the signed-in board private.
 4. **`/sign-in` and `/sign-up` are utility pages.** Google often decides not to index login and
    signup forms because they have little unique content and are duplicated across the web. This is
    normal; the pages are not broken. Do not chase them. Build a public `/join` or category page

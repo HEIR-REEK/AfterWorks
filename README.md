@@ -62,6 +62,7 @@ still require a deployed check using a test account you control.
 | Path | What lives there |
 | --- | --- |
 | `app/page.tsx` | public landing page served at `/` — explains the platform, links to `/sign-in` and `/sign-up` |
+| `app/work/**` | public, indexable job catalogue, category guides and job previews; applying still requires sign-in |
 | `app/robots.ts`, `app/sitemap.ts` | crawler rules and the public sitemap |
 | `SEO.md` | search-visibility launch checklist (verification, sitemap submission, content plan) |
 | `app/dashboard/page.tsx` | signed-in worker dashboard (moved off `/` when the landing page took the root) |

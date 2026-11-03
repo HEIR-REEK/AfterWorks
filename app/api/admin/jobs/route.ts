@@ -130,6 +130,8 @@ export async function PUT(req: NextRequest) {
     )
 
     await audit({ action: 'JOB_SAVED', actorEmail: guard.value.email, details: { jobId: result.id, title }, req })
+    const { clearPublicJobsCache } = await import('@/lib/public-jobs-server')
+    clearPublicJobsCache()
     return json({ ok: true, ...result })
   } catch (err) {
     return routeError('admin/jobs:PUT', err)
@@ -155,6 +157,8 @@ export async function PATCH(req: NextRequest) {
   try {
     const firestore = await import('@/lib/firestore-admin')
     await firestore.setJobStatus(jobId, status, guard.value.email)
+    const { clearPublicJobsCache } = await import('@/lib/public-jobs-server')
+    clearPublicJobsCache()
     return json({ ok: true, jobId, status })
   } catch (err) {
     return routeError('admin/jobs:PATCH', err)
@@ -171,6 +175,8 @@ export async function DELETE(req: NextRequest) {
     const firestore = await import('@/lib/firestore-admin')
     await firestore.deleteJob(jobId, guard.value.email)
     await audit({ action: 'JOB_DELETED', actorEmail: guard.value.email, details: { jobId }, req })
+    const { clearPublicJobsCache } = await import('@/lib/public-jobs-server')
+    clearPublicJobsCache()
     return json({ ok: true, jobId })
   } catch (err) {
     const message = err instanceof Error ? err.message : ''

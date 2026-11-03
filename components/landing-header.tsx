@@ -113,6 +113,12 @@ export function LandingHeader() {
         </nav>
 
         <div className="ml-auto flex items-center gap-1.5 sm:gap-2">
+          <Link
+            href="/work"
+            className="hidden rounded-lg px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground sm:block"
+          >
+            Open work
+          </Link>
           {signedIn ? (
             <Button
               render={<Link href={needsVerification ? '/verify-email' : '/dashboard'} />}
@@ -156,6 +162,13 @@ export function LandingHeader() {
                 aria-label="Page sections"
                 className="absolute right-0 top-11 z-50 w-60 rounded-xl border border-border bg-card p-2 shadow-xl shadow-foreground/10"
               >
+                <Link
+                  href="/work"
+                  onClick={() => setMenuOpen(false)}
+                  className="block rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+                >
+                  Open work
+                </Link>
                 {SECTION_LINKS.map((link) => (
                   <a
                     key={link.href}

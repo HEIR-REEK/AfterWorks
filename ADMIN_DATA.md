@@ -21,7 +21,7 @@ payout ran.
 | Failed sign-ins, lockouts, role changes | Firestore `admin_logs` + in-memory buckets | `listAuditLogs`, `/api/admin/security` | Audit entries are redacted on write (`lib/security.ts`) and capped at 6 KB. |
 | Maintenance window | Firestore `system/maintenance`, or `MAINTENANCE_FORCE*` | `lib/maintenance-shared.ts` | Env override wins everywhere, and the console reports `forced: true` instead of pretending to control it. |
 | Deployment posture (secrets, keys, rules) | process environment | `/api/health` checks | Each check reflects a variable the app really reads — `DIDIT_API_KEY`, `PAYSTACK_SECRET_KEY`, `ADMIN_SESSION_SECRET`, service account. |
-| External adverts (Adzuna) | Firestore **`external_jobs`** + Adzuna API | `syncAdzunaFeed`, `listExternalJobs` → `/admin/jobs/external` | A separate feed, never mixed into `jobs/`: no assessment, training or payout applies. The console shows the real last import and an empty state until an owner imports. |
+| External adverts (Adzuna) | Firestore **`external_jobs`** + Adzuna API | `syncAdzunaFeed`, `listExternalJobs` → `/admin/jobs/external` | A separate feed, never mixed into `jobs/`: no assessment, training or payout applies. It appears in a distinct company-hiring section on the member `/jobs` board and at `/work/external`; the console shows the real last import and an empty state until an owner imports. |
 
 ## Deliberate limits, stated in the UI
 
@@ -133,11 +133,14 @@ can arrive without an assessment.
 `/admin/jobs/external` imports a third-party listing feed. It is deliberately **not** part of the
 paid catalogue:
 
-- the adverts live in `external_jobs` and are rendered at `/work/external`, never as
-  `PublicJobCard`s. They have no assessment bank, training fee, capacity counter or Paystack gate,
-  so routing them through `jobs/` would break `/api/assessments` and checkout;
-- every card carries the required **Adzuna** link (at least 116×23 px) and says that the worker
-  applies on Adzuna, not AfterWorks;
+- the adverts live in `external_jobs` and are rendered in a separate **Company hiring** section
+  on the member `/jobs` board and at `/work/external`, never as `PublicJobCard`s. They have no
+  assessment bank, training fee, capacity counter or Paystack gate, so routing them through
+  `jobs/` would break `/api/assessments` and checkout;
+- every card shows the company, location, contract, **advertised pay** and a short description.
+  AfterWorks does not handle the application or the payment, and the copy says so. The per-advert
+  Adzuna redirect is stripped from the member payload; the required **Adzuna** attribution link
+  (at least 116×23 px) remains on every card because Adzuna's licence requires it;
 - the page is `noindex, follow` and is absent from the sitemap, because the snippets are duplicate
   third-party inventory rather than original AfterWorks pages;
 - the import is owner-only and rate-limited (three syncs per minute), and the console shows the

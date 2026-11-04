@@ -1,11 +1,11 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
-import { ArrowLeft, ArrowRight, ExternalLink, Globe2, Info, RefreshCw } from 'lucide-react'
-import { AdzunaAttribution, ExternalAdvertCard } from '@/components/external-job-card'
+import { ArrowLeft, ArrowRight, Globe2, Info, RefreshCw } from 'lucide-react'
+import { ExternalAdvertCard } from '@/components/external-job-card'
 import { PublicPage } from '@/components/public-shell'
 import { listExternalJobs, getExternalFeedMeta } from '@/lib/external-jobs-server'
 import { adzunaConfiguration } from '@/lib/adzuna-server'
-import { ADZUNA_COUNTRY_LABELS, adzunaHomeUrl } from '@/lib/adzuna'
+import { ADZUNA_COUNTRY_LABELS } from '@/lib/adzuna'
 import { site } from '@/lib/site'
 
 /**
@@ -55,7 +55,6 @@ export default async function ExternalJobsPage() {
     Promise.resolve(adzunaConfiguration()),
   ])
   const country = meta?.country ?? configuration.country
-  const attributionUrl = adzunaHomeUrl(country)
 
   return (
     <PublicPage>
@@ -72,17 +71,15 @@ export default async function ExternalJobsPage() {
           </h1>
           <p className="mt-4 max-w-2xl text-sm leading-relaxed text-muted-foreground sm:text-base">
             These adverts come from Adzuna, a separate job search service. They are not AfterWorks
-            tasks: there is no assessment, training fee or AfterWorks payout, and you apply on
-            Adzuna. We list them because some workers want to look beyond the microwork board.
+            tasks: there is no assessment, training fee or AfterWorks payout, and applications and
+            pay are handled by the employer. We list the company hiring details and advertised pay
+            for workers who want to look beyond the microwork board.
           </p>
-          <div className="mt-5 flex flex-wrap items-center gap-3">
-            <AdzunaAttribution href={attributionUrl} />
-            <span className="text-[11px] leading-relaxed text-muted-foreground">
-              Listings supplied by Adzuna
-              {meta ? ` · ${ADZUNA_COUNTRY_LABELS[country]}` : ''}
-              {meta?.syncedAt ? ` · refreshed ${when(meta.syncedAt)}` : ''}
-            </span>
-          </div>
+          <p className="mt-5 text-[11px] leading-relaxed text-muted-foreground">
+            Listings supplied by Adzuna
+            {meta ? ` · ${ADZUNA_COUNTRY_LABELS[country]}` : ''}
+            {meta?.syncedAt ? ` · refreshed ${when(meta.syncedAt)}` : ''}
+          </p>
         </div>
       </section>
 
@@ -93,8 +90,8 @@ export default async function ExternalJobsPage() {
               Adzuna adverts
             </h2>
             <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-              Titles, employers, locations and short snippets. Open an advert on Adzuna to read the
-              full description and apply there.
+              Company, location, contract and advertised pay. AfterWorks does not receive or manage
+              applications for these roles.
             </p>
           </div>
           {jobs.length > 0 && (
@@ -143,19 +140,9 @@ export default async function ExternalJobsPage() {
                 one. For AfterWorks work, with an assessment, training and a tracked payout, use the
                 main board.
               </p>
-              <div className="flex flex-wrap items-center gap-2">
-                <Link href="/work" className="inline-flex items-center gap-1 text-xs font-semibold text-primary hover:underline">
-                  AfterWorks jobs <ArrowRight className="size-3.5" />
-                </Link>
-                <a
-                  href={attributionUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground"
-                >
-                  More on Adzuna <ExternalLink className="size-3" />
-                </a>
-              </div>
+              <Link href="/work" className="inline-flex items-center gap-1 text-xs font-semibold text-primary hover:underline">
+                AfterWorks jobs <ArrowRight className="size-3.5" />
+              </Link>
             </div>
           </>
         )}

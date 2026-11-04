@@ -156,12 +156,28 @@ test('the external feed is a separate, attributed public surface and not in the 
 
   const page = readFileSync(join(ROOT, 'app/work/external/page.tsx'), 'utf8')
   assert.match(page, /robots:\s*\{\s*index:\s*false/, 'third-party duplicate inventory must not be indexed')
-  assert.match(page, /AdzunaAttribution/, 'every public external surface carries the attribution')
+  assert.match(page, /ExternalAdvertCard/, 'the public page uses the attributed advert card')
+  assert.doesNotMatch(page, /More on Adzuna/, 'the page must not add an extra outbound CTA')
 
   const card = readFileSync(join(ROOT, 'components/external-job-card.tsx'), 'utf8')
   assert.match(card, /min-h-\[23px\]/, 'attribution must be at least 23px tall')
   assert.match(card, /min-w-\[116px\]/, 'attribution must be at least 116px wide')
-  assert.match(card, /rel="noopener noreferrer nofollow sponsored"/, 'advert links are sponsored and isolated')
+  assert.match(card, /rel="noopener noreferrer"/, 'the attribution link is isolated')
+  assert.match(card, /Advertised pay/, 'the card presents the employer-advertised pay')
+  assert.doesNotMatch(card, /job\.redirectUrl/, 'cards must not link to the per-advert Adzuna redirect')
+  assert.doesNotMatch(card, /View advert on Adzuna/, 'the separate outbound CTA is removed')
+
+  const memberPage = readFileSync(join(ROOT, 'app/jobs/page.tsx'), 'utf8')
+  assert.match(memberPage, /<ExternalJobsSection \/>/, 'the member job board carries the company-hiring section')
+
+  const memberSection = readFileSync(join(ROOT, 'components/external-jobs-section.tsx'), 'utf8')
+  assert.match(memberSection, /\/api\/external-jobs/, 'the member section reads the stored feed, not Adzuna directly')
+  assert.match(memberSection, /advertised pay/i, 'the section explains that pay is the employer-advertised amount')
+  assert.doesNotMatch(memberSection, /redirectUrl/, 'the member section has no per-advert outbound target')
+
+  const feedRoute = readFileSync(join(ROOT, 'app/api/external-jobs/route.ts'), 'utf8')
+  assert.match(feedRoute, /redirectUrl:\s*_redirectUrl/, 'the public payload strips the Adzuna redirect')
+  assert.doesNotMatch(feedRoute, /requireAdmin|requireOwner/, 'the stored feed is readable by the member board')
 
   const sitemap = readFileSync(join(ROOT, 'app/sitemap.ts'), 'utf8')
   assert.doesNotMatch(sitemap, /work\/external/, 'external inventory must not be invited into the index')

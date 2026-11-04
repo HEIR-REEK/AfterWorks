@@ -162,6 +162,13 @@ export type ExternalJobCard = {
   attributionUrl: string
 }
 
+/**
+ * What the browser receives for the member board. The per-advert Adzuna redirect is deliberately
+ * not sent: the card presents company hiring details and advertised pay, and the only outbound
+ * link is the required 116×23 Adzuna attribution.
+ */
+export type ExternalJobView = Omit<ExternalJobCard, 'redirectUrl'>
+
 function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null
 }

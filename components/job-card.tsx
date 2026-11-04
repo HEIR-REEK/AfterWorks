@@ -6,7 +6,7 @@ import { useAfterWorks } from '@/components/afterworks-provider'
 import { jobHasTraining,
   formatDuration,
   formatUsd,
-  trainingFeeUsdFor,
+  formatTrainingFeeLabel,
   type Job,
 } from '@/lib/afterworks-data'
 import { StatusBadge } from '@/components/status-badge'
@@ -30,7 +30,7 @@ export function JobCard({ job }: { job: Job }) {
   const closing = closingLabel(job.closesAt)
   const isClosed = job.status !== 'open' || job.slotsRemaining <= 0
   const almostFull = !isClosed && job.slotsRemaining <= 3
-  const trainingFee = formatUsd(trainingFeeUsdFor(job.trainingFeeUsd))
+  const trainingFee = formatTrainingFeeLabel(job.trainingFeeUsd)
 
   return (
     <div className="group flex flex-col rounded-xl border border-border bg-card p-5 transition-colors hover:border-primary/40 relative">

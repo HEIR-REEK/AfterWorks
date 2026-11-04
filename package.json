@@ -8,6 +8,7 @@
     "start": "next start -H 0.0.0.0 -p ${PORT:-3000}",
     "typecheck": "tsc --noEmit",
     "brand:build": "node scripts/build-brand-assets.mjs",
+    "seed:catalogue": "tsx scripts/seed-jobs.ts",
     "hash:admin-password": "node scripts/hash-admin-password.mjs",
     "deploy:rules": "firebase deploy --only firestore:rules,firestore:indexes",
     "test": "tsx --test tests/*.test.ts",

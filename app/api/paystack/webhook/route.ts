@@ -111,9 +111,34 @@ export async function POST(req: NextRequest) {
         : Number.isFinite(expectedFromEvent) && expectedFromEvent > 0
           ? Math.round(expectedFromEvent) * 100
           : getPaystackAmountSubunits()
-    const uid = String(stored.userId ?? verified.data.metadata?.uid ?? '')
-    const jobId = String(stored.jobId ?? verified.data.metadata?.jobId ?? '')
+    const storedJobId = String(stored.jobId ?? '')
+    const metadataJobId = String(verified.data.metadata?.jobId ?? '')
+    const storedUserId = String(stored.userId ?? '')
+    const metadataUserId = String(verified.data.metadata?.uid ?? '')
     const payer = normalizeEmail(String(verified.data.customer?.email ?? tx.customer?.email ?? ''))
+
+    // The row and the charge must agree about both the member and the job card. If they do not,
+    // do not guess which one is right: a conflict is exactly how an entitlement could otherwise be
+    // applied to the wrong card.
+    if (
+      (storedJobId && metadataJobId && storedJobId !== metadataJobId) ||
+      (storedUserId && metadataUserId && storedUserId !== metadataUserId)
+    ) {
+      await txRef.set(
+        { status: 'binding_conflict', checkedAt: new Date().toISOString() },
+        { merge: true },
+      )
+      await firestore.createAuditEntry('PAYMENT_WEBHOOK_BINDING_CONFLICT', {
+        reference,
+        storedJobId,
+        metadataJobId,
+        payer: payer.slice(0, 3) + '***',
+      }, 'Paystack Webhook')
+      return NextResponse.json({ status: true, recorded: 'binding_conflict' }, { headers: NO_STORE_HEADERS })
+    }
+
+    const uid = storedUserId || metadataUserId
+    const jobId = storedJobId || metadataJobId
 
     if (paidSubunits < expected) {
       await txRef.set({ status: 'underpaid', paidSubunits, expectedSubunits: expected, checkedAt: new Date().toISOString() }, { merge: true })

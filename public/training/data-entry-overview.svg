@@ -28,23 +28,23 @@
 <text x="98" y="347" font-family="Inter, system-ui, sans-serif" font-size="9" font-weight="600" fill="#c8870a" text-anchor="start">copy exactly what is</text>
 <text x="98" y="360" font-family="Inter, system-ui, sans-serif" font-size="9" font-weight="600" fill="#c8870a" text-anchor="start">printed, not what you expect</text>
 
-<path d="M306 274 L354 274" stroke="#2f5bd3" stroke-width="3" stroke-linecap="round" marker-end="url(#arrow)"/>
-<rect x="370" y="126" width="250" height="300" rx="14" fill="#ffffff" stroke="#dbe3ee" stroke-width="1.5" />
-<rect x="388" y="144" width="138" height="24" rx="12.0" fill="#eef3fd" stroke="none" stroke-width="1.5" /><text x="457.0" y="159.24" font-family="Inter, system-ui, sans-serif" font-size="9" font-weight="700" fill="#1e3f9e" text-anchor="middle">STRUCTURED ROW</text>
-<text x="390" y="190" font-family="JetBrains Mono, ui-monospace, monospace" font-size="10" font-weight="700" fill="#64748b" text-anchor="start">date</text>
+<path d="M292 274 L318 274" stroke="#2f5bd3" stroke-width="3" stroke-linecap="round" marker-end="url(#arrow)"/>
+<rect x="330" y="126" width="590" height="300" rx="14" fill="#ffffff" stroke="#dbe3ee" stroke-width="1.5" />
+<rect x="348" y="144" width="138" height="24" rx="12.0" fill="#eef3fd" stroke="none" stroke-width="1.5" /><text x="417.0" y="159.24" font-family="Inter, system-ui, sans-serif" font-size="9" font-weight="700" fill="#1e3f9e" text-anchor="middle">STRUCTURED ROW</text>
+<text x="350" y="190" font-family="JetBrains Mono, ui-monospace, monospace" font-size="10" font-weight="700" fill="#64748b" text-anchor="start">date</text>
 <text x="510" y="190" font-family="JetBrains Mono, ui-monospace, monospace" font-size="10" font-weight="700" fill="#64748b" text-anchor="start">client</text>
-<text x="636" y="190" font-family="JetBrains Mono, ui-monospace, monospace" font-size="10" font-weight="700" fill="#64748b" text-anchor="start">total</text>
-<line x1="388" y1="202" x2="842" y2="202" stroke="#dbe3ee" stroke-width="2" stroke-linecap="round"/>
-<text x="390" y="232" font-family="JetBrains Mono, ui-monospace, monospace" font-size="10" font-weight="500" fill="#0f172a" text-anchor="start">2026-05-12</text>
+<text x="700" y="190" font-family="JetBrains Mono, ui-monospace, monospace" font-size="10" font-weight="700" fill="#64748b" text-anchor="start">total</text>
+<line x1="348" y1="202" x2="900" y2="202" stroke="#dbe3ee" stroke-width="2" stroke-linecap="round"/>
+<text x="350" y="232" font-family="JetBrains Mono, ui-monospace, monospace" font-size="10" font-weight="500" fill="#0f172a" text-anchor="start">2026-05-12</text>
 <text x="510" y="232" font-family="JetBrains Mono, ui-monospace, monospace" font-size="10" font-weight="500" fill="#0f172a" text-anchor="start">A. Otieno</text>
-<text x="636" y="232" font-family="JetBrains Mono, ui-monospace, monospace" font-size="10" font-weight="500" fill="#0f172a" text-anchor="start">4850</text>
-<text x="390" y="276" font-family="JetBrains Mono, ui-monospace, monospace" font-size="10" font-weight="500" fill="#0f172a" text-anchor="start">2026-05-12</text>
+<text x="700" y="232" font-family="JetBrains Mono, ui-monospace, monospace" font-size="10" font-weight="500" fill="#0f172a" text-anchor="start">4850</text>
+<text x="350" y="276" font-family="JetBrains Mono, ui-monospace, monospace" font-size="10" font-weight="500" fill="#0f172a" text-anchor="start">2026-05-12</text>
 <text x="510" y="276" font-family="JetBrains Mono, ui-monospace, monospace" font-size="10" font-weight="500" fill="#0f172a" text-anchor="start">B. Wanjiku</text>
-<text x="636" y="276" font-family="JetBrains Mono, ui-monospace, monospace" font-size="10" font-weight="500" fill="#0f172a" text-anchor="start">1200</text>
-<rect x="388" y="306" width="486" height="82" rx="9" fill="#e8f8f1" stroke="none" stroke-width="1.5" />
-<text x="406" y="333" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="700" fill="#0f9d6b" text-anchor="start">Every column has one rule.</text>
-<text x="406" y="353" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="500" fill="#0f9d6b" text-anchor="start">Dates normalized, amounts digit-only, blanks left blank —</text>
-<text x="406" y="370" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="500" fill="#0f9d6b" text-anchor="start">never guessed.</text>
+<text x="700" y="276" font-family="JetBrains Mono, ui-monospace, monospace" font-size="10" font-weight="500" fill="#0f172a" text-anchor="start">1200</text>
+<rect x="348" y="306" width="554" height="82" rx="9" fill="#e8f8f1" stroke="none" stroke-width="1.5" />
+<text x="366" y="333" font-family="Inter, system-ui, sans-serif" font-size="12" font-weight="700" fill="#0f9d6b" text-anchor="start">Every column has one rule.</text>
+<text x="366" y="353" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="500" fill="#0f9d6b" text-anchor="start">Dates normalized, amounts digit-only, blanks left blank —</text>
+<text x="366" y="370" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="500" fill="#0f9d6b" text-anchor="start">never guessed.</text>
 
 <text x="40" y="522" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="500" fill="#64748b" text-anchor="start" opacity="0.9">Illustration · not a live screenshot</text>
 </svg>

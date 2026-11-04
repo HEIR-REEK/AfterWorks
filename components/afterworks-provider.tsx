@@ -141,7 +141,7 @@ type AfterWorksContextValue = {
   verifyTrainingPayment: (
     jobId: string,
     reference: string,
-  ) => Promise<{ ok: boolean; paid: boolean; status?: string; message?: string; error?: string }>
+  ) => Promise<{ ok: boolean; paid: boolean; jobId?: string; status?: string; message?: string; error?: string }>
   applyToJob: (jobId: string) => Promise<ApplyResult>
   submitWork: (applicationId: string, note?: string) => Promise<ApplyResult>
   withdrawApplication: (applicationId: string) => Promise<ApplyResult>
@@ -660,19 +660,33 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
       if (!reference) return { ok: false, paid: false, error: 'No payment reference was returned by the checkout.' }
       setBusy(`training:${jobId}`, true)
       try {
-        const data = await authedFetch<{ paid: boolean; status?: string; message?: string }>(
-          `/api/paystack/verify/${encodeURIComponent(reference)}`,
+        const data = await authedFetch<{
+          paid: boolean
+          jobId?: string
+          status?: string
+          message?: string
+        }>(
+          `/api/paystack/verify/${encodeURIComponent(reference)}?jobId=${encodeURIComponent(jobId)}`,
         )
-        const paid = data.paid === true
+        const verifiedJobId = typeof data.jobId === 'string' ? data.jobId : ''
+        // The server grants one job card per reference. Only credit the card the server actually
+        // bound the charge to — never the job id this page asked about.
+        const paid = data.paid === true && verifiedJobId === jobId
         if (paid) {
-          setPaidTrainings((prev) => (prev.includes(jobId) ? prev : [...prev, jobId]))
+          setPaidTrainings((prev) => (prev.includes(verifiedJobId) ? prev : [...prev, verifiedJobId]))
           await refreshWallet()
         }
         return {
           ok: true,
           paid,
-          status: data.status,
-          message: typeof data.message === 'string' ? data.message : undefined,
+          jobId: verifiedJobId,
+          status: !paid && data.paid === true ? 'job_mismatch' : data.status,
+          message:
+            !paid && data.paid === true
+              ? 'That payment was for a different job card. Each job card needs its own payment.'
+              : typeof data.message === 'string'
+                ? data.message
+                : undefined,
         }
       } catch (err) {
         return { ok: false, paid: false, error: describeError(err) }

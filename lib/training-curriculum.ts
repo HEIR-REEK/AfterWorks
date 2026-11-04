@@ -1,9 +1,11 @@
 import {
   type Job,
   type JobCategory,
+  type TrainingLessonKind,
   safeImageSrc,
 } from '@/lib/afterworks-data'
 import type { TrainingCourse } from '@/lib/training-course-model'
+import { ADVANCED_MODULES, COURSE_GLOSSARY } from '@/lib/training-courses/advanced'
 import { TRANSCRIPTION } from '@/lib/training-courses/transcription'
 import { DATA_ENTRY } from '@/lib/training-courses/data-entry'
 import { IMAGE_LABELING } from '@/lib/training-courses/image-labeling'
@@ -21,9 +23,57 @@ const COURSES: Record<JobCategory, TrainingCourse> = {
   Research: RESEARCH,
 }
 
+/**
+ * The unit plan shared by every built-in course. The first five entries describe the original
+ * craft lessons; the next six are the advanced modules; the final entry is the submission
+ * checklist. A lesson can override its own unit, kind and objective — the advanced lessons do.
+ */
+const UNIT_PLAN: { unit: string; kind: TrainingLessonKind }[] = [
+  { unit: 'Unit 1 · Foundations', kind: 'concept' },
+  { unit: 'Unit 1 · Foundations', kind: 'concept' },
+  { unit: 'Unit 2 · Method & standards', kind: 'concept' },
+  { unit: 'Unit 2 · Method & standards', kind: 'scenario' },
+  { unit: 'Unit 3 · Guided practice', kind: 'lab' },
+  { unit: 'Unit 4 · Professional setup', kind: 'concept' },
+  { unit: 'Unit 4 · Professional setup', kind: 'concept' },
+  { unit: 'Unit 5 · Safe & quality practice', kind: 'scenario' },
+  { unit: 'Unit 5 · Safe & quality practice', kind: 'concept' },
+  { unit: 'Unit 6 · Capstone lab', kind: 'lab' },
+  { unit: 'Unit 6 · Capstone lab', kind: 'checkpoint' },
+  { unit: 'Unit 7 · Assessment readiness', kind: 'checkpoint' },
+]
+
+/**
+ * Compose the original coursebook with its advanced half.
+ *
+ * The final submission checklist stays last; the six advanced modules are inserted before it,
+ * which means a learner always ends with the handoff checklist and then the assessment. Units and
+ * lesson types are filled in after composition so the original lessons do not need to repeat the
+ * same metadata.
+ */
+function composeCourse(category: JobCategory, base: TrainingCourse): TrainingCourse {
+  const last = base.modules[base.modules.length - 1]
+  const modules = [
+    ...base.modules.slice(0, -1),
+    ...(ADVANCED_MODULES[category] ?? []),
+    ...(last ? [last] : []),
+  ].map((section, index) => ({
+    ...section,
+    unit: section.unit ?? UNIT_PLAN[index]?.unit ?? 'Unit 7 · Assessment readiness',
+    kind: section.kind ?? UNIT_PLAN[index]?.kind ?? 'concept',
+  }))
+
+  return {
+    ...base,
+    modules,
+    glossary: base.glossary ?? COURSE_GLOSSARY[category],
+  }
+}
+
 /** The full built-in course for a category. */
 export function getBuiltInTrainingCourse(category: JobCategory): TrainingCourse {
-  return COURSES[category] ?? GENERIC
+  const base = COURSES[category] ?? GENERIC
+  return composeCourse(category, base)
 }
 
 /** Total estimated reading time across the lessons. */
@@ -44,10 +94,12 @@ export function getJobTrainingCourse(job: Job): TrainingCourse {
   const builtIn = getBuiltInTrainingCourse(job.category)
   if (authored.length === 0) return builtIn
 
-  const authoredModules = authored.map((section) => {
+  const authoredModules = authored.map((section, index) => {
     const image = safeImageSrc(section.image)
     return {
       ...section,
+      unit: section.unit ?? (authored.length >= 5 ? `Unit ${Math.floor(index / 3) + 1} · Job-specific course` : 'Job-specific brief'),
+      kind: section.kind ?? 'concept',
       ...(image ? { image } : {}),
       durationMinutes:
         section.durationMinutes ??
@@ -65,6 +117,7 @@ export function getJobTrainingCourse(job: Job): TrainingCourse {
         .slice(0, 4)
         .map((section) => `Work confidently through ${section.title || 'each section'}`),
       modules: authoredModules,
+      glossary: builtIn.glossary,
     }
   }
 

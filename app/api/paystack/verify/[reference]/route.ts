@@ -1,10 +1,41 @@
 import { NextRequest } from 'next/server'
 import { consumeBucket, audit, fail, json, requireUser, routeError } from '@/lib/guards'
-import { env, normalizeEmail } from '@/lib/security-core'
+import { env, normalizeEmail, sanitizeLine } from '@/lib/security-core'
 import { getPaystackAmountSubunits } from '@/lib/afterworks-data'
+import { resolvePaymentBinding } from '@/lib/payment-binding'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
+
+type StoredTransaction = {
+  jobId: string
+  userId: string
+  expectedSubunits: number
+}
+
+/** The server-written pending row for this reference, when it still exists. */
+async function storedTransactionFor(reference: string): Promise<StoredTransaction> {
+  try {
+    const { dbOrNull } = await import('@/lib/firestore-admin')
+    const db = dbOrNull()
+    if (db) {
+      const snap = await db.collection('transactions').doc(`tx_${reference}`).get()
+      const stored = (snap.data() ?? {}) as {
+        jobId?: unknown
+        userId?: unknown
+        metadata?: { expectedSubunits?: unknown }
+      }
+      return {
+        jobId: typeof stored.jobId === 'string' ? stored.jobId : '',
+        userId: typeof stored.userId === 'string' ? stored.userId : '',
+        expectedSubunits: Number(stored.metadata?.expectedSubunits ?? 0) || 0,
+      }
+    }
+  } catch {
+    /* storage unavailable — the verified charge metadata is the fallback authority */
+  }
+  return { jobId: '', userId: '', expectedSubunits: 0 }
+}
 
 /**
  * The subunit amount this charge was opened for.
@@ -15,18 +46,9 @@ export const runtime = 'nodejs'
  * for a row that never got written, and only a charge with neither is judged against the
  * globally configured fee.
  */
-async function expectedSubunitsFor(reference: string, metadata?: Record<string, unknown>): Promise<number> {
-  try {
-    const { dbOrNull } = await import('@/lib/firestore-admin')
-    const db = dbOrNull()
-    if (db) {
-      const snap = await db.collection('transactions').doc(`tx_${reference}`).get()
-      const stored = (snap.data() ?? {}) as { metadata?: { expectedSubunits?: unknown } }
-      const fromRow = Number(stored.metadata?.expectedSubunits ?? 0)
-      if (Number.isFinite(fromRow) && fromRow > 0) return Math.round(fromRow)
-    }
-  } catch {
-    /* storage unavailable — fall through to the metadata the charge itself carries */
+function expectedSubunitsFor(stored: StoredTransaction, metadata?: Record<string, unknown>): number {
+  if (Number.isFinite(stored.expectedSubunits) && stored.expectedSubunits > 0) {
+    return Math.round(stored.expectedSubunits)
   }
   const fromMeta = Number(metadata?.expectedAmountKes ?? 0)
   if (Number.isFinite(fromMeta) && fromMeta > 0) return Math.round(fromMeta) * 100
@@ -43,8 +65,10 @@ async function expectedSubunitsFor(reference: string, metadata?: Record<string, 
  *    `/initialize` had controlled, and the amount paid was never compared with the price.
  *
  * Now the reference must be one this server minted, the charge is re-read from Paystack, the payer
- * email must match the signed-in member, the amount must be at least the configured price, and the
- * entitlement is written to the *authenticated* uid.
+ * email must match the signed-in member, the charge must be bound to the job card being unlocked,
+ * the amount must be at least the configured price, and the entitlement is written to the
+ * *authenticated* uid for that one job card — never for whichever card the browser happened to
+ * have open.
  */
 
 const REFERENCE_PATTERN = /^aw_tr_[A-Za-z0-9]{4,32}$/
@@ -77,6 +101,14 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ refe
   const reference = String(paramReference ?? '').slice(0, 64)
   if (!REFERENCE_PATTERN.test(reference)) {
     return fail(400, 'That payment reference was not issued by this site.', { code: 'bad_reference' })
+  }
+
+  // The caller must say which job card it is verifying for. The answer is checked against the
+  // server-written transaction row and the verified Paystack metadata below — never trusted here.
+  const requestedJobId = sanitizeLine(req.nextUrl.searchParams.get('jobId'), 80)
+  if (!requestedJobId) return fail(400, 'A job card is required to verify training payment.', { code: 'missing_job_id' })
+  if (!/^[A-Za-z0-9_-]{3,80}$/.test(requestedJobId)) {
+    return fail(400, 'Unknown job reference.', { code: 'bad_job_id' })
   }
 
   const secretKey = env('PAYSTACK_SECRET_KEY')
@@ -117,7 +149,33 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ refe
       return fail(403, 'This payment was made from a different email address. Contact support to have it applied.', { code: 'email_mismatch' })
     }
 
-    const expectedSubunits = await expectedSubunitsFor(reference, tx.metadata)
+    const stored = await storedTransactionFor(reference)
+    const binding = resolvePaymentBinding({
+      requestedJobId,
+      storedJobId: stored.jobId,
+      metadataJobId: tx.metadata?.jobId,
+      uid,
+      storedUserId: stored.userId,
+      metadataUserId: tx.metadata?.uid,
+    })
+    if (!binding.ok) {
+      await audit({
+        action: binding.code === 'job_mismatch' ? 'PAYMENT_JOB_MISMATCH' : 'PAYMENT_BINDING_REFUSED',
+        actorEmail: email,
+        details: {
+          reference,
+          requestedJobId,
+          storedJobId: stored.jobId,
+          metadataJobId: typeof tx.metadata?.jobId === 'string' ? tx.metadata.jobId : '',
+          code: binding.code,
+        },
+        req,
+      })
+      return fail(binding.code === 'uid_mismatch' ? 403 : 409, binding.message, { code: binding.code })
+    }
+    const jobId = binding.jobId
+
+    const expectedSubunits = expectedSubunitsFor(stored, tx.metadata)
     const paidSubunits = Number(tx.amount ?? 0)
     if (!Number.isFinite(paidSubunits) || paidSubunits < expectedSubunits) {
       await audit({ action: 'PAYMENT_UNDERPAID', actorEmail: email, details: { reference, paidSubunits, expectedSubunits }, req })
@@ -134,15 +192,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ refe
       })
     }
 
-    const jobId = typeof tx.metadata?.jobId === 'string' ? tx.metadata.jobId.slice(0, 80) : ''
-    if (!jobId) return fail(409, 'This charge is not linked to a job card. Contact support.', { code: 'missing_job_id' })
-
-    // Grant to the authenticated member. `metadata.uid` is only used to detect a mis-bound charge.
-    const boundUid = typeof tx.metadata?.uid === 'string' ? tx.metadata.uid : ''
-    if (boundUid && boundUid !== uid) {
-      return fail(403, 'This payment belongs to a different account.', { code: 'uid_mismatch' })
-    }
-
+    // Grant to the authenticated member, and only for the job card the charge was opened for.
     const firestore = await import('@/lib/firestore-admin')
     await firestore.recordPaidTrainingAdmin(uid, jobId)
     await firestore
@@ -154,7 +204,12 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ refe
         currency: tx.currency || 'KES',
         status: 'success',
         jobId,
-        metadata: { verifiedAt: new Date().toISOString(), paidAt: tx.paid_at ?? '', source: 'client-verify' },
+        metadata: {
+          verifiedAt: new Date().toISOString(),
+          paidAt: tx.paid_at ?? '',
+          source: 'client-verify',
+          expectedSubunits,
+        },
       })
       .catch((err) => console.warn('[paystack/verify] ledger row not updated:', err))
 

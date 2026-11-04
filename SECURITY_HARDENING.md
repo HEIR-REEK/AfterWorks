@@ -270,6 +270,10 @@ control.
 * `/api/paystack/verify/[reference]` re-reads the charge from Paystack, requires the payer email to
   match the signed-in member, refuses under-payment, and grants the entitlement to the authenticated
   uid — not to whatever `metadata` the transaction carried.
+* A charge is bound to the job card it was opened for. Verification requires `?jobId=` and checks it
+  against both the server-written transaction row and Paystack metadata; a reference for card A
+  cannot unlock card B, and the browser only credits the job id the server confirms. Cross-card
+  attempts are audited as `PAYMENT_JOB_MISMATCH`.
 * The webhook compares the HMAC with `timingSafeEqual`, re-verifies the charge upstream, and is
   idempotent, so Paystack retries cannot double-credit.
 * `/api/wallet` derives balances from `wallet_ledger` server-side; the client renders, it does not add.

@@ -21,6 +21,7 @@ import {
 import {
   type Job,
   type TrainingCheck,
+  type TrainingLessonKind,
   type TrainingSection,
 } from '@/lib/afterworks-data'
 import {
@@ -31,17 +32,51 @@ import { TrainingFigure } from '@/components/training-figure'
 import { cn } from '@/lib/utils'
 
 /**
- * Training, delivered as a short course instead of a wall of text.
+ * Training, delivered as a coursebook instead of a wall of text.
  *
  * Content comes from a short admin-authored briefing when the card has one, followed by the job's
  * built-in category course from `lib/training-curriculum.ts` (five or more authored lessons replace
- * the category course). Workers open
- * one lesson at a time, pass the lesson's quick check (when it has one), mark it complete and move
- * on. Progress is remembered per job so a refresh does not send them back to lesson 1. When the
- * last lesson is finished the parent is notified, which unlocks the assessment.
+ * the category course). A built-in course is twelve lessons across seven units, mixing concept,
+ * scenario, lab and checkpoint lessons, each with an objective, a figure and often a quick check.
+ * Workers open one lesson at a time, pass its check, mark it complete and move on. Progress is
+ * remembered per job so a refresh does not send them back to lesson 1. When the last lesson is
+ * finished the parent is notified, which unlocks the assessment.
  */
 
 export type TrainingSectionView = TrainingSection
+
+const LESSON_KIND_LABEL: Record<TrainingLessonKind, string> = {
+  concept: 'Concept',
+  scenario: 'Scenario',
+  lab: 'Lab',
+  checkpoint: 'Checkpoint',
+}
+
+const LESSON_KIND_STYLE: Record<TrainingLessonKind, string> = {
+  concept: 'bg-primary/10 text-primary',
+  scenario: 'bg-warning/15 text-warning',
+  lab: 'bg-success/15 text-success',
+  checkpoint: 'bg-accent text-accent-foreground',
+}
+
+/** Group a flat lesson list into the units shown in the coursebook. */
+function groupUnits(sections: TrainingSection[]): { unit: string; sections: { section: TrainingSection; index: number }[] }[] {
+  const groups: { unit: string; sections: { section: TrainingSection; index: number }[] }[] = []
+  sections.forEach((section, index) => {
+    const unit = section.unit || 'Course lessons'
+    let group = groups[groups.length - 1]
+    if (!group || group.unit !== unit) {
+      group = { unit, sections: [] }
+      groups.push(group)
+    }
+    group.sections.push({ section, index })
+  })
+  return groups
+}
+
+function lessonKind(section: TrainingSection): TrainingLessonKind {
+  return section.kind ?? 'concept'
+}
 
 function progressKey(jobId: string): string {
   return `aw_training_progress:${jobId}`
@@ -172,6 +207,18 @@ export function TrainingContent({ text }: { text: string }) {
           .filter(Boolean)
         if (lines.length === 0) return null
 
+        if (lines.every((line) => line.startsWith('>'))) {
+          const quote = lines.map((line) => line.replace(/^>\s?/, '')).join(' ')
+          return (
+            <aside
+              key={`quote-${blockIndex}`}
+              className="rounded-r-xl border-l-4 border-primary bg-primary/[0.04] px-3.5 py-3 text-sm leading-relaxed text-foreground/85"
+            >
+              {renderInline(quote, `quote-${blockIndex}`)}
+            </aside>
+          )
+        }
+
         if (lines[0].startsWith('### ')) {
           const heading = lines[0].slice(4)
           const rest = lines.slice(1)
@@ -282,6 +329,10 @@ function ModuleCheck({
         </div>
       </div>
 
+      {check.image && (
+        <TrainingFigure src={check.image} alt={check.imageAlt} className="mt-3" />
+      )}
+
       <div className="mt-3 grid gap-2">
         {check.options.map((option, index) => {
           const isSelected = selected === index
@@ -365,6 +416,9 @@ function CourseHeader({
   complete: boolean
 }) {
   const minutes = trainingCourseMinutes(course)
+  const units = groupUnits(course.modules)
+  const checkCount = course.modules.filter((section) => section.check).length
+  const labCount = course.modules.filter((section) => lessonKind(section) === 'lab').length
   return (
     <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
       <div className="p-4 sm:p-5">
@@ -375,7 +429,7 @@ function CourseHeader({
             </div>
             <div className="min-w-0">
               <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-primary">
-                AfterWorks academy
+                AfterWorks academy · coursebook
               </p>
               <h3 className="mt-0.5 text-base font-bold text-foreground sm:text-lg">
                 {course.level.includes('job-specific')
@@ -383,7 +437,7 @@ function CourseHeader({
                   : `${job.category} training course`}
               </h3>
               <p className="mt-0.5 text-[11px] text-muted-foreground">
-                {course.level} · {total} lesson{total === 1 ? '' : 's'} · ~{minutes} min
+                {course.level} · {units.length} units · {total} lessons · {checkCount} checks · ~{minutes} min
               </p>
             </div>
           </div>
@@ -424,6 +478,30 @@ function CourseHeader({
               </li>
             ))}
           </ul>
+        </div>
+
+        <div className="mt-4">
+          <p className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            <BookOpen className="size-3.5 text-primary" />
+            Course map
+          </p>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {units.map((unit, index) => (
+              <span
+                key={unit.unit}
+                className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-2 py-1 text-[10px] font-medium text-foreground/75"
+              >
+                <span className="font-mono text-[9px] text-primary">{String(index + 1).padStart(2, '0')}</span>
+                {unit.unit.replace(/^Unit \d+ · /, '')}
+                <span className="text-muted-foreground">· {unit.sections.length}</span>
+              </span>
+            ))}
+            {labCount > 0 && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-success/10 px-2 py-1 text-[10px] font-semibold text-success">
+                {labCount} lab{labCount === 1 ? '' : 's'}
+              </span>
+            )}
+          </div>
         </div>
       </div>
 
@@ -518,6 +596,11 @@ export function TrainingModules({
 
   const isAuthored = (job.trainingNotes ?? []).length > 0
   const pct = total > 0 ? Math.round((done / total) * 100) : 0
+  const unitStarts = new Set<number>()
+  sections.forEach((section, index) => {
+    if (index === 0 || sections[index - 1]?.unit !== section.unit) unitStarts.add(index)
+  })
+  const units = groupUnits(sections)
 
   if (total === 0) return null
 
@@ -543,6 +626,16 @@ export function TrainingModules({
                 state === 'locked' && 'border-border/60 bg-muted/20 opacity-70',
               )}
             >
+              {unitStarts.has(index) && (
+                <div className="flex items-center justify-between gap-2 border-b border-border/60 bg-muted/30 px-3.5 py-2">
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-foreground/70">
+                    {section.unit || `Unit ${units.findIndex((unit) => unit.sections.some((row) => row.index === index)) + 1}`}
+                  </p>
+                  <span className="text-[10px] text-muted-foreground">
+                    {units.find((unit) => unit.unit === (section.unit || 'Course lessons'))?.sections.length ?? 1} lessons
+                  </span>
+                </div>
+              )}
               <button
                 type="button"
                 disabled={state === 'locked'}
@@ -574,6 +667,9 @@ export function TrainingModules({
                     <span className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground">
                       <Clock3 className="size-3" />
                       {duration} min
+                    </span>
+                    <span className={cn('rounded-full px-1.5 py-0.5 text-[9px] font-semibold', LESSON_KIND_STYLE[lessonKind(section)])}>
+                      {LESSON_KIND_LABEL[lessonKind(section)]}
                     </span>
                     {section.check && (
                       <span
@@ -623,6 +719,15 @@ export function TrainingModules({
                       )}
                     </span>
                     <div className="min-w-0 flex-1">
+                      {section.objective && (
+                        <div className="mb-4 flex items-start gap-2 rounded-xl border border-primary/20 bg-primary/[0.04] px-3 py-2.5">
+                          <Target className="mt-0.5 size-4 shrink-0 text-primary" />
+                          <p className="text-xs leading-relaxed text-foreground/80">
+                            <span className="font-semibold text-foreground">By the end: </span>
+                            {section.objective}
+                          </p>
+                        </div>
+                      )}
                       <TrainingContent text={section.content} />
                     </div>
                   </div>
@@ -685,6 +790,26 @@ export function TrainingModules({
         })}
       </ul>
 
+      {course.glossary && course.glossary.length > 0 && (
+        <details className="rounded-xl border border-border bg-card p-3.5">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-2 text-xs font-semibold text-foreground">
+            <span className="flex items-center gap-2">
+              <BookOpen className="size-4 text-primary" />
+              Course glossary · {course.glossary.length} terms
+            </span>
+            <span className="text-[10px] font-medium text-muted-foreground">Reference</span>
+          </summary>
+          <dl className="mt-3 grid gap-2 sm:grid-cols-2">
+            {course.glossary.map((entry) => (
+              <div key={entry.term} className="rounded-lg border border-border/70 bg-muted/20 p-2.5">
+                <dt className="text-[11px] font-semibold text-foreground">{entry.term}</dt>
+                <dd className="mt-1 text-[10px] leading-relaxed text-muted-foreground">{entry.definition}</dd>
+              </div>
+            ))}
+          </dl>
+        </details>
+      )}
+
       {complete && (
         <div className="flex flex-col items-start gap-3 rounded-xl border border-success/40 bg-success/10 p-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-3">
@@ -692,8 +817,8 @@ export function TrainingModules({
             <div>
               <p className="text-sm font-semibold text-success">Training complete</p>
               <p className="text-xs text-muted-foreground">
-                You finished all {total} lesson{total === 1 ? '' : 's'}. The assessment below is now
-                unlocked.
+                You finished all {total} lessons across {units.length} units. The assessment below is
+                now unlocked.
               </p>
             </div>
           </div>
@@ -732,6 +857,8 @@ export function TrainingNotesPreview({ job }: { job: Job }) {
 
   if (sections.length === 0) return null
   const minutes = trainingCourseMinutes(course)
+  const units = groupUnits(sections)
+  const checkCount = sections.filter((section) => section.check).length
 
   return (
     <div className="overflow-hidden rounded-2xl border border-border bg-card">
@@ -745,10 +872,21 @@ export function TrainingNotesPreview({ job }: { job: Job }) {
               Preparation course
             </p>
             <p className="mt-0.5 text-sm font-semibold text-foreground">
-              {job.category} · {sections.length} lesson{sections.length === 1 ? '' : 's'} · ~{minutes} min
+              {job.category} · {units.length} units · {sections.length} lessons · {checkCount} checks · ~{minutes} min
             </p>
             <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{course.summary}</p>
           </div>
+        </div>
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          {units.map((unit, index) => (
+            <span
+              key={unit.unit}
+              className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-2 py-0.5 text-[10px] text-foreground/70"
+            >
+              <span className="font-mono text-[9px] text-primary">{String(index + 1).padStart(2, '0')}</span>
+              {unit.unit.replace(/^Unit \d+ · /, '')}
+            </span>
+          ))}
         </div>
         {course.objectives.length > 0 && (
           <ul className="mt-3 grid gap-1.5 sm:grid-cols-2">
@@ -786,9 +924,15 @@ export function TrainingNotesPreview({ job }: { job: Job }) {
                 <span className="block truncate text-sm font-semibold text-foreground">
                   {section.title || `Lesson ${index + 1}`}
                 </span>
-                <span className="mt-0.5 inline-flex items-center gap-1 text-[10px] text-muted-foreground">
-                  <Clock3 className="size-3" />
-                  {section.durationMinutes ?? 5} min · tap to {open === index ? 'close' : 'read'}
+                <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-muted-foreground">
+                  <span className="inline-flex items-center gap-1">
+                    <Clock3 className="size-3" />
+                    {section.durationMinutes ?? 5} min
+                  </span>
+                  <span className={cn('rounded-full px-1.5 py-0.5 text-[9px] font-semibold', LESSON_KIND_STYLE[lessonKind(section)])}>
+                    {LESSON_KIND_LABEL[lessonKind(section)]}
+                  </span>
+                  <span>· tap to {open === index ? 'close' : 'read'}</span>
                 </span>
               </span>
               <ChevronDown
@@ -800,6 +944,15 @@ export function TrainingNotesPreview({ job }: { job: Job }) {
             </button>
             {open === index && (
               <div className="border-t border-border/60 p-4">
+                {section.objective && (
+                  <div className="mb-3 flex items-start gap-2 rounded-xl border border-primary/20 bg-primary/[0.04] px-3 py-2">
+                    <Target className="mt-0.5 size-3.5 shrink-0 text-primary" />
+                    <p className="text-[11px] leading-relaxed text-foreground/80">
+                      <span className="font-semibold text-foreground">By the end: </span>
+                      {section.objective}
+                    </p>
+                  </div>
+                )}
                 <TrainingContent text={section.content} />
                 {section.image && (
                   <TrainingFigure
@@ -814,6 +967,25 @@ export function TrainingNotesPreview({ job }: { job: Job }) {
           </li>
         ))}
       </ul>
+      {course.glossary && course.glossary.length > 0 && (
+        <details className="border-t border-border/60 bg-muted/15 p-3.5">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-2 text-xs font-semibold text-foreground">
+            <span className="flex items-center gap-2">
+              <BookOpen className="size-4 text-primary" />
+              Course glossary · {course.glossary.length} terms
+            </span>
+            <span className="text-[10px] font-medium text-muted-foreground">Reference</span>
+          </summary>
+          <dl className="mt-3 grid gap-2 sm:grid-cols-2">
+            {course.glossary.map((entry) => (
+              <div key={entry.term} className="rounded-lg border border-border/70 bg-background p-2.5">
+                <dt className="text-[11px] font-semibold text-foreground">{entry.term}</dt>
+                <dd className="mt-1 text-[10px] leading-relaxed text-muted-foreground">{entry.definition}</dd>
+              </div>
+            ))}
+          </dl>
+        </details>
+      )}
     </div>
   )
 }

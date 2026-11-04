@@ -286,7 +286,8 @@ function UsersPageInner() {
     () => ({
       verified: rows.filter((row) => row.kycVerified).length,
       flagged: rows.filter((row) => row.accountState !== 'active').length,
-      admins: rows.filter((row) => row.role === 'admin').length,
+      owners: rows.filter((row) => row.isOwner === true).length,
+      admins: rows.filter((row) => row.role === 'admin' && !row.isOwner).length,
     }),
     [rows],
   )
@@ -392,7 +393,8 @@ function UsersPageInner() {
                             {row.email || row.auth?.email || (row.profileIncomplete ? 'no name or email on file' : '—')}
                           </p>
                         </div>
-                        {row.role === 'admin' && <StatusBadge tone="info"><ShieldCheck className="size-3" />Staff</StatusBadge>}
+                        {row.isOwner && <StatusBadge tone="info"><ShieldCheck className="size-3" />Admin</StatusBadge>}
+                        {!row.isOwner && row.role === 'admin' && <StatusBadge tone="info"><ShieldCheck className="size-3" />Staff</StatusBadge>}
                         {row.profileIncomplete && (
                           <StatusBadge tone="warning" title="This document has no name, email or wallet — a stub record, not a finished profile. Open it to see whether an Auth account exists before erasing it.">
                             Incomplete
@@ -448,7 +450,7 @@ function UsersPageInner() {
         <Pager
           hasMore={hasMore}
           loading={loading}
-          pageLabel={`Page ${pageIndex + 1} · ${rows.length} rows · ${summary.verified} verified · ${summary.flagged} flagged · ${summary.admins} staff`}
+          pageLabel={`Page ${pageIndex + 1} · ${rows.length} rows · ${summary.verified} verified · ${summary.flagged} flagged · ${summary.owners} admin · ${summary.admins} staff`}
           onPrev={() => setCursors((prev) => (prev.length > 1 ? prev.slice(0, -1) : prev))}
           onNext={() => setCursors((prev) => (nextCursor ? [...prev, nextCursor] : prev))}
         />
@@ -466,7 +468,8 @@ function UsersPageInner() {
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
                   <h2 className="truncate text-base font-semibold tracking-tight">{selected.name || 'Unnamed member'}</h2>
-                  {selected.role === 'admin' && <StatusBadge tone="info">Staff</StatusBadge>}
+                  {selected.isOwner && <StatusBadge tone="info"><ShieldCheck className="size-3" />Admin</StatusBadge>}
+                  {!selected.isOwner && selected.role === 'admin' && <StatusBadge tone="info">Staff</StatusBadge>}
                   {selected.profileIncomplete && <StatusBadge tone="warning">Incomplete record</StatusBadge>}
                 </div>
                 <p className="truncate text-xs text-muted-foreground">

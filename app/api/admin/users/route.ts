@@ -33,13 +33,18 @@ export async function GET(req: NextRequest) {
     const firestore = await import('@/lib/firestore-admin')
     if (!firestore.isFirebaseAdminUsable()) return fail(503, 'User directory unavailable (storage not configured).', { code: 'storage_unavailable' })
 
+    // Roster emails are the main administrator: tag them so the console shows "Admin", not "Staff".
+    const ownerEmails = new Set(parseEmailList(env('ADMIN_EMAILS')))
+    const markOwner = <T extends { email?: unknown }>(row: T): T =>
+      typeof row.email === 'string' && ownerEmails.has(row.email.trim().toLowerCase()) ? { ...row, isOwner: true } : row
+
     const uid = req.nextUrl.searchParams.get('uid')
     if (uid) {
       const detail = await firestore.getUserDetail(uid.slice(0, 128))
       if (!detail) return fail(404, 'No such user.', { code: 'user_not_found' })
       // The profile says what we know about them; Auth says whether they can actually sign in.
       const account = await firestore.getAuthAccountStateForUid(uid.slice(0, 128))
-      return json({ ok: true, user: redactSecrets(detail), account })
+      return json({ ok: true, user: markOwner(redactSecrets(detail)), account })
     }
 
     const page = await firestore.listUsersPage({
@@ -48,7 +53,7 @@ export async function GET(req: NextRequest) {
       search: req.nextUrl.searchParams.get('search') ?? '',
       state: req.nextUrl.searchParams.get('state') ?? 'all',
     })
-    return json({ ok: true, ...page })
+    return json({ ok: true, ...page, rows: (page.rows ?? []).map(markOwner) })
   } catch (err) {
     return routeError('admin/users:GET', err)
   }

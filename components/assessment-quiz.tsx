@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import type { JobCategory } from '@/lib/afterworks-data'
 import { authedFetch, describeError } from '@/lib/client-api'
 import { TrainingFigure } from '@/components/training-figure'
+import { NoCopyPaste } from '@/components/no-copy-paste'
 import { CheckCircle2, Circle, AlertCircle, BookOpen } from 'lucide-react'
 
 type QuizQuestion = {
@@ -137,7 +138,7 @@ export function AssessmentQuiz({ category, jobId, onPass }: { category: JobCateg
 
   if (passed) {
     return (
-      <div className="flex flex-col gap-4">
+      <NoCopyPaste className="flex flex-col gap-4">
         <div className="flex flex-col items-center gap-4 rounded-xl border border-success/30 bg-success/5 py-12">
           <CheckCircle2 className="size-16 text-success" />
           <h3 className="text-2xl font-bold text-success-foreground">Assessment Passed!</h3>
@@ -198,7 +199,7 @@ export function AssessmentQuiz({ category, jobId, onPass }: { category: JobCateg
             </ul>
           </div>
         )}
-      </div>
+      </NoCopyPaste>
     )
   }
 
@@ -220,6 +221,7 @@ export function AssessmentQuiz({ category, jobId, onPass }: { category: JobCateg
 
   return (
     <div ref={assessmentRef} className="flex scroll-mt-24 flex-col gap-4">
+      <NoCopyPaste className="flex flex-col gap-4">
       <div className="rounded-xl border border-border bg-card p-5 shadow-sm sm:p-6">
         <div className="flex flex-col justify-between gap-4 border-b border-border pb-5 sm:flex-row sm:items-center">
           <div>
@@ -394,6 +396,7 @@ export function AssessmentQuiz({ category, jobId, onPass }: { category: JobCateg
           </div>
         )}
       </div>
+      </NoCopyPaste>
     </div>
   )
 }

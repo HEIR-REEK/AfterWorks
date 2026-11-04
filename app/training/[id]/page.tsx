@@ -18,7 +18,7 @@ import { useAuth } from '@/components/firebase-auth-provider'
 import { Button } from '@/components/ui/button'
 import { AssessmentQuiz } from '@/components/assessment-quiz'
 import { TrainingModules, readTrainingProgress } from '@/components/training-modules'
-import { formatKesValue, formatUsd, trainingFeeKesFor, trainingFeeUsdFor } from '@/lib/afterworks-data'
+import { formatKesValue, formatUsd, jobHasTraining, trainingFeeKesFor, trainingFeeUsdFor } from '@/lib/afterworks-data'
 import { authedFetch, describeError } from '@/lib/client-api'
 
 // Kept per-tab and short-lived: it is only a pointer to a pending Paystack charge that the server
@@ -476,7 +476,7 @@ function TrainingPageInner({ params }: { params: Promise<{ id: string }> }) {
   // actually went through is then confirmed, recorded as `success` in the admin ledger and the
   // training unlocks — with no reference for the worker to hunt down.
   useEffect(() => {
-    if (payState !== 'idle' || !job?.trainingRequired || isJobPaid(id)) return
+    if (payState !== 'idle' || !job || !jobHasTraining(job) || isJobPaid(id)) return
     let cancelled = false
     void (async () => {
       try {
@@ -497,7 +497,7 @@ function TrainingPageInner({ params }: { params: Promise<{ id: string }> }) {
     return () => {
       cancelled = true
     }
-  }, [payState, id, isJobPaid, job?.trainingRequired, verifyReference])
+  }, [payState, id, isJobPaid, job, verifyReference])
 
   // ── Poll for payment while awaiting ─────────────────────────────────────
   useEffect(() => {
@@ -579,7 +579,10 @@ function TrainingPageInner({ params }: { params: Promise<{ id: string }> }) {
     )
   }
 
-  const isPaid = !job.trainingRequired || payState === 'paid' || isJobPaid(job.id)
+  // Training is what carries the fee. A card with no authored training sections is assessment-only:
+  // free, and there is nothing to pay for.
+  const hasTraining = jobHasTraining(job)
+  const isPaid = !hasTraining || payState === 'paid' || isJobPaid(job.id)
 
   return (
     <div className="mx-auto flex min-w-0 w-full max-w-3xl flex-col gap-6">
@@ -606,7 +609,7 @@ function TrainingPageInner({ params }: { params: Promise<{ id: string }> }) {
             isPaid ? 'bg-success/15 text-success font-semibold' : 'bg-primary/10 text-primary font-bold ring-1 ring-primary/30'
           }`}>
             <span className="flex size-5 items-center justify-center rounded-full bg-background text-[10px] shadow-xs">1</span>
-            <span>{job.trainingRequired ? '1. Complete Payment' : '1. No Fee'}</span>
+            <span>{hasTraining ? '1. Complete Payment' : '1. No Training Fee'}</span>
           </div>
 
           <div className={`flex flex-col items-center gap-1 text-center p-2 rounded-lg ${
@@ -617,7 +620,7 @@ function TrainingPageInner({ params }: { params: Promise<{ id: string }> }) {
                 : 'text-muted-foreground opacity-60'
           }`}>
             <span className="flex size-5 items-center justify-center rounded-full bg-background text-[10px] shadow-xs">2</span>
-            <span>2. Get Trained</span>
+            <span>{hasTraining ? '2. Get Trained' : '2. Assessment'}</span>
           </div>
 
           <div className={`flex flex-col items-center gap-1 text-center p-2 rounded-lg ${
@@ -636,74 +639,37 @@ function TrainingPageInner({ params }: { params: Promise<{ id: string }> }) {
         </div>
         
         <p className="mt-4 text-sm leading-relaxed text-muted-foreground">
-          {job.trainingRequired
-            ? `Follow the required sequence: each job card with training & assessment requires its own independent payment, and paying for one does not open another. You can pay before identity verification. The full training course and skill assessment unlock only after your ID check is approved, followed by the application.`
-            : `This job card includes the full training course and assessment. There is no training fee for this card, and paying is not required. Identity verification must be approved before the course and assessment unlock.`}
+          {hasTraining
+            ? `Follow the required sequence: each job card with training requires its own independent payment, and paying for one does not open another. You can pay before identity verification; the training and assessment unlock once your ID check is approved.`
+            : `This job card has no training — it is assessment and application only, so there is nothing to pay. Identity verification must be approved before the assessment unlocks.`}
         </p>
 
-        {/* ── FREE JOB (Full course + assessment, no payment) ── */}
-        {!job.trainingRequired && (
+        {/* ── ASSESSMENT-ONLY CARD (no training, no fee) ── */}
+        {/* Identity verification is the only gate: there is no training to work through and nothing
+            to pay, so a verified member goes straight to the assessment and the application. */}
+        {!hasTraining && (
           <div className="mt-8 flex flex-col gap-6 border-t border-border pt-6">
             {!kycVerified ? (
               <VerificationGate paid={false} />
             ) : (
-              <>
-                <div className="flex flex-col gap-4">
-                  <div>
-                    <h2 className="flex items-center gap-2 text-lg font-bold">
-                      <GraduationCap className="size-5 text-primary" />
-                      Training Course
-                    </h2>
-                    <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                      Work through every lesson and pass its quick check. The full course is required
-                      for this card even though there is no training fee; the assessment unlocks when
-                      the final lesson is complete.
-                    </p>
-                  </div>
-                  <TrainingModules
-                    job={job}
-                    onComplete={() => setTrainingComplete(true)}
-                    onReset={() => setTrainingComplete(false)}
-                  />
+              <div className="flex flex-col gap-4">
+                <div className="flex items-center justify-between border-b border-border pb-3">
+                  <h2 className="flex items-center gap-2 text-lg font-bold">
+                    <CheckCircle2 className="size-5 text-primary" />
+                    Skill Assessment &amp; Job Card Application
+                  </h2>
                 </div>
-
-                <div className="flex flex-col gap-4 border-t border-border pt-6">
-                  <div className="flex items-center justify-between border-b border-border pb-3">
-                    <h2 className="flex items-center gap-2 text-lg font-bold">
-                      <CheckCircle2 className="size-5 text-primary" />
-                      Skill Assessment &amp; Job Card Application
-                    </h2>
-                    {!trainingComplete && (
-                      <span className="flex items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground">
-                        <Lock className="size-3" />
-                        Locked
-                      </span>
-                    )}
-                  </div>
-                  {trainingComplete ? (
-                    <>
-                      <AssessmentQuiz category={job.category} jobId={job.id} onPass={handleApplyAfterTraining} />
-                      {applyError && (
-                        <p className="text-center text-sm font-medium text-destructive">{applyError}</p>
-                      )}
-                    </>
-                  ) : (
-                    <div className="flex items-start gap-3 rounded-xl border border-border bg-muted/30 p-4 text-sm text-muted-foreground">
-                      <Lock className="mt-0.5 size-4 shrink-0" />
-                      <span>
-                        Finish every training lesson above to unlock the assessment. Your progress is
-                        saved as you go — you can leave and come back.
-                      </span>
-                    </div>
-                  )}
-                </div>
-              </>
+                <AssessmentQuiz category={job.category} jobId={job.id} onPass={handleApplyAfterTraining} />
+                {applyError && (
+                  <p className="text-center text-sm font-medium text-destructive">{applyError}</p>
+                )}
+              </div>
             )}
           </div>
         )}
 
         {/* ── PAID JOB (Unpaid State - Locked Gate) ── */}
-        {job.trainingRequired && !isPaid && (
+        {hasTraining && !isPaid && (
           isMounted ? (
             <PaystackCheckoutSection
               jobId={job.id}
@@ -723,7 +689,7 @@ function TrainingPageInner({ params }: { params: Promise<{ id: string }> }) {
         )}
 
         {/* ── PAID JOB (Paid State - Verify, then Training -> Assessment -> Apply) ── */}
-        {job.trainingRequired && isPaid && (
+        {hasTraining && isPaid && (
           <div className="mt-8 flex flex-col gap-8">
             <div className="flex items-center gap-2 rounded-xl bg-success/15 p-4 text-sm font-medium text-success border border-success/30">
               <CheckCircle2 className="size-5 shrink-0" />

@@ -162,6 +162,9 @@ function adminInput(overrides: Partial<Parameters<typeof sanitizeJob>[0]> = {}) 
     slotsRemaining: 25,
     trainingRequired: true,
     trainingFeeUsd: 12.5,
+    // A fee exists because the card has training. Under the rule the flag is derived from these
+    // sections, so a paid fixture has to carry some.
+    trainingNotes: [{ title: 'How the calls are structured', content: 'Label every paragraph.' }],
     requiresVerified: true,
     status: 'open',
     ...overrides,
@@ -187,8 +190,22 @@ test('an edit that does not touch the fee keeps the stored one instead of resett
   assert.equal(sanitizeJob(adminInput({ trainingFeeUsd: undefined }), null).trainingFeeUsd, 10)
 })
 
-test('turning paid training off stores no fee, and the bounds are enforced server-side', () => {
-  assert.equal(sanitizeJob(adminInput({ trainingRequired: false, trainingFeeUsd: 25 })).trainingFeeUsd, 0)
+test('training implies a fee, and removing the training removes the fee', () => {
+  // The rule: a card charges because it has training. Sections present → a fee is stored.
+  const paid = sanitizeJob(adminInput({ trainingFeeUsd: 25 }))
+  assert.equal(paid.trainingRequired, true)
+  assert.equal(paid.trainingFeeUsd, 25)
+
+  // Strip the sections and the card becomes assessment-only, so the fee must not survive.
+  const free = sanitizeJob(adminInput({ trainingNotes: [], trainingFeeUsd: 25 }))
+  assert.equal(free.trainingRequired, false)
+  assert.equal(free.trainingFeeUsd, 0)
+
+  // A stored flag that disagrees with the content loses: sections win.
+  const lying = sanitizeJob(adminInput({ trainingRequired: false, trainingFeeUsd: 25 }))
+  assert.equal(lying.trainingRequired, true)
+  assert.equal(lying.trainingFeeUsd, 25)
+
   assert.equal(sanitizeJob(adminInput({ trainingFeeUsd: 99_999 })).trainingFeeUsd, 1_000)
   assert.equal(sanitizeJob(adminInput({ trainingFeeUsd: -4 }), { trainingFeeUsd: 12.5 }).trainingFeeUsd, 12.5)
 })

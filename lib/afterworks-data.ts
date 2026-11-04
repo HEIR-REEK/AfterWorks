@@ -119,15 +119,23 @@ export type Job = {
   estimatedMinutes: number
   capacity: number
   slotsRemaining: number
+  /**
+   * Whether a training fee is charged. This is *derived* from the card's content, not chosen: a
+   * card with training sections is paid, a card without them is assessment-only. It is stored so
+   * older documents and the catalogue can read it without recomputing, but `jobHasTraining()` is
+   * the authority — see `jobRequiresTrainingFee()`.
+   */
   trainingRequired: boolean
   /**
    * Per-job training price in USD, decided by the admin when publishing the card. Only meaningful
-   * when `trainingRequired` is true; falls back to the globally configured fee when absent.
+   * when the card has training; falls back to the globally configured fee when absent.
    */
   trainingFeeUsd?: number
   /**
-   * Admin-authored training sections. Empty/absent → the built-in category course is used. A short
-   * set of notes is prepended to that course; five or more notes replace it.
+   * Admin-authored training sections. This is what makes a card a *training* card: non-empty →
+   * the card has training and therefore a training fee. Empty/absent → the card is assessment-only
+   * and free. There is deliberately no built-in coursebook fallback, because "has training" is the
+   * very thing the fee hangs on.
    */
   trainingNotes?: TrainingSection[]
   /** Admin-authored assessment questions. Empty/absent → the built-in category bank is used. */
@@ -309,6 +317,31 @@ export function getTrainingFeeCents(overrideAmount?: number | string | null): nu
 }
 
 /**
+ * Whether a card has training at all — and therefore whether it charges for it.
+ *
+ * The rule is deliberately one-directional: *training implies a fee*. A card with no authored
+ * sections is an assessment-only card: free, and the worker goes straight to the assessment once
+ * their identity is verified. There is no "free training" state, because that is the combination
+ * that made the fee look arbitrary — a card could deliver a full course for nothing while an
+ * identical-looking card charged for one.
+ *
+ * Blank sections don't count: an admin who adds a heading and then clears it has not authored
+ * training.
+ */
+export function jobHasTraining(job: { trainingNotes?: TrainingSection[] } | null | undefined): boolean {
+  if (!job) return false
+  return (job.trainingNotes ?? []).some((section) => section.title.trim() !== '' || section.content.trim() !== '')
+}
+
+/**
+ * Whether a worker must pay a training fee for this card. Same as `jobHasTraining()` — the fee
+ * exists because the training does — but named for the call sites that are asking about money.
+ */
+export function jobRequiresTrainingFee(job: { trainingNotes?: TrainingSection[] } | null | undefined): boolean {
+  return jobHasTraining(job)
+}
+
+/**
  * The USD price of training for one job card. Admins set this per job; when the job carries no
  * fee of its own (older documents, seeded demo cards) the globally configured fee applies.
  * Unlike `getTrainingFeeUsd`, a per-job fee is taken at face value — no cents heuristic.
@@ -419,7 +452,8 @@ export function seedJobs(): Job[] {
       estimatedMinutes: 150,
       capacity: 80,
       slotsRemaining: 64,
-      trainingRequired: false,
+      trainingRequired: true,
+      trainingFeeUsd: 14,
       trainingNotes: [
         {
           title: 'How these support calls are structured',

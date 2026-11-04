@@ -157,6 +157,7 @@ export function normaliseJobRecord(docId: string, raw: unknown, now: number = Da
   // or zero fee as "use the globally configured price", and so does the server when it opens the
   // Paystack charge — so the card and the checkout cannot disagree.
   const fee = number(data.trainingFeeUsd, 0)
+  const trainingSections = normaliseTrainingSections(data.trainingNotes)
   const closesAt = typeof data.closesAt === 'string' && data.closesAt ? data.closesAt : new Date(now + 7 * 86400_000).toISOString()
 
   const category = String(data.category ?? 'Data Entry') as JobCategory
@@ -171,9 +172,11 @@ export function normaliseJobRecord(docId: string, raw: unknown, now: number = Da
     estimatedMinutes: Math.max(5, Math.round(number(data.estimatedMinutes, 60))),
     capacity,
     slotsRemaining: clamp(Number.isFinite(slotsRaw) ? slotsRaw : capacity, 0, capacity),
-    trainingRequired: data.trainingRequired === true,
+    trainingRequired: trainingSections.some(
+      (section) => section.title.trim() !== '' || section.content.trim() !== '',
+    ),
     ...(fee > 0 ? { trainingFeeUsd: Math.round(fee * 10_000) / 10_000 } : {}),
-    trainingNotes: normaliseTrainingSections(data.trainingNotes),
+    trainingNotes: trainingSections,
     // The answer key is server-only. The browser asks /api/assessments for questions without
     // `correctIndex`/`explanation` and receives the review only after the server scores it.
     assessmentQuestions: [],

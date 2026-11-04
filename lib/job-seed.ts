@@ -11,7 +11,7 @@
  * through `upsertJob()`, which sanitises the payload and records an audit entry.
  */
 
-import {
+import { jobHasTraining,
   EXPANDED_CATALOGUE_JOB_IDS,
   seedJobs,
   type Job,
@@ -49,8 +49,9 @@ export function starterJobInput(job: Job): AdminJobInput {
     estimatedMinutes: job.estimatedMinutes,
     capacity: job.capacity,
     slotsRemaining: job.slotsRemaining,
-    trainingRequired: job.trainingRequired,
-    trainingFeeUsd: job.trainingRequired ? job.trainingFeeUsd : undefined,
+    // Derived from the sections, so a seeded card can never claim "free" while carrying a course.
+    trainingRequired: jobHasTraining(job),
+    trainingFeeUsd: jobHasTraining(job) ? job.trainingFeeUsd : undefined,
     trainingNotes: job.trainingNotes ?? [],
     // Empty means the built-in category bank is used. Keeping it explicit makes the document
     // shape identical to one saved from the console, where an empty list is also meaningful.

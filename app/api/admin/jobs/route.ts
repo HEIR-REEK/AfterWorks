@@ -68,6 +68,15 @@ export async function PUT(req: NextRequest) {
     const firestore = await import('@/lib/firestore-admin')
     if (!firestore.isFirebaseAdminUsable()) return fail(503, 'Storage unavailable — nothing was saved.', { code: 'storage_unavailable' })
 
+    // The rule, enforced on the server: a card charges because it *has* training. Counting the
+    // normalised sections is what stops a stored card from claiming "free" while carrying a course.
+    const authoredTrainingSections = (Array.isArray(body.trainingNotes)
+      ? (body.trainingNotes as Record<string, unknown>[])
+      : []
+    ).filter(
+      (section) => String(section?.title ?? '').trim() !== '' || String(section?.content ?? '').trim() !== '',
+    ).length
+
     const result = await firestore.upsertJob(
       {
         id: typeof body.id === 'string' ? sanitizeLine(body.id, 80) : undefined,
@@ -81,7 +90,7 @@ export async function PUT(req: NextRequest) {
         estimatedMinutes: Number(body.estimatedMinutes ?? 60),
         capacity: Number(body.capacity ?? 10),
         slotsRemaining: body.slotsRemaining === undefined ? undefined : Number(body.slotsRemaining),
-        trainingRequired: body.trainingRequired === true,
+        trainingRequired: authoredTrainingSections > 0,
         // Per-job training price + authored content. Shape-checked here, depth-limited and
         // normalised by sanitizeJob() — the browser never gets to decide the real bounds.
         trainingFeeUsd: body.trainingFeeUsd === undefined ? undefined : Number(body.trainingFeeUsd),

@@ -25,7 +25,7 @@ import { adminApi, useAdminSession, type AdminJobRow } from '@/lib/admin'
 import { AdminCard, Field, ReasonDialog, inputClass, useToasts } from '@/components/admin-ui'
 import { Button } from '@/components/ui/button'
 import { StatusBadge } from '@/components/status-badge'
-import {
+import { jobHasTraining,
   assessmentPassMark,
   formatUsd,
   trainingFeeKesFor,
@@ -174,6 +174,12 @@ export default function AdminJobsPage() {
   const [searchInput, setSearchInput] = useState('')
   const [search, setSearch] = useState('')
   const [editing, setEditing] = useState<Draft | null>(null)
+  // Training is what carries the fee. These two read the draft's sections directly so the editor
+  // cannot show "free" on a card that has a course, or a fee on one that does not.
+  const editingTrainingCount = (editing?.trainingNotes ?? []).filter(
+    (section) => section.title.trim() !== '' || section.content.trim() !== '',
+  ).length
+  const editingHasTraining = editingTrainingCount > 0
   const [saving, setSaving] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState<AdminJobRow | null>(null)
   const [confirmImport, setConfirmImport] = useState(false)
@@ -229,7 +235,7 @@ export default function AdminJobsPage() {
       estimatedMinutes: job.estimatedMinutes,
       capacity: job.capacity,
       slotsRemaining: job.slotsRemaining,
-      trainingRequired: job.trainingRequired,
+      trainingRequired: jobHasTraining(job),
       trainingFeeUsd: job.trainingFeeUsd && job.trainingFeeUsd > 0 ? job.trainingFeeUsd : 10,
       trainingNotes: (job.trainingNotes ?? []).map((section) => ({
         title: section.title,
@@ -340,8 +346,8 @@ export default function AdminJobsPage() {
 
     // ── Validate the learning content before it leaves the browser ──────────
     const fee = Number(editing.trainingFeeUsd)
-    if (editing.trainingRequired && !(Number.isFinite(fee) && fee >= 0.0001 && fee <= 1000)) {
-      push('error', 'Set a training fee between $0.0001 and $1,000 — amounts under $1 are fine, the KES charge is rounded — or switch the card to free course + assessment.')
+    if (editingHasTraining && !(Number.isFinite(fee) && fee >= 0.0001 && fee <= 1000)) {
+      push('error', 'This card has training, so it needs a fee between $0.0001 and $1,000 — amounts under $1 are fine, the KES charge is rounded. Remove every training section to make it an assessment-only card with no fee.')
       return
     }
     const cleanedQuestions = editing.assessmentQuestions.map((question, index) => {
@@ -433,8 +439,8 @@ export default function AdminJobsPage() {
         estimatedMinutes: Number(editing.estimatedMinutes),
         capacity: Number(editing.capacity),
         slotsRemaining: Number(editing.slotsRemaining),
-        trainingRequired: editing.trainingRequired,
-        trainingFeeUsd: editing.trainingRequired ? fee : 0,
+        trainingRequired: editingHasTraining,
+        trainingFeeUsd: editingHasTraining ? fee : 0,
         trainingNotes: cleanedNotes,
         assessmentQuestions: cleanedQuestions,
         requiresVerified: editing.requiresVerified,
@@ -570,7 +576,7 @@ export default function AdminJobsPage() {
                     <p className="truncate text-sm font-semibold text-foreground">{job.title}</p>
                     <StatusBadge tone={job.status === 'open' ? 'success' : job.status === 'paused' ? 'warning' : 'neutral'}>{job.status}</StatusBadge>
                     <StatusBadge tone="info">{job.category}</StatusBadge>
-                    {job.trainingRequired ? (
+                    {jobHasTraining(job) ? (
                       <StatusBadge tone="warning">training · {formatUsd(trainingFeeUsdFor(job.trainingFeeUsd))}</StatusBadge>
                     ) : (
                       <StatusBadge tone="neutral">assessment only</StatusBadge>
@@ -707,11 +713,11 @@ export default function AdminJobsPage() {
                     Training &amp; assessment
                   </h3>
                   <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-                    Every card ships a full course and assessment. Decide whether the course is paid or free, and what workers study and answer on the user side.
+                    A card charges because it has training. Add sections and it becomes a paid training card; leave them out and it is assessment-only and free. Every card needs an assessment.
                   </p>
                   <div className="mt-2 flex flex-wrap gap-1.5 text-[10px] font-medium text-muted-foreground">
                     <span className="rounded-full border border-border bg-background px-2 py-0.5">
-                      Course · {authoredSections.length > 0 ? `${authoredSections.length} authored` : `built-in ${editing.category}`}
+                      Course · {authoredSections.length > 0 ? `${authoredSections.length} authored` : 'none — assessment only'}
                     </span>
                     <span className="rounded-full border border-border bg-background px-2 py-0.5">
                       {courseUnits} units · {courseSections.length} lessons · {courseChecks} checks
@@ -733,42 +739,32 @@ export default function AdminJobsPage() {
                   </div>
                 </header>
 
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                  <button
-                    type="button"
-                    onClick={() => setEditing({ ...editing, trainingRequired: true })}
-                    className={cn(
-                      'flex flex-col gap-1 rounded-xl border p-3 text-left transition-colors',
-                      editing.trainingRequired ? 'border-primary bg-primary/10 ring-1 ring-primary/30' : 'border-border bg-background hover:border-primary/40',
-                    )}
-                  >
-                    <span className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
-                      <GraduationCap className="size-3.5 text-primary" />
-                      Paid training + assessment
+                {/* The fee is derived from the content, not chosen. A card with training sections is
+                    paid; strip them all and it becomes assessment-only and free. There is no way to
+                    set the two apart, which is what let a full course ship for nothing. */}
+                <div className="flex flex-col gap-2 rounded-xl border border-border bg-muted/30 p-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span
+                      className={cn(
+                        'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold',
+                        editingHasTraining ? 'bg-warning/15 text-warning' : 'bg-success/15 text-success',
+                      )}
+                    >
+                      {editingHasTraining ? <GraduationCap className="size-3.5" /> : <HelpCircle className="size-3.5" />}
+                      {editingHasTraining ? 'Training card — workers pay a fee' : 'Assessment-only card — no fee'}
                     </span>
-                    <span className="text-[11px] leading-snug text-muted-foreground">
-                      Workers pay your fee first, then step through the training sections, then pass the assessment.
+                    <span className="text-xs text-muted-foreground">
+                      {editingTrainingCount} authored training section{editingTrainingCount === 1 ? '' : 's'}
                     </span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setEditing({ ...editing, trainingRequired: false })}
-                    className={cn(
-                      'flex flex-col gap-1 rounded-xl border p-3 text-left transition-colors',
-                      !editing.trainingRequired ? 'border-primary bg-primary/10 ring-1 ring-primary/30' : 'border-border bg-background hover:border-primary/40',
-                    )}
-                  >
-                    <span className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
-                      <HelpCircle className="size-3.5 text-primary" />
-                      Free course + assessment
-                    </span>
-                    <span className="text-[11px] leading-snug text-muted-foreground">
-                      No payment. Workers must complete the full course — authored sections or the built-in coursebook — and pass the assessment before applying.
-                    </span>
-                  </button>
+                  </div>
+                  <p className="text-[11px] leading-relaxed text-muted-foreground">
+                    {editingHasTraining
+                      ? 'Workers pay the fee below, then work through these sections, then pass the assessment. Remove every section to make this an assessment-only card with no fee.'
+                      : 'No training on this card, so there is nothing to charge. Add a section below and it becomes a paid training card. Verified members go straight to the assessment.'}
+                  </p>
                 </div>
 
-                {editing.trainingRequired && (
+                {editingHasTraining && (
                   <Field
                     label="Training fee (USD)"
                     hint={`Charged once per worker for this card only — ≈ KES ${trainingFeeKesFor(editing.trainingFeeUsd).toLocaleString()} at the current rate.`}

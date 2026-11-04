@@ -42,7 +42,7 @@ import {
   userMatchesState,
   type AdminUserSearchRecord,
 } from '@/lib/admin-search'
-import { assessmentPassMark, type AssessmentQuestion, type TrainingSection, TRAINING_LESSON_KINDS } from '@/lib/afterworks-data'
+import { jobHasTraining, assessmentPassMark, type AssessmentQuestion, type TrainingSection, TRAINING_LESSON_KINDS } from '@/lib/afterworks-data'
 import { safeImageSrc } from '@/lib/afterworks-data'
 import { normaliseAssessmentQuestions, normaliseTrainingSections } from '@/lib/job-catalogue'
 
@@ -2702,7 +2702,13 @@ export function sanitizeJob(input: AdminJobInput, existing?: Record<string, unkn
   const requested = Math.round(Number(input.slotsRemaining ?? capacity))
   const slots = Math.max(0, Math.min(capacity, Number.isFinite(requested) ? requested : capacity))
 
-  const trainingRequired = input.trainingRequired === true
+  // The rule, enforced where the document is written: a card charges because it *has* training.
+  // Counting the authored sections here means no caller can store a fee on a card with no course,
+  // or a course with no fee.
+  const trainingNotes = (Array.isArray(input.trainingNotes) ? input.trainingNotes : []).filter(
+    (section) => String(section?.title ?? '').trim() !== '' || String(section?.content ?? '').trim() !== '',
+  )
+  const trainingRequired = trainingNotes.length > 0
 
   // Per-job training price. Only paid-training jobs carry one; when the admin omits it we keep the
   // stored fee (edits that do not touch the fee) or default to the global $10-equivalent.
@@ -2715,9 +2721,9 @@ export function sanitizeJob(input: AdminJobInput, existing?: Record<string, unkn
     : 0
 
   // Admin-authored training sections, bounded so a paste cannot balloon the document past
-  // Firestore's 1 MiB limit. Empty titles/contents are dropped; an empty list means "use the
-  // built-in category modules" on the worker side.
-  const trainingNotes = (Array.isArray(input.trainingNotes) ? input.trainingNotes : [])
+  // Firestore's 1 MiB limit. Empty titles/contents are dropped; an empty list means the card is
+  // assessment-only and free — there is deliberately no built-in coursebook fallback.
+  const authoredTrainingNotes = trainingNotes
     .map((raw) => {
       const section = (raw ?? {}) as Record<string, unknown>
       const image = safeImageSrc(section.image)
@@ -2807,7 +2813,7 @@ export function sanitizeJob(input: AdminJobInput, existing?: Record<string, unkn
     slotsRemaining: slots,
     trainingRequired,
     trainingFeeUsd,
-    trainingNotes,
+    trainingNotes: authoredTrainingNotes,
     assessmentQuestions,
     requiresVerified: input.requiresVerified !== false,
     status: (JOB_STATUSES as readonly string[]).includes(input.status) ? input.status : 'open',
@@ -2979,7 +2985,7 @@ export async function createApplicationServer(uid: string, jobId: string): Promi
     throw new TransitionError('Pass the assessment for this job before applying.', 403)
   }
 
-  if (job.trainingRequired === true) {
+  if (jobHasTraining(job)) {
     let paid = Array.isArray(user.paidTrainings) ? (user.paidTrainings as string[]) : []
     if (!paid.includes(jobId)) {
       // Check if a successful payment transaction exists in Firestore for this user and job
@@ -3546,11 +3552,15 @@ export async function listJobsServer(opts: { status?: string; pageSize?: number;
         estimatedMinutes: Number(data.estimatedMinutes ?? 0) || 0,
         capacity: Number(data.capacity ?? 0) || 0,
         slotsRemaining: Number(data.slotsRemaining ?? 0) || 0,
-        trainingRequired: data.trainingRequired === true,
         trainingFeeUsd: Number(data.trainingFeeUsd ?? 0) || 0,
         // Reuse the worker-facing normalisers so the console edits exactly the lesson fields the
         // training reader renders — duration and the end-of-lesson check included.
         trainingNotes: normaliseTrainingSections(data.trainingNotes),
+        // Derived from those sections, so the console never shows a stale "free" on a card that
+        // actually carries a course.
+        trainingRequired: normaliseTrainingSections(data.trainingNotes).some(
+          (section) => section.title.trim() !== '' || section.content.trim() !== '',
+        ),
         assessmentQuestions: normaliseAssessmentQuestions(data.assessmentQuestions),
         requiresVerified: data.requiresVerified !== false,
         status: String(data.status ?? 'open'),

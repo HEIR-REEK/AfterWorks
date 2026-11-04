@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { Clock, GraduationCap, MapPin, Users, ArrowRight, CheckCircle2 } from 'lucide-react'
 import { useAfterWorks } from '@/components/afterworks-provider'
-import {
+import { jobHasTraining,
   formatDuration,
   formatUsd,
   trainingFeeUsdFor,
@@ -72,7 +72,7 @@ export function JobCard({ job }: { job: Job }) {
         </span>
       </div>
 
-      {job.trainingRequired && (
+      {jobHasTraining(job) && (
         <div className={`mt-3 inline-flex w-fit items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium relative z-10 pointer-events-none ${
           isPaid ? 'bg-success/15 text-success' : 'bg-primary/10 text-primary border border-primary/20'
         }`}>
@@ -97,7 +97,7 @@ export function JobCard({ job }: { job: Job }) {
               <CheckCircle2 className="size-4" />
               Already applied
             </div>
-          ) : job.trainingRequired && !isPaid ? (
+          ) : jobHasTraining(job) && !isPaid ? (
             <Button render={<Link href={`/training/${job.id}`} />} variant="default" size="sm" className="w-full gap-2">
               <GraduationCap className="size-4" />
               Pay {trainingFee} to Unlock Training
@@ -105,7 +105,7 @@ export function JobCard({ job }: { job: Job }) {
           ) : (
             <Button render={<Link href={`/training/${job.id}`} />} variant="secondary" size="sm" className="w-full gap-2">
               <GraduationCap className="size-4" />
-              {job.trainingRequired ? 'Continue Training & Assessment' : 'Start Training & Assessment'}
+              {jobHasTraining(job) ? 'Continue Training & Assessment' : 'Start Training & Assessment'}
             </Button>
           )}
         </div>

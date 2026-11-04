@@ -22,6 +22,7 @@ import {
   APPLICATION_TONE,
   formatDuration,
   formatUsd,
+  jobHasTraining,
   trainingFeeUsdFor,
   Application,
 } from '../../../lib/afterworks-data'
@@ -69,7 +70,9 @@ export default function JobDetailPage({
   const filled = job.capacity - job.slotsRemaining
   const fillPct = Math.round((filled / job.capacity) * 100)
   const trainingFee = formatUsd(trainingFeeUsdFor(job.trainingFeeUsd))
-  const trainingRequired = job.trainingRequired
+  // A card has a fee because it has training. No authored sections → assessment-only, free.
+  const hasTraining = jobHasTraining(job)
+  const trainingRequired = hasTraining
 
   async function handleApply() {
     setError(null)
@@ -151,7 +154,7 @@ export default function JobDetailPage({
                     <ShieldAlert className="mt-0.5 size-4 shrink-0 text-warning" />
                     <div>
                       <span>Identity Verification — <strong className="text-warning font-medium">Action required</strong></span>
-                      {job.trainingRequired ? (
+                      {hasTraining ? (
                         <p className="mt-1 text-xs text-muted-foreground">
                           You can pay this job card’s training fee first. The training material and assessment unlock after this check is approved.
                         </p>
@@ -160,7 +163,7 @@ export default function JobDetailPage({
                   </>
                 )}
               </li>
-              {job.trainingRequired ? (
+              {hasTraining ? (
                 <li className="flex items-start gap-2.5 text-muted-foreground">
                   <GraduationCap className="mt-0.5 size-4 shrink-0 text-primary" />
                   <div>
@@ -180,9 +183,9 @@ export default function JobDetailPage({
                 <li className="flex items-start gap-2.5 text-muted-foreground">
                   <GraduationCap className="mt-0.5 size-4 shrink-0 text-primary" />
                   <div>
-                    <span>Step 1: Request verification → Step 2: Full Training Course → Step 3: Assessment → Apply for Job Card</span>
+                    <span>Step 1: Request verification → Step 2: Assessment → Apply for Job Card</span>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      There is no training fee for this card, but every lesson and the 20-question applied assessment (80% pass) are still required before you can apply.
+                      This card has no training, so there is nothing to pay. Once your identity is verified you go straight to the 20-question applied assessment (80% pass) before you can apply.
                     </p>
                   </div>
                 </li>
@@ -227,7 +230,7 @@ export default function JobDetailPage({
               </div>
             </div>
 
-            {job.trainingRequired && (
+            {hasTraining && (
               <div className={`mt-4 flex items-start gap-2 rounded-lg p-3 text-xs ${
                 isPaid ? 'bg-success/15 text-success border border-success/30' : 'bg-accent text-accent-foreground'
               }`}>
@@ -260,7 +263,7 @@ export default function JobDetailPage({
                   </Button>
                 </div>
               ) : !worker.kycVerified ? (
-                job.trainingRequired && !isPaid ? (
+                hasTraining && !isPaid ? (
                   <div className="flex flex-col gap-2">
                     <Button
                       onClick={handleApply}
@@ -291,7 +294,7 @@ export default function JobDetailPage({
                     className="w-full gap-2 whitespace-normal px-3 text-center leading-snug"
                   >
                     <ShieldAlert className="size-4" />
-                    {job.trainingRequired ? 'Request verification to Start Training' : 'Request verification to Take the Assessment'}
+                    {hasTraining ? 'Request verification to Start Training' : 'Request verification to Take the Assessment'}
                   </Button>
                 )
               ) : (
@@ -306,7 +309,7 @@ export default function JobDetailPage({
                     ? 'Redirecting...'
                     : isClosed
                       ? 'Slots full'
-                      : job.trainingRequired
+                      : hasTraining
                         ? isPaid
                           ? 'Continue Training & Assessment'
                           : `Pay ${trainingFee} to Unlock Training`

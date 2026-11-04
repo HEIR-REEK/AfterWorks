@@ -50,16 +50,35 @@ test('paused, closed, expired and full jobs are never published', () => {
   assert.equal(toPublicJob('job/1', raw(), NOW), null)
 })
 
-test('training fee is omitted when training is not required', () => {
-  const job = toPublicJob('job-1', raw({ trainingRequired: false, trainingFeeUsd: 25 }), NOW)
-  assert.ok(job)
-  assert.equal(job.trainingFeeUsd, undefined)
+test('a fee is omitted when the card has no training, whatever the stored flag says', () => {
+  // No sections → assessment-only → free, even though the raw document claims otherwise.
+  const free = toPublicJob('job-1', raw({ trainingRequired: true, trainingFeeUsd: 25, trainingNotes: [] }), NOW)
+  assert.ok(free)
+  assert.equal(free.trainingRequired, false)
+  assert.equal(free.trainingFeeUsd, undefined)
+
+  // Sections present → the card charges, and the fee is published with it.
+  assert.ok(!('trainingNotes' in (free as object)), 'the public card must not carry training sections')
+  const paid = toPublicJob(
+    'job-2',
+    raw({ trainingRequired: false, trainingFeeUsd: 25, trainingNotes: [{ title: 'Unit 1', content: 'Label speakers.' }] }),
+    NOW,
+  )
+  assert.ok(paid)
+  assert.equal(paid.trainingRequired, true)
+  assert.equal(paid.trainingFeeUsd, 25)
 })
 
 test('the public source never reads or returns answer-key fields', async () => {
   const source = await import('node:fs/promises').then((fs) => fs.readFile('lib/public-jobs-server.ts', 'utf8'))
+  // `trainingNotes` is read now — it is how the projection knows a card has training and therefore
+  // a fee. What must never reach the browser is the answer key inside it.
   assert.doesNotMatch(source, /assessmentQuestions/)
-  assert.doesNotMatch(source, /trainingNotes/)
+  assert.doesNotMatch(source, /correctIndex/)
+  assert.doesNotMatch(source, /\bexplanation\b/)
+  // The projection *reads* trainingNotes now — that is how it knows a card has training — but it
+  // must not hand them, or the answer key inside them, to the browser.
+  assert.doesNotMatch(source, /trainingNotes[^\n]*correctIndex/)
   assert.match(source, /PUBLIC_FIELDS/)
   assert.match(source, /\.select\(\.\.\.PUBLIC_FIELDS\)/)
 })

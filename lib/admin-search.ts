@@ -15,6 +15,7 @@
  */
 
 import type { Job, JobCategory } from '@/lib/afterworks-data'
+import { jobHasTraining } from '@/lib/afterworks-data'
 import { ADMIN_MUTABLE_STATES } from '@/lib/admin-domain'
 
 /** How many documents one admin search will inspect. */
@@ -223,7 +224,7 @@ export function filterJobs<T extends Job>(jobs: T[], filters: JobBrowseFilters):
   const now = filters.now ?? Date.now()
   return jobs.filter((job) => {
     if (filters.category && filters.category !== 'All' && job.category !== filters.category) return false
-    if (filters.trainingOnly && !job.trainingRequired) return false
+    if (filters.trainingOnly && !jobHasTraining(job)) return false
     if (filters.hideFull) {
       if (job.status !== 'open') return false
       if (job.slotsRemaining <= 0) return false

@@ -28,6 +28,7 @@ import {
   trainingCourseMinutes,
 } from '@/lib/training-curriculum'
 import { TrainingFigure } from '@/components/training-figure'
+import { NoCopyPaste } from '@/components/no-copy-paste'
 import { cn } from '@/lib/utils'
 
 /**
@@ -350,7 +351,10 @@ function ModuleCheck({
   }
 
   return (
-    <div className="mt-5 rounded-xl border border-primary/20 bg-primary/[0.035] p-3.5 sm:p-4">
+    <NoCopyPaste
+      className="mt-5 rounded-xl border border-primary/20 bg-primary/[0.035] p-3.5 sm:p-4"
+      note="Copy and paste are disabled during this quick check."
+    >
       <div className="flex items-start gap-2">
         <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
           <HelpCircle className="size-4" />
@@ -428,7 +432,7 @@ function ModuleCheck({
           Try again
         </button>
       )}
-    </div>
+    </NoCopyPaste>
   )
 }
 

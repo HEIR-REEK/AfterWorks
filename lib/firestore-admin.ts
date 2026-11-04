@@ -341,20 +341,10 @@ export async function requestKycReview(uid: string): Promise<{ requestedAt: stri
     },
     { merge: true },
   )
+  // Asking for identity review is a state change like any other, and the audit log is the only
+  // record of a member waiting. Without it a queue that nobody worked would look like nobody asked.
+  await createAuditEntry('KYC_REVIEW_REQUESTED', { uid, alreadyRequested })
   return { requestedAt: now, alreadyRequested }
-}
-
-/**
- * Clears a pending review request once an owner has decided.
- *
- * Called alongside `verifyKycAdmin` so the console's queue does not keep showing a member who has
- * already been approved or rejected.
- */
-export async function clearKycReviewRequest(uid: string): Promise<void> {
-  await adminDb().collection('users').doc(uid).set(
-    { kycRequestedAt: null, updatedAt: new Date().toISOString() },
-    { merge: true },
-  )
 }
 
 /**
@@ -2436,6 +2426,12 @@ export type PlatformStats = {
   totals: {
     users: number
     kycVerified: number
+    /**
+     * Members waiting for a review: they asked (kycRequestedAt is set) and nobody has decided yet.
+     * A decision clears the timestamp, so this is the live queue rather than a guess.
+     */
+    kycRequested: number
+    /** Everyone who is neither verified nor suspended — not the same thing as the queue above. */
     kycPending: number
     suspended: number
     activeLast7d: number
@@ -2482,6 +2478,7 @@ export async function getPlatformStats(): Promise<PlatformStats> {
       totals: {
         users: 0,
         kycVerified: 0,
+        kycRequested: 0,
         kycPending: 0,
         suspended: 0,
         activeLast7d: 0,
@@ -2510,6 +2507,7 @@ export async function getPlatformStats(): Promise<PlatformStats> {
   const [
     totalUsers,
     verified,
+    kycRequested,
     suspended,
     jobsOpen,
     jobsPaused,
@@ -2525,6 +2523,9 @@ export async function getPlatformStats(): Promise<PlatformStats> {
   ] = await Promise.all([
     safeCount(() => users),
     safeCount(() => users.where('kycVerified', '==', true)),
+    // The review queue. Approving or rejecting clears kycRequestedAt, so what is left is exactly
+    // the members who are waiting — a single-field inequality, so it needs no composite index.
+    safeCount(() => users.where('kycRequestedAt', '!=', null)),
     safeCount(() => users.where('accountState', 'in', ['suspended', 'banned'])),
     safeCount(() => jobsCol.where('status', '==', 'open')),
     safeCount(() => jobsCol.where('status', '==', 'paused')),
@@ -2600,6 +2601,7 @@ export async function getPlatformStats(): Promise<PlatformStats> {
     totals: {
       users: totalUsers,
       kycVerified: verified,
+      kycRequested,
       kycPending: Math.max(0, totalUsers - verified - suspended),
       suspended,
       // From Auth, because "active" means somebody signed in — a `users` document only proves they

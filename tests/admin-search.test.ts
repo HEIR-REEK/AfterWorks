@@ -52,9 +52,33 @@ test('the console state filters mean what their labels say', () => {
   assert.equal(userMatchesState({ uid: '1', isAdmin: true }, 'admins'), true)
   assert.equal(userMatchesState({ uid: '1', role: 'user' }, 'admins'), false)
 
-  assert.equal(userMatchesState({ uid: '1', kycVerified: false, accountState: 'active' }, 'kyc_pending'), true)
-  assert.equal(userMatchesState({ uid: '1', kycVerified: false, accountState: 'kyc_rejected' }, 'kyc_pending'), false)
-  assert.equal(userMatchesState({ uid: '1', kycVerified: false, accountState: 'suspended' }, 'kyc_pending'), false)
+  // "KYC pending" is the review queue: a member who asked and has not been answered. A member who
+  // never asked is not waiting, and counting them made both this filter and the dashboard tile
+  // report the entire member base as a backlog.
+  assert.equal(userMatchesState({ uid: '1', kycVerified: false, accountState: 'active' }, 'kyc_pending'), false)
+  assert.equal(
+    userMatchesState({ uid: '1', kycVerified: false, kycRequestedAt: '2026-11-04T10:00:00Z' }, 'kyc_pending'),
+    true,
+  )
+  // Already decided — approved or declined — so not waiting any more.
+  assert.equal(
+    userMatchesState(
+      { uid: '1', kycVerified: true, kycRequestedAt: '2026-11-04T10:00:00Z' },
+      'kyc_pending',
+    ),
+    false,
+  )
+  assert.equal(
+    userMatchesState({ uid: '1', kycVerified: false, accountState: 'kyc_rejected' }, 'kyc_pending'),
+    false,
+  )
+  // A restricted member who asked is still waiting for an answer. Hiding them would make the
+  // request invisible: the identity decision and the access decision are separate, and approving
+  // an identity deliberately does not lift a suspension.
+  assert.equal(
+    userMatchesState({ uid: '1', kycVerified: false, accountState: 'suspended', kycRequestedAt: 'x' }, 'kyc_pending'),
+    true,
+  )
   assert.equal(userMatchesState({ uid: '1', accountState: 'kyc_rejected' }, 'kyc_rejected'), true)
   assert.equal(userMatchesState({ uid: '1', accountState: 'suspended' }, 'restricted'), true)
   assert.equal(userMatchesState({ uid: '1', accountState: 'banned' }, 'restricted'), true)

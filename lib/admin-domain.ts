@@ -453,6 +453,7 @@ export type AdminPlatformStats = {
   totals: {
     users: number
     kycVerified: number
+    kycRequested: number
     kycPending: number
     suspended: number
     activeLast7d: number
@@ -524,6 +525,7 @@ export function normalisePlatformStats(raw: unknown): AdminPlatformStats {
     totals: {
       users: asCount(totals.users, 0),
       kycVerified: asCount(totals.kycVerified, 0),
+      kycRequested: asCount(totals.kycRequested, 0),
       kycPending: asCount(totals.kycPending, 0),
       suspended: asCount(totals.suspended, 0),
       activeLast7d: asCount(totals.activeLast7d, 0),

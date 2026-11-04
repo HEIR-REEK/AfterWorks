@@ -59,6 +59,24 @@ test('a request stamps a timestamp and clears a stale verdict, but never a verdi
   assert.match(fn, /alreadyRequested/, 'asking twice is idempotent')
 })
 
+test('a member asking for a review is audited, and the queue is a real count', () => {
+  const admin = read('lib/firestore-admin.ts')
+  // A queue nobody worked would otherwise look like nobody asked.
+  assert.match(admin, /createAuditEntry\('KYC_REVIEW_REQUESTED'/, 'asking is a state change like any other')
+
+  // The dashboard tile must count the queue, not the member base. It used to be
+  // totalUsers - verified - suspended, which reports everyone who has not been verified yet.
+  assert.match(admin, /kycRequestedAt',\s*'!='/ , 'the count is a real query')
+  assert.doesNotMatch(
+    admin,
+    /kycRequested:\s*Math\.max\(0, totalUsers - verified/,
+    'the queue must not be derived from the totals',
+  )
+  const page = read('app/admin/page.tsx')
+  assert.match(page, /kycRequested/, 'the dashboard shows the queue')
+  assert.doesNotMatch(page, /kyc_on_hold/, 'the old provider state no longer exists to link to')
+})
+
 test('the decision retires the request that produced it', () => {
   const admin = read('lib/firestore-admin.ts')
   let fn = admin.slice(admin.indexOf('export async function verifyKycAdmin'))

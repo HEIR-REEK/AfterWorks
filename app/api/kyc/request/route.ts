@@ -23,6 +23,7 @@ export const dynamic = 'force-dynamic'
 import { after, NextRequest } from 'next/server'
 import { consumeBucket, fail, json, rateLimit, requireUser } from '@/lib/guards'
 import { requestKycReview, getUserProfile } from '@/lib/firestore-admin'
+import { profileCompletion, type ProfileCompletion } from '@/lib/profile-completion'
 
 export async function POST(req: NextRequest) {
   const limited = rateLimit(req, 'kyc-request', 10, 60_000)
@@ -33,15 +34,79 @@ export async function POST(req: NextRequest) {
 
   // A member who is already verified has nothing to ask for. Answering 200 with the current state
   // keeps the button harmless rather than making the profile surface an error it cannot fix.
+  // The same read scores profile completion: a review can only be requested once every required
+  // profile field is answered, so the console always has a complete profile to approve.
+  let completion: ProfileCompletion | null = null
   try {
     const profile = await getUserProfile(guard.value.uid)
     if (profile?.kycVerified === true) {
       return json({ ok: true, alreadyVerified: true, kycVerified: true })
     }
+    completion = profileCompletion(profile as Record<string, unknown> | null)
   } catch (err) {
     // A failed read must not block the request: the write is the thing the member asked for, and
-    // the console re-checks state before approving anyway.
+    // the console re-checks state before approving anyway. The gate below only applies when the
+    // read succeeded.
     console.warn('[kyc] request route could not read the profile:', err instanceof Error ? err.message : err)
+  }
+
+  // Profile incomplete → the request is HELD, not recorded: `kycRequestedAt` stays unset so it never
+  // enters the review queue, a hold marker is written for the console, and the member is emailed
+  // exactly which fields are missing until they finish the profile.
+  if (completion && !completion.complete) {
+    let heldAt: string | undefined
+    try {
+      const { holdKycRequest } = await import('@/lib/firestore-admin')
+      heldAt = (await holdKycRequest(guard.value.uid, completion.missingLabels)).heldAt
+    } catch (err) {
+      console.warn('[kyc] could not record the hold marker:', err instanceof Error ? err.message : err)
+    }
+
+    after(async () => {
+      try {
+        const {
+          sendEmail,
+          isResendConfigured,
+          kycRequestHeldEmailSubject,
+          kycRequestHeldEmailText,
+          kycRequestHeldEmailHtml,
+        } = await import('@/lib/email')
+        if (!isResendConfigured() || !guard.value.email) return
+        const profile = await getUserProfile(guard.value.uid)
+        const sent = await sendEmail({
+          to: guard.value.email,
+          subject: kycRequestHeldEmailSubject(),
+          html: kycRequestHeldEmailHtml({
+            name: String(profile?.name ?? ''),
+            email: guard.value.email,
+            missingLabels: completion.missingLabels,
+          }),
+          text: kycRequestHeldEmailText({
+            name: String(profile?.name ?? ''),
+            email: guard.value.email,
+            missingLabels: completion.missingLabels,
+          }),
+          tag: 'kyc-request-held',
+        })
+        if (!sent.ok) console.warn('[kyc] held-request email not sent:', sent.code)
+      } catch (err) {
+        console.warn('[kyc] held-request email failed:', err instanceof Error ? err.message : err)
+      }
+    })
+
+    return fail(
+      428,
+      `Your verification request is on hold until your profile is complete — still missing: ${completion.missingLabels.join(', ')}. We emailed you the details.`,
+      {
+        code: 'profile_incomplete',
+        details: {
+          missing: completion.missing,
+          missingLabels: completion.missingLabels,
+          percent: completion.percent,
+          heldAt,
+        },
+      },
+    )
   }
 
   // One write per member per minute. The queue is small and human-reviewed, so a member hammering

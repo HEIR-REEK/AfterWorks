@@ -6,6 +6,8 @@
  * explaining *why* something is disabled.
  */
 
+import { profileCompletion } from '@/lib/profile-completion'
+
 export const ADMIN_MUTABLE_STATES = [
   'active',
   'kyc_rejected',
@@ -186,6 +188,13 @@ export type AdminUserRowModel = {
    * verification queue is "unverified members with a kycRequestedAt", newest first.
    */
   kycRequestedAt?: string
+  /**
+   * When a verification request was held because the profile was incomplete (not recorded as
+   * `kycRequestedAt`, so it never enters the review queue until the profile is finished).
+   */
+  kycRequestHeldAt?: string
+  /** Labels of the required profile fields still empty when the request was held. */
+  kycHoldMissing?: string[]
   role: string
   qualityScore: number
   jobsCompleted: number
@@ -202,6 +211,15 @@ export type AdminUserRowModel = {
    * row that looks like a rendering bug.
    */
   profileIncomplete: boolean
+  /**
+   * Real profile completeness from `profileCompletion()` (name, phone, location, bio, skills,
+   * languages all answered) — what gates a verification request. Shown in the directory and the
+   * KYC drawer so staff can see whether a request can be accepted.
+   */
+  profileComplete: boolean
+  profilePercent: number
+  /** Labels of the required fields still empty. */
+  profileMissing: string[]
 }
 
 /** The optional fields the detail drawer knows how to show, all normalised. */
@@ -334,6 +352,18 @@ export function adminUserRowFromDoc(
       ? doc.paidTrainings.length
       : asCount(doc.paidTrainingsCount, 0),
     profileIncomplete: !name && !email,
+    ...(() => {
+      const completion = profileCompletion(doc)
+      return {
+        profileComplete: completion.complete,
+        profilePercent: completion.percent,
+        profileMissing: completion.missingLabels,
+      }
+    })(),
+    kycRequestHeldAt: coerceIsoTimestamp(doc.kycRequestHeldAt) ?? undefined,
+    kycHoldMissing: Array.isArray(doc.kycHoldMissing)
+      ? doc.kycHoldMissing.map((entry) => asText(entry)).filter(Boolean).slice(0, 12)
+      : undefined,
   }
 }
 

@@ -103,7 +103,21 @@ function ProfilePageContent() {
         headers: { Authorization: `Bearer ${idToken}` },
       })
       const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'Your request could not be recorded.')
+      if (!res.ok) {
+        // The server holds the request when the profile is incomplete: say so, name the missing
+        // fields, and open the editor so the member can finish the profile right away.
+        if (data.code === 'profile_incomplete') {
+          const missing: string[] = Array.isArray(data.details?.missingLabels) ? data.details.missingLabels : []
+          setKycError(
+            missing.length > 0
+              ? `Your verification request is on hold until your profile is complete — still missing: ${missing.join(', ')}. We emailed you the details. Fill them in below and request again.`
+              : 'Your verification request is on hold until your profile is complete. We emailed you the details — fill them in below and request again.',
+          )
+          setIsEditing(true)
+          return
+        }
+        throw new Error(data.error || 'Your request could not be recorded.')
+      }
 
       if (data.alreadyVerified) {
         setKycError(null)

@@ -189,7 +189,7 @@ export default function AdminPayoutsPage() {
         </div>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {headline.map((item) => (
           <AdminStat key={item.label} label={item.label} value={item.value} tone={item.tone} />
         ))}
@@ -380,7 +380,7 @@ export default function AdminPayoutsPage() {
               <StatusBadge tone={PAYOUT_STATUS_TONE[selected.status]}>{PAYOUT_SHORT(selected.status)}</StatusBadge>
             </div>
 
-            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="rounded-xl border border-border bg-muted/25 p-3.5 text-xs">
                 <p className="flex items-center gap-1.5 font-semibold">
                   <User className="size-3.5" /> Member

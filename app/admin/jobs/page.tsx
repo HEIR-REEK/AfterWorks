@@ -651,7 +651,7 @@ export default function AdminJobsPage() {
               <Field label="Title">
                 <input value={editing.title} onChange={(e) => setEditing({ ...editing, title: e.target.value })} maxLength={120} className={inputClass} />
               </Field>
-              <div className="grid gap-3.5 sm:grid-cols-2">
+              <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
                 <Field label="Category">
                   <select value={editing.category} onChange={(e) => setEditing({ ...editing, category: e.target.value })} className={inputClass}>
                     {JOB_CATEGORY_LIST.map((value: string) => (
@@ -733,7 +733,7 @@ export default function AdminJobsPage() {
                   </div>
                 </header>
 
-                <div className="grid gap-2 sm:grid-cols-2">
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                   <button
                     type="button"
                     onClick={() => setEditing({ ...editing, trainingRequired: true })}
@@ -878,7 +878,7 @@ export default function AdminJobsPage() {
                             placeholder="What the worker should learn in this section… Use blank lines for paragraphs, - for bullets, **bold** for emphasis, > for a callout, and ## for a sub-heading."
                             className={cn(inputClass, 'leading-relaxed')}
                           />
-                          <div className="grid gap-1.5 sm:grid-cols-[1fr_9rem]">
+                          <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-[1fr_9rem]">
                             <input
                               value={section.unit}
                               onChange={(e) => updateSection(index, { unit: e.target.value })}

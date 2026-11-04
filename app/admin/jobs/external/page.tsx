@@ -193,7 +193,7 @@ export default function ExternalJobsPage() {
           </div>
         ) : (
           <>
-            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <StatusTile
                 label="Adzuna credentials"
                 value={configured ? 'Configured' : 'Not configured'}
@@ -247,7 +247,7 @@ export default function ExternalJobsPage() {
           description="The import replaces the previous feed, so an advert Adzuna no longer returns disappears instead of lingering."
           icon={<ShieldCheck className="size-4" />}
         >
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <Field label="Adzuna market" hint="No Kenya feed exists; pick the market you want to surface.">
               <select
                 value={country}

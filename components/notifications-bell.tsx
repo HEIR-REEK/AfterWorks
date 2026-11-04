@@ -92,7 +92,7 @@ export function NotificationsBell({ className }: { className?: string }) {
         aria-expanded={open}
         aria-label={unread > 0 ? `Notifications (${unread} unread)` : 'Notifications'}
         className={cn(
-          'relative flex size-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground sm:size-9',
+          'relative flex size-10 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground sm:size-9',
           className,
         )}
       >

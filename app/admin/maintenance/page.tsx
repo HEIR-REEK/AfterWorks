@@ -456,7 +456,7 @@ function AdminMaintenancePageInner() {
         )}
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,0.85fr)]">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,0.85fr)]">
         {/* Copy + timing */}
         <div className="flex flex-col gap-4">
           <AdminCard title="Public notice" description="What workers read during the window. Keep it specific: what, when, and what to do." icon={<BellRing className="size-4" />}>
@@ -473,7 +473,7 @@ function AdminMaintenancePageInner() {
                 <input value={banner} maxLength={200} onChange={(event) => setBanner(event.target.value)} placeholder="Payouts are delayed by ~1 hour today." className={inputClass} />
               </Field>
 
-              <div className="grid gap-4 sm:grid-cols-2">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <Field label="Reason code">
                   <select value={reason} onChange={(event) => setReason(event.target.value)} className={inputClass}>
                     <option value="scheduled_upgrade">Scheduled upgrade</option>
@@ -511,7 +511,7 @@ function AdminMaintenancePageInner() {
             icon={<Layers className="size-4" />}
           >
             <div className="flex flex-col gap-3.5">
-              <div className="grid gap-2 sm:grid-cols-2">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 {(
                   [
                     ['full', 'Whole site', 'Every public page and endpoint except the console — including sign-in and sign-up. Use for schema changes, migrations or a full outage.'],
@@ -607,7 +607,7 @@ function AdminMaintenancePageInner() {
 
           <AdminCard title="Timing & access" description="Scheduled start, ETA, and who gets through." icon={<Clock3 className="size-4" />}>
             <div className="flex flex-col gap-4">
-              <div className="grid gap-4 lg:grid-cols-2">
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                 <ScheduleField
                   label="Back live at (date & time)"
                   value={estimatedEnd}
@@ -624,7 +624,7 @@ function AdminMaintenancePageInner() {
                 />
               </div>
 
-              <div className="grid gap-3 sm:grid-cols-2">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <label className="flex items-start gap-2.5 rounded-xl border border-border/70 bg-background/50 p-3">
                   <input type="checkbox" checked={autoResolve} onChange={(event) => setAutoResolve(event.target.checked)} className="mt-0.5 size-4 accent-[var(--primary)]" />
                   <span>
@@ -651,7 +651,7 @@ function AdminMaintenancePageInner() {
                 </label>
               </div>
 
-              <div className="grid gap-4 sm:grid-cols-2">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <Field label="Support contact shown on the screen" hint={`Defaults to ${site.supportEmail} when blank.`}>
                   <div className="relative">
                     <Mail className="absolute left-3 top-2.5 size-3.5 text-muted-foreground" />
@@ -678,7 +678,7 @@ function AdminMaintenancePageInner() {
                 return (
                   <li key={id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border/70 bg-background/50 px-3 py-2">
                     <span className="text-xs font-medium text-foreground">{label}</span>
-                    <div className="flex gap-1">
+                    <div className="flex flex-wrap gap-1">
                       {SERVICE_STATUSES.map((value) => (
                         <button
                           key={value}

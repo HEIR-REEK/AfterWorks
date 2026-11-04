@@ -133,7 +133,7 @@ export function LandingHeader() {
             <>
               <Link
                 href="/sign-in"
-                className="rounded-lg px-2.5 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground sm:px-3"
+                className="inline-flex min-h-10 items-center rounded-lg px-2.5 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground sm:px-3"
               >
                 Log in
               </Link>
@@ -151,7 +151,7 @@ export function LandingHeader() {
               aria-expanded={menuOpen}
               aria-controls="landing-mobile-menu"
               aria-label={menuOpen ? 'Close menu' : 'Open menu'}
-              className="-mr-1 grid size-9 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+              className="-mr-1 grid size-10 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground sm:size-9"
             >
               {menuOpen ? <X className="size-5" /> : <Menu className="size-5" />}
             </button>

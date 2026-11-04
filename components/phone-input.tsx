@@ -134,7 +134,7 @@ export function PhoneInput({
               onChange(value, e.target.value)
             }}
             aria-label="Country and dialling code"
-            className="h-10 max-w-[10.5rem] cursor-pointer appearance-none bg-transparent py-0 pl-2.5 pr-7 text-sm outline-none disabled:cursor-not-allowed"
+            className="h-10 max-w-[8.75rem] cursor-pointer appearance-none bg-transparent py-0 pl-2.5 pr-7 text-sm outline-none disabled:cursor-not-allowed sm:max-w-[10.5rem]"
           >
             {COUNTRIES.map((c) => (
               <option key={c.code} value={c.code}>

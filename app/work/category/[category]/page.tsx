@@ -52,7 +52,7 @@ export default async function WorkCategoryPage({ params }: Props) {
           <p className="mt-4 text-base leading-relaxed text-muted-foreground">{category.description}</p>
         </header>
 
-        <div className="mt-8 grid gap-6 lg:grid-cols-[minmax(0,1fr)_280px]">
+        <div className="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_280px]">
           <div className="flex flex-col gap-8">
             <section aria-labelledby="open-cards">
               <div className="flex items-end justify-between gap-3">
@@ -60,7 +60,7 @@ export default async function WorkCategoryPage({ params }: Props) {
                 <span className="text-xs text-muted-foreground">{jobs.length} open</span>
               </div>
               {jobs.length > 0 ? (
-                <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
                   {jobs.map((job) => <PublicJobCard key={job.id} job={job} />)}
                 </div>
               ) : (
@@ -76,7 +76,7 @@ export default async function WorkCategoryPage({ params }: Props) {
                 {category.paragraphs.map((paragraph) => <p key={paragraph}>{paragraph}</p>)}
               </div>
               <h3 className="mt-6 text-sm font-semibold">Useful skills</h3>
-              <ul className="mt-2 grid gap-2 sm:grid-cols-2">
+              <ul className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
                 {category.skills.map((skill) => (
                   <li key={skill} className="flex items-start gap-2 text-sm text-muted-foreground">
                     <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-success" /> {skill}

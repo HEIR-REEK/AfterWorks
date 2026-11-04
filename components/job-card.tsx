@@ -105,7 +105,7 @@ export function JobCard({ job }: { job: Job }) {
           ) : (
             <Button render={<Link href={`/training/${job.id}`} />} variant="secondary" size="sm" className="w-full gap-2">
               <GraduationCap className="size-4" />
-              {job.trainingRequired ? 'Continue Training & Assessment' : 'Take Assessment'}
+              {job.trainingRequired ? 'Continue Training & Assessment' : 'Start Training & Assessment'}
             </Button>
           )}
         </div>

@@ -215,7 +215,7 @@ export default function StatusPage() {
           </ul>
         </section>
 
-        <section className="mt-5 grid gap-3 sm:grid-cols-3">
+        <section className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
           <Stat label="Uptime this session" value={uptimeLabel} />
           <Stat label="Environment" value={health?.environment ?? '—'} />
           <Stat label="Build" value={health?.version ?? '—'} />

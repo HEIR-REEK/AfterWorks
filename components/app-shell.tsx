@@ -102,7 +102,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <button
               type="button"
               onClick={handleSignOut}
-              className="flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground sm:px-2.5 sm:py-2 md:hidden"
+              className="flex min-h-10 min-w-10 items-center justify-center gap-1.5 rounded-lg px-2 py-1.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground sm:px-2.5 sm:py-2 md:hidden"
             >
               <LogOut className="size-4" />
               <span className="hidden sm:inline">Sign out</span>
@@ -178,7 +178,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </aside>
 
         {/* Page content — extra bottom padding on mobile to clear the bottom nav */}
-        <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-4 px-4 py-5 pb-24 sm:px-6 sm:py-8 md:pb-8 sm:pb-8">
+        <main className="mx-auto flex w-full min-w-0 max-w-6xl flex-1 flex-col gap-4 px-4 py-5 pb-24 sm:px-6 sm:py-8 md:pb-8 sm:pb-8">
         {mode === 'demo' && (
           <div className="flex items-start gap-2.5 rounded-xl border border-border bg-muted/40 px-3.5 py-2.5 text-xs text-muted-foreground">
             <Info className="mt-0.5 size-3.5 shrink-0 text-primary" />

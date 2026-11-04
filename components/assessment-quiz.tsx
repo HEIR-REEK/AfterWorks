@@ -297,7 +297,7 @@ export function AssessmentQuiz({ category, jobId, onPass }: { category: JobCateg
               {current.image && (
                 <TrainingFigure src={current.image} alt={current.imageAlt} className="max-w-2xl" />
               )}
-              <div className="grid gap-2 sm:grid-cols-2">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 {current.options.map((option, optionIndex) => {
                   const isSelected = answers[current.id] === optionIndex
                   return (

@@ -850,7 +850,7 @@ function UsersPageInner() {
                 <Field label="Email address" hint="An operator-vouched address is marked verified, and the member proves the inbox by using the setup link.">
                   <input required type="email" value={addForm.email} onChange={(e) => setAddForm({ ...addForm, email: e.target.value })} className={inputClass} placeholder="amina@example.com" />
                 </Field>
-                <div className="grid gap-3 sm:grid-cols-2">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <Field label="M-Pesa number (optional)">
                     <input value={addForm.phone} onChange={(e) => setAddForm({ ...addForm, phone: e.target.value })} className={inputClass} placeholder="0712 345 678" />
                   </Field>

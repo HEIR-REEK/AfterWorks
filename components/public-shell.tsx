@@ -25,12 +25,12 @@ export function PublicHeader() {
           <Link href="/#payouts" className="hidden rounded-lg px-3 py-2 font-medium text-muted-foreground hover:bg-secondary hover:text-foreground lg:block">
             Payouts
           </Link>
-          <Link href="/sign-in" className="rounded-lg px-3 py-2 font-medium text-muted-foreground hover:bg-secondary hover:text-foreground">
+          <Link href="/sign-in" className="inline-flex min-h-10 items-center rounded-lg px-3 py-2 font-medium text-muted-foreground hover:bg-secondary hover:text-foreground">
             Log in
           </Link>
           <Link
             href="/sign-up"
-            className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3.5 py-2 text-sm font-semibold text-primary-foreground hover:bg-primary/90"
+            className="inline-flex min-h-10 items-center gap-1.5 rounded-lg bg-primary px-3.5 py-2 text-sm font-semibold text-primary-foreground hover:bg-primary/90"
           >
             Create account <ArrowRight className="size-3.5" aria-hidden />
           </Link>
@@ -43,7 +43,7 @@ export function PublicHeader() {
 export function PublicFooter() {
   return (
     <footer className="mt-auto border-t border-border bg-secondary/30">
-      <div className="mx-auto grid w-full max-w-6xl gap-8 px-4 py-10 text-sm sm:grid-cols-2 sm:px-6 lg:grid-cols-4">
+      <div className="mx-auto grid grid-cols-1 w-full max-w-6xl gap-8 px-4 py-10 text-sm sm:grid-cols-2 sm:px-6 lg:grid-cols-4">
         <div>
           <BrandLink href="/" label="AfterWorks" size={32} />
           <p className="mt-3 max-w-xs text-xs leading-relaxed text-muted-foreground">{site.description}</p>

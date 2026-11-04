@@ -111,6 +111,38 @@ function writeStoredDone(jobId: string, done: number): void {
   }
 }
 
+function openedKey(jobId: string): string {
+  return `aw_training_opened:${jobId}`
+}
+
+/** Indices of lessons the worker has actually opened (expanded at least once), persisted so a
+ *  refresh cannot turn an unopened course back into a "completed" one. */
+function readOpened(jobId: string): Set<number> {
+  try {
+    const raw =
+      window.localStorage.getItem(openedKey(jobId)) ??
+      window.sessionStorage.getItem(openedKey(jobId))
+    if (!raw) return new Set()
+    return new Set(
+      raw.split(',').map(Number).filter((n) => Number.isInteger(n) && n >= 0),
+    )
+  } catch {
+    return new Set()
+  }
+}
+
+function writeOpened(jobId: string, opened: Set<number>): void {
+  try {
+    window.localStorage.setItem(openedKey(jobId), [...opened].join(','))
+  } catch {
+    try {
+      window.sessionStorage.setItem(openedKey(jobId), [...opened].join(','))
+    } catch {
+      /* private mode */
+    }
+  }
+}
+
 /** Persist an "all lessons done" flag separately so the training page can detect completion
  *  even after a full tab restart wipes the in-memory state. */
 export function markTrainingComplete(jobId: string): void {
@@ -145,10 +177,13 @@ export function getJobTrainingSections(job: Job): TrainingSectionView[] {
 export function readTrainingProgress(job: Job): { done: number; total: number; complete: boolean } {
   const total = getJobTrainingSections(job).length
   if (typeof window === 'undefined') return { done: 0, total, complete: false }
-  if (isTrainingMarkedComplete(job.id)) return { done: total, total, complete: true }
+  // Completion needs every lesson both finished and actually opened — a stored "done" count alone
+  // must never read as "training complete" when no module was ever opened.
+  const opened = readOpened(job.id)
+  if (isTrainingMarkedComplete(job.id) && opened.size >= total) return { done: total, total, complete: true }
 
   const done = Math.min(readStoredDone(job.id), total)
-  return { done, total, complete: total > 0 && done >= total }
+  return { done, total, complete: total > 0 && done >= total && opened.size >= total }
 }
 
 // ─── Inline formatting and figures ──────────────────────────────────────────
@@ -538,19 +573,35 @@ export function TrainingModules({
   const [done, setDone] = useState(0)
   const [openIndex, setOpenIndex] = useState(0)
   const [passedChecks, setPassedChecks] = useState<Set<number>>(new Set())
+  // Lessons the worker has actually opened — completion is only honest when every lesson was opened.
+  const [opened, setOpened] = useState<Set<number>>(new Set())
 
   useEffect(() => {
     if (isTrainingMarkedComplete(job.id)) {
       setDone(total)
+      setOpened(new Set(Array.from({ length: total }, (_, i) => i)))
       setOpenIndex(Math.max(0, total - 1))
       return
     }
     const stored = Math.min(readStoredDone(job.id), total)
     setDone(stored)
+    setOpened(readOpened(job.id))
     setOpenIndex(Math.min(stored, Math.max(0, total - 1)))
   }, [job.id, total])
 
-  const complete = total > 0 && done >= total
+  // Record each lesson the moment it is expanded, so "opened" survives a refresh.
+  useEffect(() => {
+    if (openIndex < 0 || openIndex >= total) return
+    setOpened((prev) => {
+      if (prev.has(openIndex)) return prev
+      const next = new Set(prev)
+      next.add(openIndex)
+      writeOpened(job.id, next)
+      return next
+    })
+  }, [openIndex, total, job.id])
+
+  const complete = total > 0 && done >= total && opened.size >= total
 
   useEffect(() => {
     if (complete) {
@@ -582,11 +633,14 @@ export function TrainingModules({
     setDone(0)
     setOpenIndex(0)
     setPassedChecks(new Set())
+    setOpened(new Set())
     try {
       window.localStorage.removeItem(progressKey(job.id))
       window.localStorage.removeItem(completionKey(job.id))
+      window.localStorage.removeItem(openedKey(job.id))
       window.sessionStorage.removeItem(progressKey(job.id))
       window.sessionStorage.removeItem(completionKey(job.id))
+      window.sessionStorage.removeItem(openedKey(job.id))
     } catch {
       /* ignore */
     }
@@ -613,7 +667,8 @@ export function TrainingModules({
           const state = index < done ? 'completed' : index === done ? 'current' : 'locked'
           const isOpen = state !== 'locked' && openIndex === index
           const checkPassed = !section.check || passedChecks.has(index)
-          const canFinish = state !== 'current' || checkPassed
+          // A lesson can only be marked complete after it has actually been opened (and its check passed).
+          const canFinish = state !== 'current' || (checkPassed && opened.has(index))
           const duration = section.durationMinutes ?? 5
           return (
             <li
@@ -779,7 +834,7 @@ export function TrainingModules({
                   {state === 'current' && !canFinish && (
                     <p className="mt-2 flex items-center gap-1.5 text-[11px] text-muted-foreground">
                       <AlertTriangle className="size-3.5 text-warning" />
-                      Answer the quick check correctly to unlock the next lesson.
+                      Open this lesson and answer the quick check correctly to unlock the next lesson.
                     </p>
                   )}
                 </div>

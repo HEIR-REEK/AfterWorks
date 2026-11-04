@@ -23,7 +23,7 @@ import {
   formatDuration,
   formatUsd,
   jobHasTraining,
-  formatTrainingFeeLabel,
+  trainingFeeUsdFor,
   Application,
 } from '../../../lib/afterworks-data'
 
@@ -69,7 +69,7 @@ export default function JobDetailPage({
   const isClosed = job.status !== 'open' || job.slotsRemaining <= 0
   const filled = job.capacity - job.slotsRemaining
   const fillPct = Math.round((filled / job.capacity) * 100)
-  const trainingFee = formatTrainingFeeLabel(job.trainingFeeUsd)
+  const trainingFee = formatUsd(trainingFeeUsdFor(job.trainingFeeUsd))
   // A card has a fee because it has training. No authored sections → assessment-only, free.
   const hasTraining = jobHasTraining(job)
   const trainingRequired = hasTraining

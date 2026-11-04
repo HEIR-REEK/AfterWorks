@@ -16,7 +16,7 @@
 export const dynamic = 'force-dynamic'
 
 import { NextRequest, NextResponse } from 'next/server'
-import { createKycSession } from '@/lib/didit'
+import { createKycSession, DiditApiError, DiditConfigError, diditConfigHint } from '@/lib/didit'
 import { saveKycRecord, verifyIdToken, getUserProfile } from '@/lib/firestore-admin'
 import { consumeBucket, audit } from '@/lib/guards'
 import { env, isHostAllowed, readJsonBody } from '@/lib/security-core'
@@ -121,10 +121,52 @@ export async function POST(req: NextRequest) {
     })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error'
+
+    // ── Our misconfiguration, not a provider hiccup ──────────────────────────
+    // Telling a member "try again in a few minutes" when DIDIT_API_KEY is missing is a lie that
+    // hides a deployment fault: it will never succeed by waiting. Say that verification is not
+    // switched on, log the exact variable, and let the console's connection test show the rest.
+    if (err instanceof DiditConfigError) {
+      console.error('[KYC submit] Didit is not configured:', message, '|', diditConfigHint() ?? '')
+      return NextResponse.json(
+        {
+          code: 'kyc_not_configured',
+          error:
+            'Identity verification is not switched on for this site yet. Nothing is wrong with your account — please check back later or contact support.',
+        },
+        { status: 503 },
+      )
+    }
+
+    if (err instanceof DiditApiError) {
+      // 401/403 means the key or the host is wrong; 400 usually means no credits, an archived
+      // workflow or an invalid callback. Both are fixable in the console in minutes — the member
+      // cannot fix either, so they get a plain answer either way.
+      const credentialsRejected = err.status === 401 || err.status === 403
+      console.error(
+        `[KYC submit] Didit rejected session creation (${err.status}):`,
+        err.detail.slice(0, 400),
+        '|',
+        diditConfigHint() ?? '',
+      )
+      return NextResponse.json(
+        {
+          code: credentialsRejected ? 'kyc_provider_auth' : 'kyc_provider_error',
+          error: credentialsRejected
+            ? 'Identity verification is not available right now. Your account is fine — support has been notified.'
+            : 'Identity verification could not be started right now. Please try again in a few minutes.',
+        },
+        { status: 502 },
+      )
+    }
+
     console.error('[KYC submit]', message)
     // Provider internals (rate limits, API keys in messages) never reach the browser.
     return NextResponse.json(
-      { error: 'Identity verification could not be started right now. Please try again in a few minutes.' },
+      {
+        code: 'kyc_provider_error',
+        error: 'Identity verification could not be started right now. Please try again in a few minutes.',
+      },
       { status: 502 },
     )
   }

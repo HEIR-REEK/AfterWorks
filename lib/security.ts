@@ -569,18 +569,27 @@ export function securityChecks(extra?: { firestoreAdminOk?: boolean; maintenance
   const diditWorkflow = env('DIDIT_WORKFLOW_ID')
   const diditWebhook = env('DIDIT_WEBHOOK_SECRET')
   const diditConfigured = Boolean(diditKey && diditWorkflow && diditWebhook)
+  // Keys can all be present and the integration still be dead: /v3/* lives on verification.didit.me,
+  // so a base URL pointing at the registration host 404s every call. That failure is invisible in
+  // a "keys present" check, so it gets its own signal.
+  const diditApiUrl = env('DIDIT_API_URL') ?? ''
+  const diditHostWrong = /apx\.didit\.me/i.test(diditApiUrl)
   checks.push({
     id: 'didit',
     label: 'Identity verification (Didit)',
-    severity: diditConfigured ? 'pass' : production ? 'fail' : 'warn',
-    detail: diditConfigured
-      ? 'KYC sessions are created server-side, callbacks are signature-verified, and the webhook re-reads the session before changing a profile.'
-      : `KYC is fail-closed: missing ${[
-          !diditKey ? 'DIDIT_API_KEY' : '',
-          !diditWorkflow ? 'DIDIT_WORKFLOW_ID' : '',
-          !diditWebhook ? 'DIDIT_WEBHOOK_SECRET' : '',
-        ].filter(Boolean).join(', ')}. New sessions and unsigned callbacks are rejected; nobody is auto-approved.`,
-    fix: 'Set DIDIT_API_KEY, DIDIT_WORKFLOW_ID and DIDIT_WEBHOOK_SECRET from the Didit dashboard (the webhook secret is required; there is no unsigned demo mode).',
+    severity: diditConfigured && !diditHostWrong ? 'pass' : production ? 'fail' : 'warn',
+    detail: diditHostWrong
+      ? `DIDIT_API_URL is set to ${diditApiUrl}, which serves registration only — /v3/session/ does not exist there, so every verification attempt fails. Run the connection test in Security Centre for the provider's own answer.`
+      : diditConfigured
+        ? 'KYC sessions are created server-side, callbacks are signature-verified, and the webhook re-reads the session before changing a profile.'
+        : `KYC is fail-closed: missing ${[
+            !diditKey ? 'DIDIT_API_KEY' : '',
+            !diditWorkflow ? 'DIDIT_WORKFLOW_ID' : '',
+            !diditWebhook ? 'DIDIT_WEBHOOK_SECRET' : '',
+          ].filter(Boolean).join(', ')}. New sessions and unsigned callbacks are rejected; nobody is auto-approved.`,
+    fix: diditHostWrong
+      ? 'Unset DIDIT_API_URL (the default is https://verification.didit.me), then redeploy.'
+      : 'Set DIDIT_API_KEY, DIDIT_WORKFLOW_ID and DIDIT_WEBHOOK_SECRET from the Didit dashboard (the webhook secret is required; there is no unsigned demo mode).',
   })
 
   checks.push({

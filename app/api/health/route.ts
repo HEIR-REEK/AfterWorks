@@ -24,6 +24,32 @@ const STARTED_AT = Date.now()
 
 type Check = { id: string; label: string; status: 'operational' | 'degraded' | 'maintenance' | 'outage'; detail: string; latencyMs?: number }
 
+/**
+ * Identity verification, described in member language.
+ *
+ * The public feed may not name the provider or its variables, but it must not claim the service
+ * works when the deployment is pointing at the wrong host either — a base URL aimed at the
+ * registration domain makes every session fail while all the keys look present.
+ */
+function identityCheck(): Check {
+  const configured = Boolean(env('DIDIT_API_KEY') && env('DIDIT_WORKFLOW_ID') && env('DIDIT_WEBHOOK_SECRET'))
+  const wrongHost = /apx\.didit\.me/i.test(env('DIDIT_API_URL') ?? '')
+  if (configured && !wrongHost) {
+    return {
+      id: 'identity',
+      label: 'ID verification',
+      status: 'operational',
+      detail: 'Identity verification is available.',
+    }
+  }
+  return {
+    id: 'identity',
+    label: 'ID verification',
+    status: 'degraded',
+    detail: 'Identity verification is limited right now. You can complete it later — your account stays open.',
+  }
+}
+
 let dataProbe: { at: number; value: Check } | null = null
 
 async function probeFirestoreRead(): Promise<Check> {
@@ -137,15 +163,7 @@ export async function GET() {
         ? 'Training checkout is accepting payments.'
         : 'Training checkout is temporarily unavailable — if you saw an error, you have not been charged.',
     },
-    {
-      id: 'identity',
-      label: 'ID verification',
-      status: env('DIDIT_API_KEY') && env('DIDIT_WORKFLOW_ID') ? (env('DIDIT_WEBHOOK_SECRET') ? 'operational' : 'degraded') : 'degraded',
-      detail:
-        env('DIDIT_API_KEY') && env('DIDIT_WORKFLOW_ID') && env('DIDIT_WEBHOOK_SECRET')
-          ? 'Identity verification is available.'
-          : 'Identity verification is limited right now. You can complete it later — your account stays open.',
-    },
+    identityCheck(),
     {
       id: 'email',
       label: 'Verification email',

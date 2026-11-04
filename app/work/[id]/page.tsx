@@ -13,7 +13,7 @@ import {
 import { PublicPage } from '@/components/public-shell'
 import { getPublicJob, listPublicJobs } from '@/lib/public-jobs-server'
 import { jsonLd, publicCategoryFor, publicCategoryPath, publicJobPath, type PublicJob } from '@/lib/public-jobs'
-import { formatDuration, formatUsd, trainingFeeUsdFor } from '@/lib/afterworks-data'
+import { formatDuration, formatUsd, formatTrainingFeeLabel } from '@/lib/afterworks-data'
 import { site } from '@/lib/site'
 
 export const dynamic = 'force-dynamic'
@@ -81,7 +81,7 @@ export default async function PublicJobPage({ params }: Props) {
   const related = (await listPublicJobs())
     .filter((entry) => entry.category === job.category && entry.id !== job.id)
     .slice(0, 3)
-  const trainingFee = formatUsd(trainingFeeUsdFor(job.trainingFeeUsd))
+  const trainingFee = formatTrainingFeeLabel(job.trainingFeeUsd)
   const breadcrumb = {
     '@context': 'https://schema.org',
     '@type': 'BreadcrumbList',

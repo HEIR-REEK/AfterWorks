@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { ArrowRight, Clock, GraduationCap, MapPin, ShieldCheck, Users } from 'lucide-react'
 import { StatusBadge } from '@/components/status-badge'
-import { formatDuration, formatUsd, trainingFeeUsdFor } from '@/lib/afterworks-data'
+import { formatDuration, formatUsd, formatTrainingFeeLabel } from '@/lib/afterworks-data'
 import { publicJobPath, type PublicJob } from '@/lib/public-jobs'
 
 function closingLabel(closesAt: string): string {
@@ -46,7 +46,7 @@ export function PublicJobCard({ job }: { job: PublicJob }) {
 
       {job.trainingRequired && (
         <p className="mt-3 inline-flex w-fit items-center gap-1.5 rounded-md border border-primary/20 bg-primary/10 px-2 py-1 text-xs font-medium text-primary">
-          <GraduationCap className="size-3.5" /> Training {formatUsd(trainingFeeUsdFor(job.trainingFeeUsd))}
+          <GraduationCap className="size-3.5" /> Training {formatTrainingFeeLabel(job.trainingFeeUsd)}
         </p>
       )}
 

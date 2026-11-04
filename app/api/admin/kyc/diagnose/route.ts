@@ -16,7 +16,8 @@ export const dynamic = 'force-dynamic'
 
 import { NextRequest } from 'next/server'
 import { audit, consumeBucket, fail, json, requireOwner, routeError } from '@/lib/guards'
-import { diditConfig, diditConfigHint, probeDidit } from '@/lib/didit'
+import { callbackTarget, diditConfig, diditConfigHint, probeDidit } from '@/lib/didit'
+import { publicOriginFor } from '@/lib/security-core'
 
 export async function GET(req: NextRequest) {
   const guard = await requireOwner(req)
@@ -34,6 +35,16 @@ export async function GET(req: NextRequest) {
     const config = diditConfig()
     const probe = await probeDidit()
 
+    // The connection test proves the *provider* half of the flow. The other half is the address the
+    // member is sent back to, which Didit accepts as an opaque string: a callback of
+    // http://localhost:3000/kyc/callback creates a session fine and then strands the member at the
+    // end of it. Report it here so that failure has somewhere to be seen.
+    const resolvedOrigin = publicOriginFor(req)
+    const callback = callbackTarget(resolvedOrigin.origin)
+    const callbackHint = callback.isPublicHttps
+      ? null
+      : `Didit would send the member back to ${callback.url}, which is not a public https address (resolved from ${resolvedOrigin.source}). Set NEXT_PUBLIC_APP_URL to the deployed site — e.g. NEXT_PUBLIC_APP_URL="https://afterworks.site" — so the callback lands on a page their browser can open.`
+
     // A deployment can be "configured" and still unusable: the host or the key is wrong. Report
     // the two separately so the fix is obvious rather than a hunt through the provider's console.
     const healthy = config.configured && probe.reachable && probe.status !== null && probe.status >= 200 && probe.status < 300 && probe.workflowFound
@@ -47,6 +58,9 @@ export async function GET(req: NextRequest) {
         reachable: probe.reachable,
         status: probe.status,
         workflowFound: probe.workflowFound,
+        callbackOrigin: callback.origin,
+        callbackSource: resolvedOrigin.source,
+        callbackIsPublic: callback.isPublicHttps,
       },
       req,
     })
@@ -64,7 +78,13 @@ export async function GET(req: NextRequest) {
         missing: config.missing,
       },
       probe,
-      hint: diditConfigHint(),
+      callback: {
+        url: callback.url,
+        origin: callback.origin,
+        source: resolvedOrigin.source,
+        isPublicHttps: callback.isPublicHttps,
+      },
+      hint: diditConfigHint() ?? callbackHint,
     })
   } catch (err) {
     return routeError('KYC diagnostic', err)

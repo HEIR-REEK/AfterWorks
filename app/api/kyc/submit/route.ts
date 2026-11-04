@@ -19,7 +19,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createKycSession, DiditApiError, DiditConfigError, diditConfigHint } from '@/lib/didit'
 import { saveKycRecord, verifyIdToken, getUserProfile } from '@/lib/firestore-admin'
 import { consumeBucket, audit } from '@/lib/guards'
-import { env, isHostAllowed, readJsonBody } from '@/lib/security-core'
+import { publicOriginFor, readJsonBody } from '@/lib/security-core'
 
 export async function POST(req: NextRequest) {
   try {
@@ -86,15 +86,10 @@ export async function POST(req: NextRequest) {
 
     // Where Didit sends the worker back to. Honouring x-forwarded-host blindly lets an attacker
     // craft a request whose callback URL points at their own server — with the session token on it.
-    const configured = env('NEXT_PUBLIC_APP_URL') ?? env('APP_URL') ?? env('RENDER_EXTERNAL_URL') ?? env('VERCEL_URL')
-    const host = req.headers.get('x-forwarded-host') || req.headers.get('host')
-    const proto = req.headers.get('x-forwarded-proto') || 'https'
-    const publicOrigin = (configured && configured.replace(/^https?:\/\//, '').length > 0
-      ? (configured.startsWith('http') ? configured : `https://${configured}`)
-      : host && isHostAllowed(host)
-        ? `${proto}://${host}`
-        : req.nextUrl.origin
-    ).replace(/\/+$/, '')
+    const { origin: publicOrigin, source: originSource, isPublicHttps } = publicOriginFor(req)
+    console.log(
+      `[KYC submit] Callback origin ${publicOrigin} (from ${originSource})${isPublicHttps ? '' : ' — NOT a public https URL'}`,
+    )
 
     // ── Create the Didit session ──────────────────────────────────────────────
     const session = await createKycSession(userId, isMobile, publicOrigin)

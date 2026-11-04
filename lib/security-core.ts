@@ -220,6 +220,69 @@ export function isHostAllowed(hostHeader: string | null): boolean {
   return listed
 }
 
+// ─── Public origin resolution ────────────────────────────────────────────────
+
+const PRIVATE_HOSTNAME =
+  /^(localhost|127\.\d+\.\d+\.\d+|0\.0\.0\.0|\[::1\]|::1|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|169\.254\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)$/i
+
+/**
+ * True only for an absolute HTTPS URL on a hostname the public internet can reach.
+ *
+ * Third-party providers (Didit included) send the member back to whatever callback URL they are
+ * handed. A callback of `http://localhost:3000/kyc/callback` is accepted as a string and then
+ * fails silently at the end of the flow — the member is stranded, and the only symptom on our side
+ * is a session that never completes. Classifying the URL up front turns that into a visible state.
+ */
+export function isPublicHttpsUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url)
+    if (parsed.protocol !== 'https:') return false
+    const host = parsed.hostname.toLowerCase()
+    if (PRIVATE_HOSTNAME.test(host)) return false
+    if (host.endsWith('.local') || host.endsWith('.internal') || host.endsWith('.localhost')) return false
+    return true
+  } catch {
+    return false
+  }
+}
+
+export type OriginSource = 'env' | 'forwarded-host' | 'host-header' | 'request-origin'
+
+/**
+ * The origin a third party should send the member back to.
+ *
+ * Precedence is deliberate: an operator-set app URL wins over anything the request claims, because
+ * Host and X-Forwarded-Host are attacker-controlled. Only when no app URL is configured do the
+ * headers get a say, and only if the host passes the allow-list. The last resort — the request's own
+ * origin — is what a container behind a proxy tends to produce, so `source` is reported alongside it
+ * to make that fallback obvious instead of invisible.
+ */
+export function publicOriginFor(req: {
+  headers: { get(name: string): string | null }
+  nextUrl: { origin: string }
+}): { origin: string; source: OriginSource; isPublicHttps: boolean } {
+  const configured = env('NEXT_PUBLIC_APP_URL') || env('APP_URL') || env('RENDER_EXTERNAL_URL') || env('VERCEL_URL')
+  const forwardedHost = req.headers.get('x-forwarded-host')
+  const host = forwardedHost || req.headers.get('host')
+  const proto = req.headers.get('x-forwarded-proto') || 'https'
+
+  let origin: string
+  let source: OriginSource
+  if (configured) {
+    origin = /^https?:\/\//i.test(configured) ? configured : `https://${configured}`
+    source = 'env'
+  } else if (host && isHostAllowed(host)) {
+    origin = `${proto}://${host}`
+    source = forwardedHost ? 'forwarded-host' : 'host-header'
+  } else {
+    origin = req.nextUrl.origin
+    source = 'request-origin'
+  }
+
+  origin = origin.replace(/\/+$/, '')
+  return { origin, source, isPublicHttps: isPublicHttpsUrl(origin) }
+}
+
 /**
  * Origin/Referer check for state-changing calls. Same-origin (no Origin header on same-origin
  * GET/HEAD, or Origin equal to Host) passes; anything else is rejected.

@@ -252,8 +252,22 @@ function AdminSecurityPageInner() {
                 mono
                 tone={kyc.probe.status && kyc.probe.status < 300 ? 'ok' : 'fail'}
               />
+              <Row
+                label="Callback URL"
+                value={kyc.callback?.origin ?? 'unknown'}
+                mono
+                tone={kyc.callback?.isPublicHttps ? 'ok' : 'warn'}
+              />
               <Row label="Verdict" value={kyc.healthy ? 'Ready to verify' : 'Not usable'} tone={kyc.healthy ? 'ok' : 'fail'} />
             </dl>
+
+            {kyc.callback && !kyc.callback.isPublicHttps ? (
+              <p className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] leading-relaxed text-amber-600 dark:text-amber-400">
+                Didit would send members back to {kyc.callback.url} — not a public https address (resolved from{' '}
+                {kyc.callback.source}). Sessions still start, then the member is stranded at the end of the flow. Set
+                NEXT_PUBLIC_APP_URL to the deployed site.
+              </p>
+            ) : null}
 
             <p className={cn('text-xs leading-relaxed', kyc.healthy ? 'text-muted-foreground' : 'text-destructive')}>
               {kyc.probe.detail}

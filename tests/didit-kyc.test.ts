@@ -25,6 +25,7 @@ import test from 'node:test'
 const SECRET = 'didit-webhook-secret-for-tests'
 process.env.DIDIT_WEBHOOK_SECRET = SECRET
 process.env.DIDIT_API_KEY = 'test-api-key'
+process.env.DIDIT_WORKFLOW_ID = 'wf_123'
 
 const ROOT = process.cwd()
 const read = (path: string) => readFileSync(join(ROOT, path), 'utf8')
@@ -228,4 +229,80 @@ test('the API base URL is the verification host, never the registration host', (
   const env = read('.env.example')
   assert.doesNotMatch(env, /^DIDIT_API_URL="https:\/\/apx\.didit\.me"/m, 'apx does not serve /v3/* — sessions would 404')
   assert.match(read('lib/didit.ts'), /https:\/\/verification\.didit\.me/)
+})
+
+test('the connection test reads the workflow list and matches the configured workflow', async () => {
+  const { probeDidit } = await didit()
+  const originalFetch = globalThis.fetch
+
+  globalThis.fetch = (async () =>
+    new Response(
+      JSON.stringify({
+        count: 2,
+        results: [
+          { workflow_id: 'wf_other', workflow_label: 'Other KYC', status: 'published', version: 1 },
+          { workflow_id: 'wf_123', workflow_label: 'Standard KYC', status: 'published', version: 2 },
+        ],
+      }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    )) as typeof fetch
+
+  try {
+    const result = await probeDidit()
+    assert.equal(result.reachable, true)
+    assert.equal(result.status, 200)
+    assert.equal(result.workflows.length, 2)
+    assert.equal(result.workflowFound, true, 'the configured workflow id must be matched against the provider list')
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('a key the provider refuses is reported as such, not as an outage', async () => {
+  const { probeDidit } = await didit()
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = (async () =>
+    new Response(JSON.stringify({ detail: 'You do not have permission to perform this action.' }), { status: 403 })) as typeof fetch
+  try {
+    const result = await probeDidit()
+    assert.equal(result.reachable, true, '403 means the host answered')
+    assert.equal(result.status, 403)
+    assert.match(result.detail, /refused the key/i)
+    assert.equal(result.workflowFound, false)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('a workflow missing from the key is called out with the ids that do exist', async () => {
+  const { probeDidit } = await didit()
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = (async () =>
+    new Response(JSON.stringify({ results: [{ workflow_id: 'wf_other', workflow_label: 'Other KYC', status: 'published' }] }), {
+      status: 200,
+    })) as typeof fetch
+  try {
+    const result = await probeDidit()
+    assert.equal(result.workflowFound, false)
+    assert.match(result.detail, /not one of the 1 workflow/i)
+    assert.match(result.hint ?? '', /DIDIT_WORKFLOW_ID/)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('a member is told the truth when the deployment is not configured', () => {
+  const submit = read('app/api/kyc/submit/route.ts')
+  // The generic "try again in a few minutes" hid a missing key behind an outage message.
+  assert.match(submit, /err instanceof DiditConfigError/)
+  assert.match(submit, /kyc_not_configured/)
+  assert.match(submit, /err instanceof DiditApiError/)
+  assert.match(submit, /kyc_provider_auth/)
+  assert.match(submit, /diditConfigHint\(\)/)
+
+  const security = read('lib/security.ts')
+  assert.match(security, /apx\\\.didit\\\.me/i, 'the posture report must flag a registration-host base URL')
+  const health = read('app/api/health/route.ts')
+  assert.match(health, /function identityCheck/)
+  assert.match(health, /apx\\\.didit\\\.me/i)
 })

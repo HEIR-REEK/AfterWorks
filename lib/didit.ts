@@ -121,6 +121,195 @@ export function needsUserAction(status: DiditSessionStatus): boolean {
   return status === 'Resubmission'
 }
 
+// ─── Configuration & failures ────────────────────────────────────────────────
+
+/**
+ * Didit rejected the request, or could not be reached at all.
+ *
+ * The distinction matters operationally: "key invalid", "wrong host", "workflow missing" and
+ * "provider down" all used to surface as the same browser message, so a broken deployment looked
+ * identical to a provider hiccup. The `status` and `detail` here are for the server log and the
+ * console's connection test — never for the browser.
+ */
+export class DiditApiError extends Error {
+  readonly status: number
+  readonly detail: string
+
+  constructor(status: number, detail: string, context: string) {
+    super(`${context} (${status}): ${detail.slice(0, 400)}`)
+    this.name = 'DiditApiError'
+    this.status = status
+    this.detail = detail
+  }
+}
+
+/** Credentials are missing. This is our bug, not the provider's, and it must not look like one. */
+export class DiditConfigError extends Error {
+  readonly missing: string[]
+
+  constructor(missing: string[]) {
+    super(`Didit is not configured: ${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} required.`)
+    this.name = 'DiditConfigError'
+    this.missing = missing
+  }
+}
+
+/** The registration/console host — everything under /v3/* 404s there. */
+const REGISTRATION_HOST = 'apx.didit.me'
+
+/**
+ * What the deployment is actually pointing at. Booleans rather than values: this feeds the
+ * console's connection test and the health check, and neither may echo a key.
+ */
+export function diditConfig() {
+  const apiUrl = DIDIT_BASE_URL
+  let host = ''
+  try {
+    host = new URL(apiUrl).host
+  } catch {
+    host = apiUrl
+  }
+  const missing: string[] = []
+  if (!DIDIT_API_KEY || DIDIT_API_KEY.startsWith('your_')) missing.push('DIDIT_API_KEY')
+  if (!DIDIT_WORKFLOW_ID || DIDIT_WORKFLOW_ID.startsWith('your_')) missing.push('DIDIT_WORKFLOW_ID')
+  if (!process.env.DIDIT_WEBHOOK_SECRET) missing.push('DIDIT_WEBHOOK_SECRET')
+
+  return {
+    apiUrl,
+    host,
+    /** True when the API base is the registration host, where /v3/session/ does not exist. */
+    usesRegistrationHost: host === REGISTRATION_HOST,
+    hasApiKey: Boolean(DIDIT_API_KEY) && !DIDIT_API_KEY.startsWith('your_'),
+    hasWorkflowId: Boolean(DIDIT_WORKFLOW_ID) && !DIDIT_WORKFLOW_ID.startsWith('your_'),
+    hasWebhookSecret: Boolean(process.env.DIDIT_WEBHOOK_SECRET),
+    missing,
+    configured: missing.length === 0,
+  }
+}
+
+/** One line explaining the most likely reason a session cannot be created, for logs and the console. */
+export function diditConfigHint(): string | null {
+  const config = diditConfig()
+  if (config.usesRegistrationHost) {
+    return `DIDIT_API_URL points at ${REGISTRATION_HOST}, which only serves /auth/v2/* registration — /v3/session/ 404s there. Unset it to use https://verification.didit.me.`
+  }
+  if (!config.hasApiKey || !config.hasWorkflowId) {
+    return `Set ${[config.hasApiKey ? null : 'DIDIT_API_KEY', config.hasWorkflowId ? null : 'DIDIT_WORKFLOW_ID'].filter(Boolean).join(' and ')} from the Didit console (Settings → API & Webhooks / Workflows).`
+  }
+  if (!config.hasWebhookSecret) {
+    return 'Set DIDIT_WEBHOOK_SECRET so approvals arriving by webhook are accepted, not refused.'
+  }
+  return null
+}
+
+/**
+ * Live read-through of the provider's workflow list.
+ *
+ * `GET /v3/workflows/` is the cheapest call that proves three things at once — the host is right,
+ * the API key is accepted, and the configured workflow exists in this application — and it does
+ * not spend verification credits the way a test session would.
+ */
+export async function probeDidit(): Promise<{
+  reachable: boolean
+  status: number | null
+  detail: string
+  workflows: { id: string; label: string; status: string; version?: number }[]
+  workflowFound: boolean
+  hint: string | null
+}> {
+  const config = diditConfig()
+  const hint = diditConfigHint()
+  if (!config.hasApiKey) {
+    return {
+      reachable: false,
+      status: null,
+      detail: 'No API key is configured, so Didit cannot be called.',
+      workflows: [],
+      workflowFound: false,
+      hint,
+    }
+  }
+
+  try {
+    const response = await fetch(`${DIDIT_BASE_URL}/v3/workflows/`, {
+      method: 'GET',
+      headers: { 'x-api-key': DIDIT_API_KEY, Accept: 'application/json' },
+      cache: 'no-store',
+      signal: AbortSignal.timeout(10_000),
+    })
+
+    if (!response.ok) {
+      const detail = (await response.text()).slice(0, 300)
+      const refused = response.status === 401 || response.status === 403
+      return {
+        reachable: true,
+        status: response.status,
+        detail: refused
+          ? `Didit refused the key for ${config.host}: ${detail}`
+          : `Didit answered ${response.status} from ${config.host}: ${detail}`,
+        workflows: [],
+        workflowFound: false,
+        hint:
+          hint ??
+          (config.usesRegistrationHost
+            ? diditConfigHint()
+            : refused
+              ? `The key was refused. Confirm DIDIT_API_KEY belongs to this application (Settings → API & Webhooks) and that DIDIT_API_URL is unset, so calls go to https://verification.didit.me.`
+              : response.status === 400
+                ? 'A 400 here is usually exhausted credits or an archived workflow. Check Billing and Workflows in the Didit console.'
+                : 'The provider answered with an error. Retry, then check the Didit status page.'),
+      }
+    }
+
+    const payload = (await response.json()) as Record<string, unknown>
+    const rows = Array.isArray(payload.results)
+      ? payload.results
+      : Array.isArray(payload)
+        ? (payload as unknown[])
+        : Array.isArray(payload.workflows)
+          ? (payload.workflows as unknown[])
+          : []
+
+    const workflows = rows.flatMap((row) => {
+      const record = row && typeof row === 'object' ? (row as Record<string, unknown>) : null
+      if (!record) return []
+      const id = String(record.workflow_id ?? record.uuid ?? record.id ?? '')
+      if (!id) return []
+      return [
+        {
+          id,
+          label: String(record.workflow_label ?? record.label ?? 'Untitled workflow'),
+          status: String(record.status ?? 'unknown'),
+          version: typeof record.version === 'number' ? record.version : undefined,
+        },
+      ]
+    })
+
+    const workflowFound = workflows.some((workflow) => workflow.id === DIDIT_WORKFLOW_ID)
+    return {
+      reachable: true,
+      status: response.status,
+      detail: workflowFound
+        ? `Didit accepted the key and the workflow is published in this application (${workflows.length} workflow${workflows.length === 1 ? '' : 's'} visible).`
+        : workflows.length === 0
+          ? 'The key works, but this application has no workflows. Create one in the Didit console, then set DIDIT_WORKFLOW_ID.'
+          : `The key works, but DIDIT_WORKFLOW_ID is not one of the ${workflows.length} workflow(s) on this application. Copy the id from the console.`,
+      workflows,
+      workflowFound,
+      hint: workflowFound ? hint : 'DIDIT_WORKFLOW_ID must be the id of a workflow that exists on the application bound to this API key.',
+    }
+  } catch (err) {
+    return {
+      reachable: false,
+      status: null,
+      detail: `Could not reach ${DIDIT_BASE_URL}: ${err instanceof Error ? err.message : 'unknown error'}`,
+      workflows: [],
+      workflowFound: false,
+      hint: config.usesRegistrationHost ? diditConfigHint() : "Check the deployment's outbound network access to verification.didit.me.",
+    }
+  }
+}
+
 // ─── Callback URL ────────────────────────────────────────────────────────────
 
 /**
@@ -177,7 +366,14 @@ export async function createKycSession(
   // degraded state, and the member is told verification is unavailable rather than being
   // marked verified without a document.
   if (missingKey || missingWorkflow) {
-    throw new Error('Didit is not configured: DIDIT_API_KEY and DIDIT_WORKFLOW_ID are required.')
+    throw new DiditConfigError([
+      ...(missingKey ? ['DIDIT_API_KEY'] : []),
+      ...(missingWorkflow ? ['DIDIT_WORKFLOW_ID'] : []),
+    ])
+  }
+
+  if (diditConfig().usesRegistrationHost) {
+    throw new DiditConfigError(['DIDIT_API_URL must be https://verification.didit.me, not the registration host'])
   }
 
   const baseCbUrl = getCallbackUrl(origin)
@@ -206,17 +402,24 @@ export async function createKycSession(
   })
 
   if (!response.ok) {
-    const errorText = await response.text()
-    throw new Error(`Didit session creation failed (${response.status}): ${errorText}`)
+    throw new DiditApiError(response.status, await response.text(), 'Didit session creation failed')
   }
 
   const data = await response.json()
+  const verificationUrl = (data.url ?? data.verification_url ?? '') as string
+
+  // A 201 without a hosted URL is useless to the member: the client would redirect to an empty
+  // string and they would sit on a blank page. Treat it as a provider fault so the route can say
+  // so instead of pretending a session was opened.
+  if (!verificationUrl) {
+    throw new DiditApiError(502, `Session ${String(data.session_id ?? '?')} had no hosted URL in the response.`, 'Didit session creation returned no URL')
+  }
 
   return {
     session_id: data.session_id || data.id || '',
     session_token: data.session_token || '',
     // Didit returns "url" in v3; normalise to "verification_url" for the rest of the app
-    verification_url: data.url ?? data.verification_url ?? '',
+    verification_url: verificationUrl,
     status: normaliseStatus(data.status),
   }
 }
@@ -299,8 +502,7 @@ export async function getKycSessionStatus(
   }
 
   if (!response.ok) {
-    const errorText = await response.text()
-    throw new Error(`Didit status fetch failed (${response.status}): ${errorText}`)
+    throw new DiditApiError(response.status, await response.text(), 'Didit status fetch failed')
   }
 
   const data = (await response.json()) as Record<string, unknown>

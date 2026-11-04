@@ -49,7 +49,11 @@ test('completion pays through one transaction and a deterministic ledger create'
 test('identity verification has no unsigned or demo approval path', () => {
   const didit = read('lib/didit.ts')
   const webhook = read('app/api/kyc/webhook/route.ts')
-  assert.match(didit, /DIDIT_API_KEY and DIDIT_WORKFLOW_ID are required/)
+  // A missing credential is a *configuration* failure (503 to the caller), not a provider outage —
+  // the two used to be the same "try again in a few minutes" and neither was true.
+  assert.match(didit, /export class DiditConfigError/)
+  assert.match(didit, /\.\.\.\(missingKey \? \['DIDIT_API_KEY'\] : \[\]\)/)
+  assert.match(didit, /\.\.\.\(missingWorkflow \? \['DIDIT_WORKFLOW_ID'\] : \[\]\)/)
   assert.match(didit, /demo_session_/)
   assert.match(webhook, /DIDIT_WEBHOOK_SECRET is not configured/)
   assert.match(webhook, /does not belong to uid/)

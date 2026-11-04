@@ -434,6 +434,37 @@ export const adminApi = {
   /** Live console sessions (server-only collection), for the Security Centre sessions panel. */
   sessions: () =>
     apiFetch<{ ok: boolean; count: number; generatedAt: string; sessions: ActiveAdminSession[] }>('/api/admin/sessions'),
+  /**
+   * Identity-verification connection test (owner only).
+   *
+   * "Identity verification could not be started" is the same sentence for a missing key, a wrong
+   * host, a revoked key, a workflow from another application, exhausted credits and a provider
+   * outage. The member must not see which one it was; the operator must. This reads the provider
+   * live and reports configuration as booleans only.
+   */
+  kycDiagnose: () =>
+    apiFetch<{
+      ok: boolean
+      healthy: boolean
+      config: {
+        host: string
+        apiUrl: string
+        usesRegistrationHost: boolean
+        hasApiKey: boolean
+        hasWorkflowId: boolean
+        hasWebhookSecret: boolean
+        missing: string[]
+      }
+      probe: {
+        reachable: boolean
+        status: number | null
+        detail: string
+        workflows: { id: string; label: string; status: string; version?: number }[]
+        workflowFound: boolean
+        hint: string | null
+      }
+      hint: string | null
+    }>('/api/admin/kyc/diagnose', { timeoutMs: 20_000 }),
   /** Staff desk (owner only): list console accounts, add staff with an owner-chosen password, reset, disable, remove. */
   staff: () => apiFetch<{ ok: boolean; owners: string[]; staff: AdminStaffAccountRow[]; degraded?: string }>('/api/admin/staff'),
   staffAdd: (body: { email: string; passcode: string }) =>

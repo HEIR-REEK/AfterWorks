@@ -174,9 +174,10 @@ async function jobTrainingGate(jobId: string): Promise<{ missing: boolean; requi
   try {
     const snap = await db.collection('jobs').doc(jobId).get()
     if (!snap.exists) {
-      // Seeded/demo jobs are not in Firestore; do not block a payment for a catalogue entry the
-      // public site can still render, but do not invent a price either.
-      return { missing: false, requiresTraining: true }
+      // A sample card is a first-run preview, not a sellable product. Once storage is configured,
+      // a job that is not in `jobs/` has no slot to reserve, no assessment to unlock and no owner
+      // to answer for the charge — so refuse the checkout instead of taking money for a ghost.
+      return { missing: true }
     }
     const data = snap.data() as Record<string, unknown> | undefined
     // The admin-set per-job fee; absent/invalid → undefined so the global configured fee applies.

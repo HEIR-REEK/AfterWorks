@@ -101,6 +101,44 @@ Two rules keep the board honest, both enforced by `applyCatalogueSnapshot()` in
   shows empty instead of silently back-filling the sample catalogue. Sample cards are only ever a
   first-run fallback, and `/jobs` labels them "Sample catalogue" rather than "Live".
 
+### Publishing the 2026 catalogue expansion
+
+`lib/afterworks-data.ts` carries 12 new sample cards (two per work category), with their own
+descriptions, pay, slots and training briefings. A live board that already has Firestore rows will
+not show them automatically, because sample cards never mix into a live catalogue. Publish just that
+batch through the same sanitised, audited write path the console uses:
+
+```bash
+npm run seed:catalogue -- --dry-run          # print the plan
+npm run seed:catalogue                       # create missing cards, skip existing ones
+npm run seed:catalogue -- --overwrite        # update the batch after editing the seed data
+```
+
+The script only accepts IDs in `EXPANDED_CATALOGUE_JOB_IDS`, so it cannot rewrite older or
+operator-created cards by accident. It needs `FIREBASE_SERVICE_ACCOUNT_JSON` or
+`FIREBASE_SERVICE_ACCOUNT_PATH`, and records writes as actor `catalogue-2026`.
+
+The same import is available without shell access: an owner opens `/admin/jobs` and chooses
+**Import 2026 cards**. It calls the same `importStarterJobs()` function, writes through
+`upsertJob()`, skips cards that already exist and never touches older or hand-authored cards. Each
+imported card carries its training briefing and a per-card training price where training is gated;
+an empty authored-assessment list means the full built-in category bank is used, so no imported card
+can arrive without an assessment.
+
+### Search and filters
+
+The console's free-text searches are server-side and inspect a bounded window of the collection
+(1,000 documents per table), then page the *filtered* result with an offset cursor tied to the
+query. Changing the search or a status filter starts at the first page; the cursor cannot be reused
+against a different result set. A window that fills its bound says so in the table's notice rather
+than reading as "no such member."
+
+Member search covers name, email, uid, phone and payout handle, and the state filter treats
+**KYC pending**, **Restricted** and **Admins** as the labels they are (not as literal
+`accountState` values). The worker's `/jobs` board uses the same query semantics for title,
+category, description and responsibilities, and its availability filter also drops cards whose
+close date has passed.
+
 The training price is priced server-side from the same document (`/api/paystack/initialize` →
 `jobTrainingGate`), and the worker's card is normalised by `normaliseJobRecord()` — the document id
 wins over any `id` field stored inside the document, and a missing/zero fee falls back to the global

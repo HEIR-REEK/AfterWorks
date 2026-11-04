@@ -377,6 +377,25 @@ function daysFromNow(days: number): string {
   return d.toISOString()
 }
 
+/**
+ * Cards added in the 2026 catalogue expansion. Kept as an explicit list so the optional Firestore
+ * seeding script can publish this batch without touching cards an operator already curated.
+ */
+export const EXPANDED_CATALOGUE_JOB_IDS = [
+  'job-swahili-radio-interviews',
+  'job-focus-group-transcription',
+  'job-construction-ppe-label',
+  'job-retail-shelf-label',
+  'job-supplier-invoice-entry',
+  'job-clinic-intake-entry',
+  'job-marketplace-photo-review',
+  'job-reported-comments-triage',
+  'job-maternal-health-leaflets',
+  'job-kikuyu-training-subtitles',
+  'job-sacco-branch-verification',
+  'job-grant-deadline-research',
+] as const
+
 export function seedJobs(): Job[] {
   return [
     // ── Transcription ────────────────────────────────────────────────────────
@@ -915,6 +934,373 @@ export function seedJobs(): Job[] {
       status: 'open',
       closesAt: daysFromNow(9),
       postedAgo: '2 days ago',
+    },
+
+    // ── Catalogue expansion · 2026 ───────────────────────────────────────────
+    {
+      id: 'job-swahili-radio-interviews',
+      title: 'Transcribe Swahili radio interviews for a media archive',
+      category: 'Transcription',
+      description:
+        'Eight recorded interviews from a county radio series, six to nine minutes each. The audio is clean, but callers, music beds and the occasional name are not. You get a speaker key, a names list and the station house style.',
+      responsibilities: [
+        'Transcribe eight interviews with host, guest and caller labels',
+        'Add timestamps at every speaker change and music bed',
+        'Verify names and places against the supplied list',
+        'Tag genuinely unclear words instead of guessing',
+      ],
+      payAmountUsd: 42,
+      estimatedMinutes: 300,
+      capacity: 45,
+      slotsRemaining: 34,
+      trainingRequired: true,
+      trainingFeeUsd: 12,
+      trainingNotes: [
+        {
+          title: 'The archive uses clean verbatim',
+          content:
+            'Remove filler sounds and false starts, but keep every idea, every speaker turn and every music cue. A music bed is written as [music] with the timestamp where it starts and ends. Do not summarise a caller who rambles; transcribe what they said.\n\nUse the station format for every line:\n\n[00:02:14] Host: ...\n[00:02:19] Guest: ...\n\nTimestamps go at speaker changes, not on every line.',
+        },
+        {
+          title: 'Names and places are facts',
+          content:
+            'The supplied names list wins. If a name is not on the list and you cannot hear it clearly, write [phonetic: ...] and flag the timestamp in your handover note. Do not choose the most familiar spelling.\n\nPlace names should follow the official spelling in the list, including the county and ward. If the speaker uses a nickname, transcribe the nickname and keep the official name in your note — never silently replace one with the other.',
+        },
+        {
+          title: 'Before you submit',
+          content:
+            'Run this check in order:\n- Every speaker change starts a new line with a label\n- Every music bed has a start and end timestamp\n- Every uncertain name is tagged, not guessed\n- The file follows the station format and the agreed file name\n\nIf any box is unchecked, the archive will return the file even when the words themselves are correct.',
+        },
+      ],
+      requiresVerified: true,
+      status: 'open',
+      closesAt: daysFromNow(7),
+      postedAgo: '3 hours ago',
+    },
+    {
+      id: 'job-focus-group-transcription',
+      title: 'Transcribe market-research focus groups with overlapping speech',
+      category: 'Transcription',
+      description:
+        'Six focus-group sessions (45–55 minutes) with five or six participants, mixed English and Swahili, and frequent crosstalk. The client needs a usable speaker map and a faithful record for analysis.',
+      responsibilities: [
+        'Build a speaker map before typing the first line',
+        'Transcribe six sessions with participant labels',
+        'Mark crosstalk with the client convention and timecodes',
+        'Deliver clean verbatim plus a short uncertainty log',
+      ],
+      payAmountUsd: 78,
+      estimatedMinutes: 480,
+      capacity: 18,
+      slotsRemaining: 11,
+      trainingRequired: true,
+      trainingFeeUsd: 24,
+      trainingNotes: [
+        {
+          title: 'Build the speaker map before the first line',
+          content:
+            'Groups are not interviews. Participants talk over each other, agree with a murmur, and switch between English and Swahili mid-sentence. Read the participant list and listen to the first two minutes before typing, then assign one label per voice and keep it for the whole session.\n\nWhen two people speak at once, keep both audible contributions and mark the overlap with the client convention, for example [crosstalk 00:12:04]. Do not award the line to the louder voice. If a contribution is truly unintelligible, tag it and log the timestamp instead of inventing words.',
+        },
+        {
+          title: 'The mixed-language rule',
+          content:
+            'Transcribe each language as spoken. Do not translate Swahili into English and do not anglicise a name or a phrase because the rest of the sentence is English. The analyst needs the participant’s actual words.\n\nKeep the supplied glossary open for recurring programme terms. If a term is not in the glossary and you are unsure of the spelling, use [phonetic: ...] and add it to the uncertainty log. A clean uncertainty log is part of the deliverable, not an apology.',
+        },
+      ],
+      requiresVerified: true,
+      status: 'open',
+      closesAt: daysFromNow(12),
+      postedAgo: '1 day ago',
+    },
+
+    {
+      id: 'job-construction-ppe-label',
+      title: 'Label construction-site photos for PPE and hazard detection',
+      category: 'Image Labeling',
+      description:
+        'Annotate 240 construction-site photographs with boxes for helmets, high-visibility vests, ladders, scaffolds and open edges. The taxonomy includes an edge-case gallery for occlusion, distance and motion blur.',
+      responsibilities: [
+        'Draw tight boxes around every visible instance in 240 images',
+        'Apply the taxonomy and the occlusion rule from the gallery',
+        'Pass a ten-image calibration batch before the main set',
+        'Send unreadable or ambiguous frames to the unsure queue',
+      ],
+      payAmountUsd: 54,
+      estimatedMinutes: 330,
+      capacity: 60,
+      slotsRemaining: 46,
+      trainingRequired: true,
+      trainingFeeUsd: 14,
+      trainingNotes: [
+        {
+          title: 'Label what is visible, not what you expect',
+          content:
+            'A tight box follows the visible edge of the helmet, vest, ladder or open edge. If a worker is partly behind a stack of blocks, box the visible part and apply the occluded-object rule in the gallery; never extend a box into the hidden area. A high-visibility vest counts as one instance even when the straps and reflective bands are separate.\n\nSmall or distant objects still get a box when they meet the minimum pixel size. If they do not, skip them and note why. The calibration batch is the authority for edge cases, not a guess from a similar image.',
+        },
+        {
+          title: 'When an image is a safety signal',
+          content:
+            'Some frames show an obvious hazard: a worker on an unguarded edge, a ladder at the wrong angle, or someone welding without a shield. Your job is to label the objects, not to certify the site. Record the hazard with the approved hazard tag and put the frame in the review queue.\n\nDo not crop, enhance or annotate in a way that hides the scene. Do not copy a site image outside the task. The client uses these frames for model training and safety review, and an edited image destroys both uses.',
+        },
+      ],
+      requiresVerified: true,
+      status: 'open',
+      closesAt: daysFromNow(8),
+      postedAgo: '5 hours ago',
+    },
+    {
+      id: 'job-retail-shelf-label',
+      title: 'Annotate retail shelf images for stock detection',
+      category: 'Image Labeling',
+      description:
+        'Draw product facings and shelf gaps on 300 store photographs. The client supplies a category list and planogram examples; consistency across a shelf matters more than perfect speed.',
+      responsibilities: [
+        'Box every visible product facing in 300 shelf images',
+        'Mark empty shelf gaps with the approved gap label',
+        'Flag price tags that are too blurry to read',
+        'Keep one class list and one box style across the batch',
+      ],
+      payAmountUsd: 40,
+      estimatedMinutes: 260,
+      capacity: 80,
+      slotsRemaining: 63,
+      trainingRequired: false,
+      requiresVerified: true,
+      status: 'open',
+      closesAt: daysFromNow(5),
+      postedAgo: '9 hours ago',
+    },
+
+    {
+      id: 'job-supplier-invoice-entry',
+      title: 'Key supplier invoices into an accounts template',
+      category: 'Data Entry',
+      description:
+        'Enter 140 scanned supplier invoices into a fixed accounts template: invoice number, date, supplier, subtotal, VAT, total, currency and purchase-order reference. Scans vary in layout, and a few contain handwritten corrections.',
+      responsibilities: [
+        'Enter the required fields for 140 invoices',
+        'Copy the printed figures; do not repair the supplier arithmetic',
+        'Send contradictions and missing pages to the exception queue',
+        'Verify VAT and total digits on a second pass',
+      ],
+      payAmountUsd: 36,
+      estimatedMinutes: 240,
+      capacity: 75,
+      slotsRemaining: 60,
+      trainingRequired: false,
+      requiresVerified: true,
+      status: 'open',
+      closesAt: daysFromNow(4),
+      postedAgo: '6 hours ago',
+    },
+    {
+      id: 'job-clinic-intake-entry',
+      title: 'Digitise clinic intake forms under a confidentiality brief',
+      category: 'Data Entry',
+      description:
+        'Key 180 handwritten patient intake forms into a secure structured template. You will enter only the approved fields, use exception codes for missing or illegible answers, and keep every record inside the platform.',
+      responsibilities: [
+        'Enter the approved fields for 180 intake forms',
+        'Use the supplied exception codes for blanks and unreadable answers',
+        'Double-check patient identifiers and visit dates',
+        'Never copy, photograph or discuss a record outside the task',
+      ],
+      payAmountUsd: 60,
+      estimatedMinutes: 360,
+      capacity: 28,
+      slotsRemaining: 19,
+      trainingRequired: true,
+      trainingFeeUsd: 18,
+      trainingNotes: [
+        {
+          title: 'Minimum data, maximum care',
+          content:
+            'Enter only the columns in the template. Do not add a diagnosis, a phone number or a note that the form did not ask for. If a field is blank, use the approved blank code; if handwriting is ambiguous, use the unclear code and move on.\n\nPatient information never leaves this task. No screenshots, no personal notes, no pasting into another app, no discussion outside the review thread. A record copied for convenience is still a breach.',
+        },
+        {
+          title: 'Reading handwritten forms consistently',
+          content:
+            'The source document is the authority. Copy the name and date as printed; if the form mixes day-first and month-first dates, apply the conversion rule in the brief and record the original in the exception note.\n\nCheck identifiers twice: one wrong digit can attach a visit to the wrong person. When two fields disagree, stop and flag the row rather than choosing the one that looks more likely.',
+        },
+      ],
+      requiresVerified: true,
+      status: 'open',
+      closesAt: daysFromNow(9),
+      postedAgo: '1 day ago',
+    },
+
+    {
+      id: 'job-marketplace-photo-review',
+      title: 'Review marketplace photos for prohibited and misleading items',
+      category: 'Content Review',
+      description:
+        'Review 300 marketplace listings that combine a photo, a title and a short description. Apply the client policy to decide allow, review, remove or escalate, and record the policy reason for every decision.',
+      responsibilities: [
+        'Review 300 listings against the policy categories',
+        'Record one policy code and a short evidence note per decision',
+        'Escalate weapons, medical claims and coordinated repeat listings',
+        'Keep the queue moving without inventing rules',
+      ],
+      payAmountUsd: 44,
+      estimatedMinutes: 220,
+      capacity: 70,
+      slotsRemaining: 54,
+      trainingRequired: false,
+      requiresVerified: true,
+      status: 'open',
+      closesAt: daysFromNow(6),
+      postedAgo: '4 hours ago',
+    },
+    {
+      id: 'job-reported-comments-triage',
+      title: 'Triage reported comments for a community platform',
+      category: 'Content Review',
+      description:
+        'Work through 450 reported comments covering harassment, hate, spam and self-harm risk. The queue gives you the comment, its surrounding thread and the report reason; the severity matrix tells you what to do next.',
+      responsibilities: [
+        'Triage 450 reports with the severity matrix',
+        'Read the full thread before deciding on context-dependent cases',
+        'Escalate credible threats and self-harm risk immediately',
+        'Write a reviewable note for every removal or escalation',
+      ],
+      payAmountUsd: 70,
+      estimatedMinutes: 320,
+      capacity: 32,
+      slotsRemaining: 23,
+      trainingRequired: true,
+      trainingFeeUsd: 15,
+      trainingNotes: [
+        {
+          title: 'Severity before wording',
+          content:
+            'The report reason is a starting point, not the decision. Read the comment in its thread, then apply the severity matrix: credible threat or self-harm risk goes to escalation immediately; targeted abuse gets removal and the appropriate policy code; ordinary disagreement stays up even when it is rude.\n\nDo not let a polite sentence hide a threat, and do not treat a rude word as a violation by itself. When two rules could apply, record the more specific one so the policy team can audit the call.',
+        },
+        {
+          title: 'Write the note a reviewer can defend',
+          content:
+            'Every removal or escalation needs a short note that names the rule and the evidence: which words, which image, which part of the thread. “Offensive” is not a reason code. “Targeted harassment — repeated personal insults after the user asked them to stop” is.\n\nKeep the note factual and free of personal opinion. If you are unsure, send the case to review rather than guessing at removal; a second look is cheaper than an unfair enforcement decision.',
+        },
+      ],
+      requiresVerified: true,
+      status: 'open',
+      closesAt: daysFromNow(10),
+      postedAgo: '2 days ago',
+    },
+
+    {
+      id: 'job-maternal-health-leaflets',
+      title: 'Translate maternal-health leaflets EN → Swahili',
+      category: 'Translation',
+      description:
+        'Translate 20 maternal-health leaflets (300–600 words each) from English into clear, respectful Swahili for community clinics. A clinical glossary and two approved reference leaflets are provided.',
+      responsibilities: [
+        'Translate all 20 leaflets with the approved glossary',
+        'Preserve headings, warnings, numbers and reading level',
+        'Keep medical advice exactly as written — add none of your own',
+        'Flag ambiguous clinical terms instead of choosing silently',
+      ],
+      payAmountUsd: 48,
+      estimatedMinutes: 280,
+      capacity: 40,
+      slotsRemaining: 30,
+      trainingRequired: false,
+      requiresVerified: true,
+      status: 'open',
+      closesAt: daysFromNow(7),
+      postedAgo: '8 hours ago',
+    },
+    {
+      id: 'job-kikuyu-training-subtitles',
+      title: 'Create Kikuyu subtitles for short training videos',
+      category: 'Translation',
+      description:
+        'Create timed Kikuyu subtitles for 14 training videos (three to five minutes each). The client supplies a terminology glossary, character limits and two worked examples; the audio is clear and the speakers are identified.',
+      responsibilities: [
+        'Subtitle 14 videos with accurate timecodes',
+        'Keep every subtitle within the two-line, 42-character limit',
+        'Use the glossary for recurring terms and names',
+        'Translate meaning and tone, not word-for-word idioms',
+      ],
+      payAmountUsd: 74,
+      estimatedMinutes: 420,
+      capacity: 24,
+      slotsRemaining: 17,
+      trainingRequired: true,
+      trainingFeeUsd: 22,
+      trainingNotes: [
+        {
+          title: 'Subtitle timing and reading speed',
+          content:
+            'A subtitle must be readable before it disappears. Keep each cue to one or two lines, no more than 42 characters per line, and aim for a comfortable reading speed rather than cramming every word into one frame.\n\nSplit at natural phrase boundaries. Never leave a one-word line unless the speaker deliberately pauses on it. If a sentence cannot fit, shorten the wording without dropping a fact, a warning or a name, and keep the timecode on the spoken phrase.',
+        },
+        {
+          title: 'Kikuyu terminology and tone',
+          content:
+            'Use the supplied glossary for recurring terms. When a term is not in the glossary, translate the meaning rather than inventing a new word, and add it to your handover note so the next video stays consistent.\n\nIdioms and proverbs should carry the same effect in Kikuyu, not a literal image that confuses the viewer. Keep the trainer’s register: direct, practical and respectful. Do not add explanation that the speaker did not give.',
+        },
+      ],
+      requiresVerified: true,
+      status: 'open',
+      closesAt: daysFromNow(11),
+      postedAgo: '1 day ago',
+    },
+
+    {
+      id: 'job-sacco-branch-verification',
+      title: 'Verify SACCO branch contacts from official sources',
+      category: 'Research',
+      description:
+        'Verify branch details for 90 savings and credit cooperatives: branch name, physical address, phone, email and official source URL. Use the institution website, regulator listings or an official annual report — not a directory or social post.',
+      responsibilities: [
+        'Verify 90 branch records from official sources',
+        'Record the exact page URL and the date you checked it',
+        'Mark closed, merged or unverifiable branches',
+        'Normalise phone numbers to the requested format',
+      ],
+      payAmountUsd: 32,
+      estimatedMinutes: 260,
+      capacity: 60,
+      slotsRemaining: 47,
+      trainingRequired: false,
+      requiresVerified: true,
+      status: 'open',
+      closesAt: daysFromNow(5),
+      postedAgo: '7 hours ago',
+    },
+    {
+      id: 'job-grant-deadline-research',
+      title: 'Compile verified grant deadlines for small NGOs',
+      category: 'Research',
+      description:
+        'Build a verified list of 55 grant opportunities for small East African NGOs: funder, programme, deadline, eligibility, award range and the official application page. Aggregator sites are leads, not evidence.',
+      responsibilities: [
+        'Verify 55 opportunities on the funder’s official page',
+        'Record the deadline and its timezone exactly as published',
+        'Mark rolling, invite-only and closed programmes',
+        'Flag conflicts between an aggregator and the funder',
+      ],
+      payAmountUsd: 56,
+      estimatedMinutes: 320,
+      capacity: 35,
+      slotsRemaining: 26,
+      trainingRequired: true,
+      trainingFeeUsd: 12,
+      trainingNotes: [
+        {
+          title: 'Official sources, in order',
+          content:
+            'Start with the funder’s own programme page, then its published guidelines or annual report, then a regulator or government notice. An aggregator, newsletter or social post is a lead that tells you where to look — never the evidence you record.\n\nCopy the exact page URL you checked and the date you checked it. If the page has moved, follow the official redirect and record the final URL. A dead link or a PDF that cannot be opened is an unverifiable row, not a deadline to guess.',
+        },
+        {
+          title: 'A deadline is a timezone fact',
+          content:
+            'Record the deadline exactly as published, including the time and timezone. “30 November” without a timezone is incomplete when the funder closes at 23:59 EST. Keep the funder’s wording beside your normalised date so an NGO can check it.\n\nMark rolling, invite-only, suspended and closed programmes explicitly. If an aggregator and the funder disagree, the funder wins and you note the conflict. Do not add an opportunity you cannot trace to an official page.',
+        },
+      ],
+      requiresVerified: true,
+      status: 'open',
+      closesAt: daysFromNow(9),
+      postedAgo: '1 day ago',
     },
   ]
 }

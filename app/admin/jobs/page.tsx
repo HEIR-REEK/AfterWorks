@@ -14,9 +14,11 @@ import {
   Play,
   Plus,
   Save,
+  Search,
   Settings2,
   StickyNote,
   Trash2,
+  Upload,
   X,
 } from 'lucide-react'
 import { adminApi, useAdminSession, type AdminJobRow } from '@/lib/admin'
@@ -27,6 +29,7 @@ import {
   assessmentPassMark,
   formatUsd,
   trainingFeeKesFor,
+  trainingFeeUsdFor,
   BUILT_IN_QUESTION_COUNT,
   JOB_CATEGORY_LIST,
   TRAINING_LESSON_KINDS,
@@ -93,7 +96,7 @@ const EMPTY: Draft = {
   capacity: 10,
   slotsRemaining: 10,
   trainingRequired: false,
-  trainingFeeUsd: 10,
+  trainingFeeUsd: trainingFeeUsdFor(),
   trainingNotes: [],
   assessmentQuestions: [],
   requiresVerified: true,
@@ -168,15 +171,27 @@ export default function AdminJobsPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [filter, setFilter] = useState<string>('all')
+  const [searchInput, setSearchInput] = useState('')
+  const [search, setSearch] = useState('')
   const [editing, setEditing] = useState<Draft | null>(null)
   const [saving, setSaving] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState<AdminJobRow | null>(null)
+  const [confirmImport, setConfirmImport] = useState(false)
+  const [importing, setImporting] = useState(false)
   const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    const id = setTimeout(() => setSearch(searchInput.trim()), 350)
+    return () => clearTimeout(id)
+  }, [searchInput])
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const data = await adminApi.jobs(filter === 'all' ? undefined : { status: filter })
+      const data = await adminApi.jobs({
+        ...(filter === 'all' ? {} : { status: filter }),
+        ...(search ? { search } : {}),
+      })
       setJobs(data.jobs)
       setError(null)
     } catch (err) {
@@ -184,7 +199,7 @@ export default function AdminJobsPage() {
     } finally {
       setLoading(false)
     }
-  }, [filter])
+  }, [filter, search])
 
   useEffect(() => {
     if (session.status === 'authorized') void load()
@@ -487,6 +502,16 @@ export default function AdminJobsPage() {
         icon={<Briefcase className="size-4" />}
         actions={
           <div className="flex flex-wrap items-center gap-2">
+            <div className="relative">
+              <Search className="absolute left-2.5 top-2.5 size-3.5 text-muted-foreground" />
+              <input
+                value={searchInput}
+                onChange={(event) => setSearchInput(event.target.value)}
+                placeholder="Title, category or id…"
+                aria-label="Search the catalogue"
+                className={cn(inputClass, 'h-8 w-44 pl-8 text-xs sm:w-56')}
+              />
+            </div>
             <select value={filter} onChange={(event) => setFilter(event.target.value)} className={cn(inputClass, 'h-8 w-auto py-1 text-xs')} aria-label="Filter by status">
               <option value="all">All statuses</option>
               {STATUSES.map((value) => (
@@ -495,6 +520,12 @@ export default function AdminJobsPage() {
                 </option>
               ))}
             </select>
+            {isOwner && (
+              <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setConfirmImport(true)}>
+                <Upload className="size-3.5" />
+                Import 2026 cards
+              </Button>
+            )}
             {isOwner && (
               <Button size="sm" className="gap-1.5" onClick={() => openEditor()}>
                 <Plus className="size-3.5" />
@@ -540,7 +571,7 @@ export default function AdminJobsPage() {
                     <StatusBadge tone={job.status === 'open' ? 'success' : job.status === 'paused' ? 'warning' : 'neutral'}>{job.status}</StatusBadge>
                     <StatusBadge tone="info">{job.category}</StatusBadge>
                     {job.trainingRequired ? (
-                      <StatusBadge tone="warning">training · {formatUsd(job.trainingFeeUsd && job.trainingFeeUsd > 0 ? job.trainingFeeUsd : 10)}</StatusBadge>
+                      <StatusBadge tone="warning">training · {formatUsd(trainingFeeUsdFor(job.trainingFeeUsd))}</StatusBadge>
                     ) : (
                       <StatusBadge tone="neutral">assessment only</StatusBadge>
                     )}
@@ -1221,6 +1252,33 @@ export default function AdminJobsPage() {
           </aside>
         </div>
       )}
+
+      <ReasonDialog
+        open={confirmImport}
+        title="Publish the 2026 catalogue expansion?"
+        description="Adds the 12 reviewed cards (two per category) to the live jobs collection, each with its own training briefing, built-in assessment bank and per-card training price. Ids that already exist are skipped; older and hand-authored cards are never touched."
+        confirmLabel="Import 12 cards"
+        tone="default"
+        requireReason={false}
+        busy={importing}
+        onCancel={() => setConfirmImport(false)}
+        onConfirm={async () => {
+          setImporting(true)
+          try {
+            const result = await adminApi.importStarterJobs()
+            push(
+              'success',
+              `Catalogue import: ${result.created} created, ${result.updated} updated, ${result.skipped} already present.`,
+            )
+            setConfirmImport(false)
+            await load()
+          } catch (err) {
+            push('error', err instanceof Error ? err.message : 'The starter cards could not be imported.')
+          } finally {
+            setImporting(false)
+          }
+        }}
+      />
 
       <ReasonDialog
         open={!!confirmDelete}

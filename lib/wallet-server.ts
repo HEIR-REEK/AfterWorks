@@ -24,6 +24,12 @@ import { getExchangeRateUsdToKes, formatUsd } from '@/lib/afterworks-data'
 import { site } from '@/lib/site'
 import { sanitizeLine } from '@/lib/security-core'
 import {
+  ADMIN_SEARCH_SCAN_LIMIT,
+  normaliseSearch,
+  paginateSearchResults,
+  payoutMatchesSearch,
+} from '@/lib/admin-search'
+import {
   MEMBER_PROFILE_FIELDS,
   WELCOME_BONUS_USD,
   profileCompletion,
@@ -888,8 +894,41 @@ export async function listPayoutRequests(opts: {
   if (!db) {
     return { rows: [], nextCursor: null, hasMore: false, pageSize, summary: emptySummary(), degraded: 'Admin SDK unavailable' }
   }
-  const search = (opts.search ?? '').trim().toLowerCase()
+  const search = normaliseSearch(opts.search)
   const col = db.collection('payout_requests')
+
+  // Search is server-side across a bounded window, not a filter of the page already returned.
+  // The cursor is an offset scoped to this query, so switching status or search starts at row 1.
+  if (search) {
+    try {
+      let query: Query = col.orderBy('createdAt', 'desc')
+      if (opts.uid) query = query.where('uid', '==', opts.uid)
+      if (opts.status && opts.status !== 'all') query = query.where('status', '==', opts.status)
+      const snap = await query.limit(ADMIN_SEARCH_SCAN_LIMIT).get()
+      const matches = snap.docs
+        .map((doc) => mapPayoutRequest(doc.id, (doc.data() ?? {}) as Record<string, unknown>))
+        .filter((row) => payoutMatchesSearch(row, search))
+      const page = paginateSearchResults(matches, {
+        scope: `payouts|${opts.uid ?? 'all'}|${opts.status ?? 'all'}|${search}`,
+        pageSize,
+        cursor: opts.cursor,
+      })
+      return {
+        rows: page.rows,
+        nextCursor: page.nextCursor,
+        hasMore: page.hasMore,
+        pageSize,
+        summary: opts.withSummary === false ? emptySummary() : await getPayoutQueueSummary(),
+        ...(snap.size >= ADMIN_SEARCH_SCAN_LIMIT
+          ? {
+              degraded: `Searched the most recent ${ADMIN_SEARCH_SCAN_LIMIT.toLocaleString('en-US')} requests. Narrow the query if the request is not listed.`,
+            }
+          : {}),
+      }
+    } catch (err) {
+      console.warn('[payouts] search read failed, falling back to a page scan:', err instanceof Error ? err.message : err)
+    }
+  }
 
   let rows: PayoutRequestRow[] = []
   let degraded: string | undefined

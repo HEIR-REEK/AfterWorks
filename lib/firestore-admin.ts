@@ -31,6 +31,18 @@ import {
   type AdminUserDetailModel,
   type AdminUserRowModel,
 } from '@/lib/admin-domain'
+import {
+  ADMIN_SEARCH_SCAN_LIMIT,
+  applicationMatchesSearch,
+  jobMatchesSearch,
+  ledgerMatchesSearch,
+  normaliseSearch,
+  normaliseUserStateFilter,
+  paginateSearchResults,
+  userMatchesSearch,
+  userMatchesState,
+  type AdminUserSearchRecord,
+} from '@/lib/admin-search'
 import { assessmentPassMark, type AssessmentQuestion, type TrainingSection, TRAINING_LESSON_KINDS } from '@/lib/afterworks-data'
 import { safeImageSrc } from '@/lib/afterworks-data'
 import { normaliseAssessmentQuestions, normaliseTrainingSections } from '@/lib/job-catalogue'
@@ -1239,6 +1251,33 @@ export type UserPage = {
  * is a privacy problem and a memory/latency problem on the device. This reads one page, projects
  * only what the table shows, and returns masked payout handles.
  */
+function userSearchRecord(uid: string, data: Record<string, unknown>): AdminUserSearchRecord {
+  const wallet = data.wallet && typeof data.wallet === 'object' ? (data.wallet as Record<string, unknown>) : {}
+  return {
+    uid,
+    name: typeof data.name === 'string' ? data.name : '',
+    email: typeof data.email === 'string' ? data.email : '',
+    phone: typeof data.phone === 'string' ? data.phone : '',
+    payoutNumber: typeof wallet.payoutNumber === 'string' ? wallet.payoutNumber : '',
+    accountState: typeof data.accountState === 'string' ? data.accountState : '',
+    kycVerified: data.kycVerified === true,
+    role: typeof data.role === 'string' ? data.role : '',
+    isAdmin: data.isAdmin === true,
+  }
+}
+
+/**
+ * Cursor-paginated user list. The admin console used to stream the entire `users` collection
+ * into the browser through a live listener (every worker profile, bank field and wallet), which
+ * is a privacy problem and a memory/latency problem on the device. This reads one page, projects
+ * only what the table shows, and returns masked payout handles.
+ *
+ * Search and the "KYC pending / restricted / admins" views cannot be expressed as one Firestore
+ * equality query (names are free text, and "pending" spans several account states), so those
+ * modes scan a bounded window and filter it, then paginate the filtered rows. The cursor is an
+ * offset fingerprinted against the query, not a document id from an unfiltered page — the old
+ * cursor silently skipped matching members whenever the console was past page one.
+ */
 export async function listUsersPage(opts: {
   pageSize?: number
   cursor?: string | null
@@ -1249,16 +1288,89 @@ export async function listUsersPage(opts: {
   if (!db) return { rows: [], nextCursor: null, hasMore: false, pageSize: opts.pageSize ?? 25, degraded: 'Admin SDK unavailable' }
 
   const pageSize = Math.min(50, Math.max(5, opts.pageSize ?? 25))
-  const search = (opts.search ?? '').trim().toLowerCase()
-  const state = (opts.state ?? 'all').trim()
+  const search = normaliseSearch(opts.search)
+  const state = normaliseUserStateFilter(opts.state)
+  const scan = Boolean(search) || state === 'kyc_pending' || state === 'restricted' || state === 'admins'
 
   try {
+    if (scan) {
+      const snap = await db
+        .collection('users')
+        .orderBy(FieldPath.documentId(), 'asc')
+        .limit(ADMIN_SEARCH_SCAN_LIMIT)
+        .get()
+
+      // The scan is bounded. An exact email or uid must still find an account outside that
+      // window, so ask Firestore for those directly and merge them into the candidate set.
+      const extra = new Map<string, Record<string, unknown>>()
+      if (search.includes('@')) {
+        try {
+          const emailSnap = await db
+            .collection('users')
+            .where('email', '>=', search)
+            .where('email', '<=', `${search}${String.fromCharCode(0xf8ff)}`)
+            .limit(25)
+            .get()
+          for (const doc of emailSnap.docs) extra.set(doc.id, (doc.data() ?? {}) as Record<string, unknown>)
+        } catch {
+          /* the bounded scan still runs; a missing email index should not fail the page */
+        }
+      }
+      if (!search.includes('@') && search.length >= 2 && !search.includes(' ')) {
+        try {
+          const nameSnap = await db
+            .collection('users')
+            .where('name', '>=', search)
+            .where('name', '<=', `${search}${String.fromCharCode(0xf8ff)}`)
+            .limit(25)
+            .get()
+          for (const doc of nameSnap.docs) extra.set(doc.id, (doc.data() ?? {}) as Record<string, unknown>)
+        } catch {
+          /* names are free text; the bounded scan remains the fallback */
+        }
+      }
+      if (/^[A-Za-z0-9_-]{8,128}$/.test(search)) {
+        try {
+          const byId = await db.collection('users').doc(search).get()
+          if (byId.exists) extra.set(byId.id, (byId.data() ?? {}) as Record<string, unknown>)
+        } catch {
+          /* uid probe is an optimisation, not a requirement */
+        }
+      }
+
+      const candidates = new Map<string, Record<string, unknown>>()
+      for (const [uid, data] of extra) candidates.set(uid, data)
+      for (const doc of snap.docs) candidates.set(doc.id, (doc.data() ?? {}) as Record<string, unknown>)
+      const matches = [...candidates.entries()]
+        .map(([uid, data]) => ({ uid, data }))
+        .filter(({ uid, data }) => {
+          const record = userSearchRecord(uid, data)
+          return userMatchesState(record, state) && userMatchesSearch(record, search)
+        })
+        .sort((a, b) => a.uid.localeCompare(b.uid))
+      const page = paginateSearchResults(matches, {
+        scope: `users|${state}|${search}`,
+        pageSize,
+        cursor: opts.cursor,
+      })
+      const rows = page.rows.map(({ uid, data }) => toRow(uid, data))
+      await attachAuthAccountState(rows)
+      const truncated = snap.size >= ADMIN_SEARCH_SCAN_LIMIT
+      return {
+        rows,
+        nextCursor: page.nextCursor,
+        hasMore: page.hasMore,
+        pageSize,
+        ...(truncated
+          ? {
+              degraded: `Filtered the first ${ADMIN_SEARCH_SCAN_LIMIT.toLocaleString('en-US')} profiles. Refine the search if the member you need is not listed.`,
+            }
+          : {}),
+      }
+    }
+
     let ref: Query = db.collection('users')
-    if (search) {
-      ref = ref.orderBy('email').startAt(search).endAt(`${search}\uf8ff`)
-    } else if (state === 'staff') {
-      ref = ref.where('role', '==', 'admin').orderBy(FieldPath.documentId(), 'asc')
-    } else if (state && state !== 'all') {
+    if (state && state !== 'all') {
       ref = ref.where('accountState', '==', state).orderBy(FieldPath.documentId(), 'asc')
     } else {
       ref = ref.orderBy(FieldPath.documentId(), 'asc')
@@ -1283,13 +1395,28 @@ export async function listUsersPage(opts: {
     // Fallback: plain, index-free page read so the console still works during index roll-out.
     try {
       let ref = db.collection('users').limit(pageSize + 1)
-      if (opts.cursor) ref = ref.startAfter(opts.cursor)
+      if (opts.cursor && !scan) ref = ref.startAfter(opts.cursor)
       const snap = await ref.get()
       const docs = snap.docs.slice(0, pageSize)
+      const all = docs.map((d) => ({ uid: d.id, data: (d.data() ?? {}) as Record<string, unknown> }))
+      if (scan) {
+        const page = paginateSearchResults(
+          all.filter(({ uid, data }) => {
+            const record = userSearchRecord(uid, data)
+            return userMatchesState(record, state) && userMatchesSearch(record, search)
+          }),
+          { scope: `users|${state}|${search}`, pageSize, cursor: opts.cursor },
+        )
+        return {
+          rows: page.rows.map(({ uid, data }) => toRow(uid, data)),
+          nextCursor: page.nextCursor,
+          hasMore: page.hasMore,
+          pageSize,
+          degraded: 'Ordered query fell back to an unindexed read — add the composite indexes in firestore.indexes.json.',
+        }
+      }
       return {
-        rows: docs
-          .map((d) => toRow(d.id, (d.data() ?? {}) as Record<string, unknown>))
-          .filter((row) => (!search ? true : row.email.toLowerCase().includes(search))),
+        rows: all.map(({ uid, data }) => toRow(uid, data)),
         nextCursor: docs.length === pageSize && snap.size > pageSize ? docs[docs.length - 1].id : null,
         hasMore: snap.size > pageSize,
         pageSize,
@@ -2223,7 +2350,7 @@ export async function listLedgerPage(opts: {
       degraded: 'Admin SDK unavailable',
     }
   }
-  const search = (opts.search ?? '').trim().toLowerCase()
+  const search = normaliseSearch(opts.search)
   const source = opts.source ?? 'all'
 
   const mapRow = (id: string, data: Record<string, unknown>, src: 'wallet' | 'payment'): LedgerRow => ({
@@ -2245,12 +2372,15 @@ export async function listLedgerPage(opts: {
   const readOne = async (src: 'wallet' | 'payment'): Promise<LedgerRow[]> => {
     const col = db.collection(src === 'wallet' ? 'wallet_ledger' : 'transactions')
     let ref: Query = col.orderBy('createdAt', 'desc')
-    if (opts.cursor && src !== 'payment') ref = ref.startAfter(opts.cursor)
+    if (opts.cursor && src !== 'payment' && !search) ref = ref.startAfter(opts.cursor)
     if (opts.status) ref = ref.where('status', '==', opts.status)
     if (opts.kind) ref = ref.where(src === 'wallet' ? 'kind' : 'type', '==', opts.kind)
     try {
-      const snap = await ref.limit(pageSize + 1).get()
-      return snap.docs.slice(0, pageSize).map((d) => mapRow(d.id, (d.data() ?? {}) as Record<string, unknown>, src))
+      // A search reads a bounded window across both collections, then filters and pages it.
+      // The old code filtered only the current page, so a match one page back disappeared.
+      const snap = await ref.limit(search ? ADMIN_SEARCH_SCAN_LIMIT : pageSize + 1).get()
+      const rows = snap.docs.map((d) => mapRow(d.id, (d.data() ?? {}) as Record<string, unknown>, src))
+      return search ? rows : rows.slice(0, pageSize)
     } catch (err) {
       console.warn(`[FirestoreAdmin] ledger ${src} ordered read failed:`, err instanceof Error ? err.message : err)
       const snap = await col.limit(pageSize + 1).get()
@@ -2264,14 +2394,25 @@ export async function listLedgerPage(opts: {
   let degraded: string | undefined
   if (wallet.length && payment.length && source === 'all') degraded = 'Merged feed is capped per collection, so the newest page can interleave out of order at the tail.'
 
+  let nextCursor: string | null = null
+  let hasMore = false
   if (search) {
-    rows = rows.filter(
-      (row) =>
-        row.email.toLowerCase().includes(search) ||
-        row.uid.toLowerCase().includes(search) ||
-        row.reference.toLowerCase().includes(search) ||
-        row.label.toLowerCase().includes(search),
-    )
+    rows = rows.filter((row) => ledgerMatchesSearch(row, search))
+    const page = paginateSearchResults(rows, {
+      scope: `ledger|${source}|${opts.status ?? 'all'}|${opts.kind ?? 'all'}|${search}`,
+      pageSize,
+      cursor: opts.cursor,
+    })
+    rows = page.rows
+    nextCursor = page.nextCursor
+    hasMore = page.hasMore
+    if (wallet.length >= ADMIN_SEARCH_SCAN_LIMIT || payment.length >= ADMIN_SEARCH_SCAN_LIMIT) {
+      degraded = `Searched the most recent ${ADMIN_SEARCH_SCAN_LIMIT.toLocaleString('en-US')} rows per collection. Narrow the query if the movement is not listed.`
+    }
+  } else {
+    nextCursor = rows.length > pageSize && rows[pageSize - 1]?.createdAt ? rows[pageSize - 1].createdAt as string : null
+    hasMore = rows.length > pageSize
+    rows = rows.slice(0, pageSize)
   }
 
   let paidOutUsd = 0
@@ -2295,9 +2436,9 @@ export async function listLedgerPage(opts: {
   })
 
   return {
-    rows: rows.slice(0, pageSize),
-    nextCursor: rows.length > pageSize && rows[pageSize - 1]?.createdAt ? rows[pageSize - 1].createdAt as string : null,
-    hasMore: rows.length > pageSize,
+    rows,
+    nextCursor,
+    hasMore,
     pageSize,
     totals: {
       entries,
@@ -3210,15 +3351,17 @@ export async function listAuditLogs(opts: { limit?: number; action?: string; sea
   const db = dbOrNull()
   if (!db) return []
   const size = Math.min(200, Math.max(10, opts.limit ?? 60))
+  const search = normaliseSearch(opts.search)
   try {
     let q: Query = db.collection('admin_logs')
     if (opts.action && opts.action !== 'all') q = q.where('action', '==', opts.action)
-    q = q.orderBy('timestamp', 'desc').limit(size)
+    // Search inspects a wider window than the table displays, otherwise a match older than the
+    // current page reads as "no results".
+    q = q.orderBy('timestamp', 'desc').limit(search ? ADMIN_SEARCH_SCAN_LIMIT : size)
     const snap = await q.get()
     let rows = snap.docs.map((d) => d.data() as AdminAuditRow)
-    if (opts.search) {
-      const needle = opts.search.toLowerCase()
-      rows = rows.filter((row) => JSON.stringify(row).toLowerCase().includes(needle))
+    if (search) {
+      rows = rows.filter((row) => JSON.stringify(row).toLowerCase().includes(search)).slice(0, size)
     }
     return rows
   } catch (err) {
@@ -3226,7 +3369,9 @@ export async function listAuditLogs(opts: { limit?: number; action?: string; sea
     const snap = await db.collection('admin_logs').limit(size).get()
     const rows = snap.docs.map((d) => d.data() as AdminAuditRow)
     rows.sort((a, b) => String(b.timestamp).localeCompare(String(a.timestamp)))
-    return opts.search ? rows.filter((r) => JSON.stringify(r).toLowerCase().includes(opts.search!.toLowerCase())) : rows
+    return search
+      ? rows.filter((r) => JSON.stringify(r).toLowerCase().includes(search)).slice(0, size)
+      : rows
   }
 }
 
@@ -3278,6 +3423,8 @@ export async function listApplicationsPage(opts: {
   if (!db) return { rows: [], nextCursor: null, hasMore: false, pageSize, degraded: 'Admin SDK unavailable' }
 
   const nowIso = new Date().toISOString()
+  const search = normaliseSearch(opts.search)
+  const status = (opts.status ?? 'all').trim()
   const mapDoc = (d: QueryDocumentSnapshot): ApplicationRow => {
     const data = (d.data() ?? {}) as Record<string, unknown>
     const reviewExpiresAt = (data.reviewExpiresAt as string) ?? undefined
@@ -3301,19 +3448,41 @@ export async function listApplicationsPage(opts: {
   }
 
   try {
+    // A free-text search cannot be asked of Firestore as one equality. Scan a bounded window of
+    // the status queue, keep only real matches, then page the filtered rows with an offset cursor.
+    // Filtering after `limit(pageSize)` — the old behaviour — made a match on page three invisible.
+    if (search) {
+      let scanQuery: Query = db.collection('applications')
+      if (status && status !== 'all') scanQuery = scanQuery.where('status', '==', status)
+      scanQuery = scanQuery.orderBy(FieldPath.documentId(), 'desc').limit(ADMIN_SEARCH_SCAN_LIMIT)
+      const snap = await scanQuery.get()
+      const matches = snap.docs.map(mapDoc).filter((row) => applicationMatchesSearch(row, search))
+      const page = paginateSearchResults(matches, {
+        scope: `applications|${status}|${search}`,
+        pageSize,
+        cursor: opts.cursor,
+      })
+      const truncated = snap.size >= ADMIN_SEARCH_SCAN_LIMIT
+      return {
+        rows: page.rows,
+        nextCursor: page.nextCursor,
+        hasMore: page.hasMore,
+        pageSize,
+        ...(truncated
+          ? {
+              degraded: `Searched the first ${ADMIN_SEARCH_SCAN_LIMIT.toLocaleString('en-US')} applications in this status. Narrow the query if the row is not listed.`,
+            }
+          : {}),
+      }
+    }
+
     let q: Query = db.collection('applications')
-    const status = (opts.status ?? 'all').trim()
     if (status && status !== 'all') q = q.where('status', '==', status)
     q = q.orderBy(FieldPath.documentId(), 'desc').limit(pageSize + 1)
     if (opts.cursor) q = q.startAfter(opts.cursor)
     const snap = await q.get()
-    let rows = snap.docs.slice(0, pageSize).map(mapDoc)
-    if (opts.search) {
-      const needle = opts.search.toLowerCase()
-      rows = rows.filter((r) => `${r.jobTitle} ${r.workerEmail} ${r.id}`.toLowerCase().includes(needle))
-    }
     return {
-      rows,
+      rows: snap.docs.slice(0, pageSize).map(mapDoc),
       nextCursor: snap.size > pageSize ? snap.docs[Math.min(pageSize, snap.size - 1)].id : null,
       hasMore: snap.size > pageSize,
       pageSize,
@@ -3321,7 +3490,21 @@ export async function listApplicationsPage(opts: {
   } catch (err) {
     console.warn('[FirestoreAdmin] listApplicationsPage degraded:', err)
     try {
-      const snap = await db.collection('applications').limit(pageSize + 1).get()
+      const scanLimit = search ? ADMIN_SEARCH_SCAN_LIMIT : pageSize + 1
+      const snap = await db.collection('applications').limit(scanLimit).get()
+      if (search) {
+        const page = paginateSearchResults(
+          snap.docs.map(mapDoc).filter((row) => applicationMatchesSearch(row, search)),
+          { scope: `applications|${status}|${search}`, pageSize, cursor: opts.cursor },
+        )
+        return {
+          rows: page.rows,
+          nextCursor: page.nextCursor,
+          hasMore: page.hasMore,
+          pageSize,
+          degraded: 'Unordered fallback read.',
+        }
+      }
       const rows = snap.docs.slice(0, pageSize).map(mapDoc)
       return { rows, nextCursor: null, hasMore: snap.size > pageSize, pageSize, degraded: 'Unordered fallback read.' }
     } catch (fallbackErr) {
@@ -3357,14 +3540,15 @@ export type JobRow = {
  * (it is genuinely public data); the console gets a bounded, projected page instead of streaming
  * the whole catalogue plus its internal counters.
  */
-export async function listJobsServer(opts: { status?: string; pageSize?: number } = {}): Promise<JobRow[]> {
+export async function listJobsServer(opts: { status?: string; pageSize?: number; search?: string } = {}): Promise<JobRow[]> {
   const db = dbOrNull()
   if (!db) return []
   try {
     let q: Query = db.collection('jobs')
     if (opts.status && opts.status !== 'all') q = q.where('status', '==', opts.status)
     const snap = await q.limit(Math.min(200, Math.max(10, opts.pageSize ?? 100))).get()
-    return snap.docs.map((d) => {
+    const search = normaliseSearch(opts.search)
+    const rows = snap.docs.map((d) => {
       const data = (d.data() ?? {}) as Record<string, unknown>
       return {
         id: d.id,
@@ -3389,6 +3573,7 @@ export async function listJobsServer(opts: { status?: string; pageSize?: number 
         updatedAt: (data.updatedAt as string) ?? undefined,
       }
     })
+    return search ? rows.filter((job) => jobMatchesSearch(job, search)) : rows
   } catch (err) {
     console.warn('[FirestoreAdmin] listJobsServer failed:', err)
     return []

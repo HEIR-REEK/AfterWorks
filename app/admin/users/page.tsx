@@ -603,7 +603,7 @@ function UsersPageInner() {
                   </Button>
                 )}
                 {isOwner && (
-                  <Button size="sm" variant="outline" className="gap-1.5" disabled={busy} onClick={() => setConfirm({ action: 'role', title: selected.role === 'admin' ? 'Revoke staff access' : 'Grant staff access', description: 'Role changes are immediate, always audited, and cannot be applied to your own account.', confirmLabel: selected.role === 'admin' ? 'Revoke role' : 'Grant role', tone: selected.role === 'admin' ? 'destructive' : 'default' })}>
+                  <Button size="sm" variant="outline" className="gap-1.5" disabled={busy} onClick={() => setConfirm({ action: 'role', title: selected.role === 'admin' ? 'Revoke staff access' : 'Grant staff access', description: selected.role === 'admin' ? 'Removes the staff label and any console account, so this person can no longer sign in to /admin. Role changes are immediate, always audited, and cannot be applied to your own account.' : 'One tap: this member can then sign in to the staff console at /admin with the email and password they already use on the worker app. No new password needed. To add staff who has no worker account, use the Staff page. Role changes are immediate, always audited, and cannot be applied to your own account.', confirmLabel: selected.role === 'admin' ? 'Revoke role' : 'Grant role', tone: selected.role === 'admin' ? 'destructive' : 'default' })}>
                     <ShieldCheck className="size-3.5" />
                     {selected.role === 'admin' ? 'Revoke staff' : 'Make staff'}
                   </Button>
@@ -775,32 +775,9 @@ function UsersPageInner() {
             }
             case 'role': {
               const granting = selected.role !== 'admin'
-              if (granting) {
-                // A real console account needs a password: create the admin_accounts entry
-                // (owner-chosen passcode, scrypt-hashed server-side) so the person actually
-                // appears on the Staff page and can sign in to /admin/login.
-                const passcode = (document.getElementById('role-passcode') as HTMLInputElement | null)?.value ?? ''
-                const repeat = (document.getElementById('role-passcode2') as HTMLInputElement | null)?.value ?? ''
-                if (passcode.length < 10) {
-                  push('error', 'Choose a console password of at least 10 characters.')
-                  return undefined
-                }
-                if (passcode !== repeat) {
-                  push('error', 'The two passwords do not match.')
-                  return undefined
-                }
-                try {
-                  await adminApi.staffAdd({ email: selected.email, passcode })
-                } catch (err) {
-                  // 409 = a console account already exists for this email; keep going and just
-                  // refresh the label (the password can be reset from the Staff page).
-                  if (errorStatus(err) !== 409) {
-                    push('error', describeError(err))
-                    return undefined
-                  }
-                }
-              } else {
-                // Revoking removes the console account too (404 = there was none to remove).
+              if (!granting) {
+                // Revoking removes any console account too (404 = there was none to remove), so
+                // both sign-in doors close at once.
                 try {
                   await adminApi.staffRemove(selected.email)
                 } catch (err) {
@@ -810,6 +787,10 @@ function UsersPageInner() {
                   }
                 }
               }
+              // Granting is one tap: it sets the owner-controlled profile label, and the member
+              // signs in at /admin/login with the email + password they already use on the worker
+              // app. No console password is chosen here — for someone with no worker account, add
+              // them by email + password from the Staff page instead.
               return act({ ...base, action: 'role', payload: { isAdmin: granting, email: selected.email } })
             }
             case 'wallet': {
@@ -885,30 +866,6 @@ function UsersPageInner() {
                   autoComplete="current-password"
                   className={inputClass}
                   placeholder="Re-enter the master passcode"
-                />
-              </Field>
-            </div>
-          ) : confirm?.action === 'role' && selected && selected.role !== 'admin' ? (
-            <div className="mt-3 flex flex-col gap-3">
-              <Field
-                label={`Console password for ${selected.email || 'this member'}`}
-                hint="You choose it — it opens /admin/login only, stored as a scrypt hash, never shown again. Works even if they never created a worker account. To add staff by email alone, use the Staff page."
-              >
-                <input
-                  id="role-passcode"
-                  type="password"
-                  autoComplete="new-password"
-                  className={inputClass}
-                  placeholder="At least 10 characters"
-                />
-              </Field>
-              <Field label="Repeat console password">
-                <input
-                  id="role-passcode2"
-                  type="password"
-                  autoComplete="new-password"
-                  className={inputClass}
-                  placeholder="Repeat the password"
                 />
               </Field>
             </div>

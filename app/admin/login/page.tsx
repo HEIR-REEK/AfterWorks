@@ -101,9 +101,10 @@ export default function AdminLoginPage() {
           </span>
           <h1 className="text-2xl font-semibold tracking-tight text-balance sm:text-3xl">Administrator sign-in</h1>
           <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
-            Main administrators and console staff, verified server-side. Use the password issued for
-            this console — your worker-account password does not open it, and this one does not open
-            the worker app.
+            Main administrators and console staff, verified server-side. If the owner marked you as
+            staff from your worker account, sign in here with the same email and password you use on
+            the worker app. Console-only staff (added on the Staff page) use the password issued for
+            this console instead — it never opens the worker app.
           </p>
           {nextPath && (
             <p className="mt-2 rounded-lg border border-border bg-muted/40 px-3 py-1.5 font-mono text-[11px] text-muted-foreground">
@@ -146,8 +147,8 @@ export default function AdminLoginPage() {
             <div className="mb-5 flex items-start gap-2.5 rounded-xl border border-warning/40 bg-warning/10 p-3 text-xs text-warning-foreground">
               <AlertCircle className="mt-0.5 size-4 shrink-0" />
               <span>
-                No master passcode is configured here. Sign in through the worker app with a staff Firebase account that carries the{' '}
-                <code className="font-mono">admin</code> claim.
+                No master passcode is configured here. Staff marked from a worker account can still
+                sign in below with their usual email and password.
               </span>
             </div>
           )}

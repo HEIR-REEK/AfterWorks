@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import type { JobCategory } from '@/lib/afterworks-data'
 import { authedFetch, describeError } from '@/lib/client-api'
@@ -46,6 +46,8 @@ export function AssessmentQuiz({ category, jobId, onPass }: { category: JobCateg
   const [loadError, setLoadError] = useState<string | null>(null)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [active, setActive] = useState(0)
+  const questionRef = useRef<HTMLDivElement | null>(null)
+  const assessmentRef = useRef<HTMLDivElement | null>(null)
 
   // Questions come from the server *without* the answer key. There is no local passing flag to
   // edit: a pass exists only after POST /api/assessments wrote it to the profile.
@@ -207,13 +209,17 @@ export function AssessmentQuiz({ category, jobId, onPass }: { category: JobCateg
 
   const goTo = (index: number) => {
     setActive(Math.max(0, Math.min(questions.length - 1, index)))
-    if (typeof window !== 'undefined') {
-      window.scrollTo({ top: 0, behavior: 'smooth' })
-    }
+    // The number grid sits above the question; scrolling the *question* into view keeps the
+    // worker at the answer they just selected. Scrolling to page top made every jump a round trip
+    // back down through the header, progress bar and navigator.
+    if (typeof window === 'undefined') return
+    requestAnimationFrame(() => {
+      questionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    })
   }
 
   return (
-    <div className="flex flex-col gap-4">
+    <div ref={assessmentRef} className="flex scroll-mt-24 flex-col gap-4">
       <div className="rounded-xl border border-border bg-card p-5 shadow-sm sm:p-6">
         <div className="flex flex-col justify-between gap-4 border-b border-border pb-5 sm:flex-row sm:items-center">
           <div>
@@ -278,7 +284,10 @@ export function AssessmentQuiz({ category, jobId, onPass }: { category: JobCateg
 
         {!submitted ? (
           <div className="mt-5 flex flex-col gap-4">
-            <div className="flex flex-col gap-4 rounded-xl border border-border/70 bg-background p-4 sm:p-5">
+            <div
+              ref={questionRef}
+              className="flex scroll-mt-24 flex-col gap-4 rounded-xl border border-border/70 bg-background p-4 sm:p-5"
+            >
               <div className="flex items-start gap-2">
                 <span className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10 font-mono text-[10px] font-semibold text-primary">
                   {currentIndex + 1}
@@ -370,7 +379,11 @@ export function AssessmentQuiz({ category, jobId, onPass }: { category: JobCateg
                     setAnswers({})
                     setSubmitted(false)
                     setActive(0)
-                    window.scrollTo({ top: 0, behavior: 'smooth' })
+                    if (typeof window !== 'undefined') {
+                      requestAnimationFrame(() => {
+                        assessmentRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                      })
+                    }
                   }}
                 >
                   Retake assessment

@@ -26,6 +26,7 @@ import {
 } from '@/lib/admin-domain'
 import type { MaintenanceConfig } from '@/lib/maintenance-shared'
 import type { AssessmentQuestion, TrainingSection } from '@/lib/afterworks-data'
+import type { AdzunaCountry, ExternalJobCard } from '@/lib/adzuna'
 
 /**
  * Console authority level, resolved server-side:
@@ -378,6 +379,37 @@ export const adminApi = {
     apiFetch<{ ok: boolean; created: number; updated: number; skipped: number; ids: string[] }>('/api/admin/jobs', { method: 'POST', body }),
   setJobStatus: (body: { jobId: string; status: string }) => apiFetch<{ ok: boolean }>('/api/admin/jobs', { method: 'PATCH', body }),
   deleteJob: (jobId: string) => apiFetch<{ ok: boolean }>('/api/admin/jobs', { method: 'DELETE', query: { jobId } }),
+  /** Imported third-party adverts (Adzuna) — a separate feed, never part of the paid catalogue. */
+  externalJobs: () =>
+    apiFetch<{
+      ok: boolean
+      configured: boolean
+      configuration: { configured: boolean; appIdPresent: boolean; appKeyPresent: boolean; country: AdzunaCountry }
+      storageAvailable: boolean
+      meta: AdminExternalFeedMeta | null
+      count: number
+      preview: ExternalJobCard[]
+    }>('/api/admin/external-jobs'),
+  syncExternalJobs: (body: { country: string; what?: string; where?: string; pages?: number }) =>
+    apiFetch<{
+      ok: boolean
+      source: 'adzuna'
+      country: AdzunaCountry
+      what: string
+      where: string
+      pages: number
+      fetched: number
+      stored: number
+      removed: number
+      sourceCount: number
+      syncedAt: string
+    }>('/api/admin/external-jobs', { method: 'POST', body, timeoutMs: 90_000 }),
+  clearExternalJobs: (reason: string) =>
+    apiFetch<{ ok: boolean; removed: number }>('/api/admin/external-jobs', {
+      method: 'DELETE',
+      body: { reason },
+      timeoutMs: 60_000,
+    }),
   auditLogs: (query: { limit?: number; action?: string; search?: string }) =>
     apiFetch<{ ok: boolean; logs: Record<string, unknown>[]; actions: string[]; exportUrl: string }>('/api/admin/audit', { query }),
   /** Who you are to the API right now — the authority the console runs on, with its real expiry. */
@@ -564,6 +596,22 @@ export type AdminApplicationRow = {
   handledBy?: string
   history: { status: string; at: string; by?: string }[]
   overdue: boolean
+}
+
+/** Last successful Adzuna import, as reported by `/api/admin/external-jobs`. */
+export type AdminExternalFeedMeta = {
+  source: 'adzuna'
+  country: AdzunaCountry
+  what: string
+  where: string
+  pages: number
+  fetched: number
+  stored: number
+  removed: number
+  sourceCount: number
+  syncedAt: string
+  syncedBy: string
+  expiresAt: string
 }
 
 /** Row shape for the catalogue editor. */

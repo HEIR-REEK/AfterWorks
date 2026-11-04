@@ -21,6 +21,7 @@ payout ran.
 | Failed sign-ins, lockouts, role changes | Firestore `admin_logs` + in-memory buckets | `listAuditLogs`, `/api/admin/security` | Audit entries are redacted on write (`lib/security.ts`) and capped at 6 KB. |
 | Maintenance window | Firestore `system/maintenance`, or `MAINTENANCE_FORCE*` | `lib/maintenance-shared.ts` | Env override wins everywhere, and the console reports `forced: true` instead of pretending to control it. |
 | Deployment posture (secrets, keys, rules) | process environment | `/api/health` checks | Each check reflects a variable the app really reads — `DIDIT_API_KEY`, `PAYSTACK_SECRET_KEY`, `ADMIN_SESSION_SECRET`, service account. |
+| External adverts (Adzuna) | Firestore **`external_jobs`** + Adzuna API | `syncAdzunaFeed`, `listExternalJobs` → `/admin/jobs/external` | A separate feed, never mixed into `jobs/`: no assessment, training or payout applies. The console shows the real last import and an empty state until an owner imports. |
 
 ## Deliberate limits, stated in the UI
 
@@ -46,6 +47,8 @@ payout ran.
 | Create member | Auth account + `users/{uid}` profile in one transaction-ish step, one-time password-setup link returned for the operator to relay (or emailed), full rollback if either half fails | `POST /api/admin/users` (audits `MEMBER_ACCOUNT_CREATED`) |
 | Grant welcome reward | Credits the one-time $5 to `availableUsd` with a `signup_bonus_<uid>` ledger row; refuses a second grant and, for a member, requires a 100 % profile (operators may override with a reason) | `PATCH /api/admin/users` `action: grant-welcome-bonus` |
 | Settle a withdrawal | `pending → approved/processing → paid` with an M-Pesa/bank reference, or `rejected/failed` which refunds the hold | `PATCH /api/admin/payouts` (reason ≥ 4 chars when refusing, reference ≥ 3 when paying) |
+| Import external adverts | Fetches up to five Adzuna pages (250 adverts), stores them in `external_jobs`, replaces stale rows and writes `system/external_jobs_feed` | `POST /api/admin/external-jobs` (owner, 3/min, audits `EXTERNAL_JOBS_SYNCED`) |
+| Withdraw external feed | Deletes every imported advert and the feed metadata; the public page returns to its empty state | `DELETE /api/admin/external-jobs` (owner, reason required, audits `EXTERNAL_JOBS_CLEARED`) |
 
 Every one of these goes through `requireAdmin`, a same-site check, a rate bucket and `createAuditEntry`, so
 the audit log is a complete record of the console's effect on data. Passwords are never stored by this app:
@@ -124,6 +127,28 @@ The same import is available without shell access: an owner opens `/admin/jobs` 
 imported card carries its training briefing and a per-card training price where training is gated;
 an empty authored-assessment list means the full built-in category bank is used, so no imported card
 can arrive without an assessment.
+
+### External jobs (Adzuna)
+
+`/admin/jobs/external` imports a third-party listing feed. It is deliberately **not** part of the
+paid catalogue:
+
+- the adverts live in `external_jobs` and are rendered at `/work/external`, never as
+  `PublicJobCard`s. They have no assessment bank, training fee, capacity counter or Paystack gate,
+  so routing them through `jobs/` would break `/api/assessments` and checkout;
+- every card carries the required **Adzuna** link (at least 116×23 px) and says that the worker
+  applies on Adzuna, not AfterWorks;
+- the page is `noindex, follow` and is absent from the sitemap, because the snippets are duplicate
+  third-party inventory rather than original AfterWorks pages;
+- the import is owner-only and rate-limited (three syncs per minute), and the console shows the
+  real last import, count and expiry. With no credentials or no import, the page says so — it never
+  shows sample adverts.
+
+`ADZUNA_APP_ID` / `ADZUNA_APP_KEY` are server-only. Adzuna's country enum has **no Kenya code**;
+`ADZUNA_COUNTRY` defaults to `gb` and the console offers only the supported markets. Predicted
+salaries (Jobsworth estimates) are omitted rather than shown without Jobsworth's separate
+attribution. Commercial use of the feed requires a licence agreement with Adzuna; if that is not in
+place, leave the credentials blank or use **Remove imported feed**.
 
 ### Search and filters
 

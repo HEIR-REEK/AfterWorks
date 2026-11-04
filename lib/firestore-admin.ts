@@ -2380,7 +2380,12 @@ export async function verifyKycAdmin(
   const db = adminDb()
   const now = new Date().toISOString()
   const existing = await db.collection('users').doc(uid).get()
-  const currentState = String((existing.data() ?? {}).accountState ?? 'active')
+  const profile = (existing.data() ?? {}) as Record<string, unknown>
+  const currentState = String(profile.accountState ?? 'active')
+  // The decision is about identity; the email is about the account. Both go to the address on the
+  // profile, and neither is allowed to fail the other.
+  const memberEmail = String(profile.email ?? '').trim()
+  const memberName = String(profile.name ?? '').trim()
   // Manual KYC approval proves identity; it must not silently lift a suspension or ban that an
   // owner applied. Support can verify the document, but only an owner can restore the account.
   const restricted = currentState === 'suspended' || currentState === 'banned'
@@ -2418,6 +2423,30 @@ export async function verifyKycAdmin(
     tone: approve ? 'success' : 'warning',
     link: approve ? '/jobs' : '/profile',
   })
+
+  // The member-facing half of a decision that has no provider to deliver it. An approval is the
+  // one that has to arrive: it is what tells them paid work, withdrawals and referrals are open,
+  // and a member who is not told will assume nothing happened.
+  if (approve && memberEmail) {
+    try {
+      const { sendEmail, isResendConfigured, kycApprovedEmailSubject, kycApprovedEmailText, kycApprovedEmailHtml } = await import('@/lib/email')
+      if (isResendConfigured()) {
+        const copy = { name: memberName, email: memberEmail, verifiedAt: now }
+        const sent = await sendEmail({
+          to: memberEmail,
+          subject: kycApprovedEmailSubject(),
+          html: kycApprovedEmailHtml(copy),
+          text: kycApprovedEmailText(copy),
+          tag: 'kyc-approved',
+        })
+        if (!sent.ok) console.warn('[kyc] approval email not sent:', sent.code)
+      }
+    } catch (err) {
+      // The verdict is already written and audited. An email failure must not roll it back or
+      // surface to the operator as a failed approval.
+      console.warn('[kyc] approval email failed:', err instanceof Error ? err.message : err)
+    }
+  }
 }
 
 // ─── Platform statistics (one cached server read instead of six live listeners) ─

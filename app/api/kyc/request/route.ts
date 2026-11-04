@@ -12,11 +12,15 @@
  * route goes through the Admin SDK rather than trusting the client). The console's review queue is
  * just "every unverified member with a recent `kycRequestedAt`", so asking twice is idempotent and
  * re-asking after a rejection is what clears the stale verdict.
+ *
+ * It also confirms by email. A manual review has no webhook and no redirect, so the email is the
+ * only thing that tells the member their request actually landed somewhere — without it they are
+ * left staring at a status that looks stuck.
  */
 
 export const dynamic = 'force-dynamic'
 
-import { NextRequest } from 'next/server'
+import { after, NextRequest } from 'next/server'
 import { consumeBucket, fail, json, rateLimit, requireUser } from '@/lib/guards'
 import { requestKycReview, getUserProfile } from '@/lib/firestore-admin'
 
@@ -52,6 +56,33 @@ export async function POST(req: NextRequest) {
 
   try {
     const result = await requestKycReview(guard.value.uid)
+
+    // Sent after the response: the recorded request is the source of truth, so a slow or refused
+    // email must never turn a successful request into an error the member has to act on.
+    after(async () => {
+      try {
+        const { sendEmail, isResendConfigured, kycRequestReceivedEmailSubject, kycRequestReceivedEmailText, kycRequestReceivedEmailHtml } =
+          await import('@/lib/email')
+        if (!isResendConfigured() || !guard.value.email) return
+        const profile = await getUserProfile(guard.value.uid)
+        const copy = {
+          name: String(profile?.name ?? ''),
+          email: guard.value.email,
+          requestedAt: result.requestedAt,
+        }
+        const sent = await sendEmail({
+          to: guard.value.email,
+          subject: kycRequestReceivedEmailSubject(),
+          html: kycRequestReceivedEmailHtml(copy),
+          text: kycRequestReceivedEmailText(copy),
+          tag: 'kyc-request-received',
+        })
+        if (!sent.ok) console.warn('[kyc] request confirmation email not sent:', sent.code)
+      } catch (err) {
+        console.warn('[kyc] request confirmation email failed:', err instanceof Error ? err.message : err)
+      }
+    })
+
     return json({
       ok: true,
       alreadyVerified: false,

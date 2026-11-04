@@ -213,3 +213,36 @@ test('no member-facing surface still promises a provider or a liveness check', (
   assert.match(terms, /our own review team/, 'the privacy notice names our staff as the reviewer')
   assert.match(terms, /We keep the outcome rather than the document/, 'and says what is retained')
 })
+
+test('a member is emailed when they ask, and when they are approved', () => {
+  // The request half: sent after the response, so a slow email cannot fail a recorded request.
+  const route = read('app/api/kyc/request/route.ts')
+  assert.match(route, /kycRequestReceivedEmailHtml/, 'the request confirmation is the Resend template')
+  assert.match(route, /after\(/, 'and it is sent after the response')
+  assert.match(route, /tag: 'kyc-request-received'/, 'tagged for the Resend dashboard')
+  assert.match(route, /isResendConfigured\(\)/, 'and skipped when no key is configured, never faked')
+
+  // The approval half: the one that has to arrive, because it is what opens paid work.
+  const admin = read('lib/firestore-admin.ts')
+  let fn = admin.slice(admin.indexOf('export async function verifyKycAdmin'))
+  fn = fn.slice(0, fn.indexOf('\n}\n', fn.indexOf('await notifyUser')))
+  assert.match(fn, /kycApprovedEmailHtml/, 'an approval emails the member')
+  assert.match(fn, /if \(approve && memberEmail\)/, 'only on approval, and only with an address')
+  assert.match(fn, /tag: 'kyc-approved'/)
+})
+
+test('an email failure never fails a verification decision', () => {
+  // The verdict is already written and audited when the email is attempted. If sending could throw
+  // out of this function the operator would see a failed approval for a decision that landed.
+  const admin = read('lib/firestore-admin.ts')
+  let fn = admin.slice(admin.indexOf('export async function verifyKycAdmin'))
+  fn = fn.slice(0, fn.indexOf('\n}\n', fn.indexOf('await notifyUser')))
+  assert.match(fn, /try \{/, 'the send is guarded')
+  assert.match(fn, /catch \(err\) \{\s*\/\//, 'and a failure is logged, not rethrown')
+  assert.match(fn, /console\.warn/, 'with enough detail to notice')
+
+  // Same rule on the member side.
+  const route = read('app/api/kyc/request/route.ts')
+  assert.match(route, /catch \(err\) \{\s*console\.warn/, 'a failed confirmation email is logged, never surfaced')
+  assert.doesNotMatch(route, /throw err/, 'and never rethrown')
+})

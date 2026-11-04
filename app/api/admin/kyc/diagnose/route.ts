@@ -7,10 +7,11 @@
  * answer, so the person who *can* fix it needs somewhere to read it. This route is that place.
  *
  * It reports configuration as booleans (never values), the API host, the result of a live
- * `GET /v3/workflows/` read, and — the part that used to be missing — the result of the call the
- * member actually triggers, `POST /v3/session/`, run once under a fixed probe identity Didit
- * reuses. The workflow read alone passes for a key without write:sessions, an application with no
- * credits and a callback origin that is not on the allowed domains, which is how a broken
+ * `GET /v3/workflows/` read, the live credit balance, and — the part that used to be missing —
+ * the result of the call the member actually triggers, `POST /v3/session/`, run once under a
+ * fixed probe identity Didit reuses. The workflow read alone passes for a key without
+ * write:sessions, an application with no credits, a workflow id that only exists as an unpublished
+ * draft, and a callback origin that is not on the allowed domains, which is how a broken
  * deployment came to report "Ready to verify" while every member failed. The owner-only gate is
  * deliberate: the payload names infrastructure, which is not day-to-day staff information.
  */
@@ -19,7 +20,7 @@ export const dynamic = 'force-dynamic'
 
 import { NextRequest } from 'next/server'
 import { audit, consumeBucket, fail, json, requireOwner, routeError } from '@/lib/guards'
-import { callbackTarget, diditConfig, diditConfigHint, probeDidit, probeDiditSession } from '@/lib/didit'
+import { callbackTarget, diditConfig, diditConfigHint, probeDidit, probeDiditBilling, probeDiditSession } from '@/lib/didit'
 import { publicOriginFor } from '@/lib/security-core'
 
 export async function GET(req: NextRequest) {
@@ -58,10 +59,18 @@ export async function GET(req: NextRequest) {
       probe.reachable && probe.status !== null && probe.status >= 200 && probe.status < 300 && probe.workflowFound
     const sessionProbe = workflowReadOk ? await probeDiditSession(resolvedOrigin.origin) : null
 
+    // Credits are the failure an operator is least likely to suspect, because the Free plan is no
+    // longer "500 free checks": since 1 November 2026 it is $10 of credit a month, granted only to
+    // organizations that signed up with a work email, and it does not pay for phone verification.
+    // Read the balance so "your members are out of checks" is a number rather than a guess.
+    const billing = workflowReadOk ? await probeDiditBilling() : null
+
     // A deployment can be "configured" and still unusable: the host or the key is wrong. Report
     // the two separately so the fix is obvious rather than a hunt through the provider's console.
-    // A green workflow read alone is not "ready to verify" — the member's own call must work too.
-    const healthy = config.configured && workflowReadOk && sessionProbe?.ok === true
+    // A green workflow read alone is not "ready to verify" — the member's own call must work too,
+    // and the id must be a *published, non-archived* workflow, which the id list alone does not
+    // prove: a draft version of a workflow appears in the list and refuses every session.
+    const healthy = config.configured && workflowReadOk && probe.workflowUsable && sessionProbe?.ok === true
 
     await audit({
       action: 'KYC_DIAGNOSTIC_RUN',
@@ -72,8 +81,10 @@ export async function GET(req: NextRequest) {
         reachable: probe.reachable,
         status: probe.status,
         workflowFound: probe.workflowFound,
+        workflowUsable: probe.workflowUsable,
         sessionProbeOk: sessionProbe?.ok ?? null,
         sessionProbeStatus: sessionProbe?.status ?? null,
+        creditBalance: billing?.balance ?? null,
         callbackOrigin: callback.origin,
         callbackSource: resolvedOrigin.source,
         callbackIsPublic: callback.isPublicHttps,
@@ -95,13 +106,14 @@ export async function GET(req: NextRequest) {
       },
       probe,
       sessionProbe,
+      billing,
       callback: {
         url: callback.url,
         origin: callback.origin,
         source: resolvedOrigin.source,
         isPublicHttps: callback.isPublicHttps,
       },
-      hint: diditConfigHint() ?? sessionProbe?.hint ?? callbackHint,
+      hint: diditConfigHint() ?? sessionProbe?.hint ?? probe.hint ?? billing?.hint ?? callbackHint,
     })
   } catch (err) {
     return routeError('KYC diagnostic', err)

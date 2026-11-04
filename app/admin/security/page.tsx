@@ -239,8 +239,28 @@ function AdminSecurityPageInner() {
               <Row label="API key" value={kyc.config.hasApiKey ? 'Present' : 'Missing'} tone={kyc.config.hasApiKey ? 'ok' : 'fail'} />
               <Row
                 label="Workflow"
-                value={kyc.config.hasWorkflowId ? (kyc.probe.workflowFound ? 'Found on this key' : 'Not on this key') : 'Missing'}
-                tone={kyc.probe.workflowFound ? 'ok' : 'fail'}
+                value={
+                  !kyc.config.hasWorkflowId
+                    ? 'Missing'
+                    : !kyc.probe.workflowFound
+                      ? 'Not on this key'
+                      : kyc.probe.workflowUsable
+                        ? 'Published'
+                        : 'Not published'
+                }
+                tone={kyc.config.hasWorkflowId && kyc.probe.workflowUsable ? 'ok' : 'fail'}
+              />
+              {/* Credits are invisible until a session is refused, and the Free plan is no longer
+                  "500 free checks" — since 1 Nov 2026 it is $10 of credit a month. Show the number. */}
+              <Row
+                label="Credit balance"
+                value={
+                  kyc.billing?.balance != null
+                    ? `$${kyc.billing.balance.toFixed(2)}${kyc.billing.autoRefill ? ' · auto top-up' : ''}`
+                    : 'Unavailable'
+                }
+                mono
+                tone={kyc.billing?.balance == null ? 'warn' : kyc.billing.balance > 0 ? 'ok' : 'fail'}
               />
               <Row
                 label="Webhook secret"
@@ -300,6 +320,13 @@ function AdminSecurityPageInner() {
               </p>
             ) : null}
 
+            {kyc.billing?.hint ? (
+              <p className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] leading-relaxed text-amber-600 dark:text-amber-400">
+                <span className="font-semibold">Billing: </span>
+                {kyc.billing.hint}
+              </p>
+            ) : null}
+
             {kyc.config.usesRegistrationHost ? (
               <p className="rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-2 text-[11px] text-destructive">
                 DIDIT_API_URL is set to the registration host. /v3/session/ does not exist there, so every verification
@@ -307,7 +334,7 @@ function AdminSecurityPageInner() {
               </p>
             ) : null}
 
-            {!kyc.probe.workflowFound && kyc.probe.workflows.length > 0 ? (
+            {(!kyc.probe.workflowFound || !kyc.probe.workflowUsable) && kyc.probe.workflows.length > 0 ? (
               <div className="rounded-xl border border-border/70 bg-background/60 p-3">
                 <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                   Workflows on this key
@@ -316,11 +343,19 @@ function AdminSecurityPageInner() {
                   {kyc.probe.workflows.slice(0, 8).map((workflow) => (
                     <li key={workflow.id} className="flex flex-wrap items-center gap-x-2 text-[11px]">
                       <span className="font-medium text-foreground">{workflow.label}</span>
-                      <span className="text-muted-foreground">{workflow.status}</span>
+                      <span className="text-muted-foreground">
+                        {workflow.archived ? 'archived' : workflow.status}
+                        {workflow.version != null ? ` · v${workflow.version}` : ''}
+                      </span>
                       <code className="font-mono text-[10px] text-muted-foreground">{workflow.id}</code>
                     </li>
                   ))}
                 </ul>
+                {kyc.probe.morePages ? (
+                  <p className="mt-1.5 text-[10px] text-muted-foreground">
+                    The provider reported another page of workflows, so this list is incomplete.
+                  </p>
+                ) : null}
               </div>
             ) : null}
           </div>

@@ -291,6 +291,140 @@ test('a workflow missing from the key is called out with the ids that do exist',
   }
 })
 
+/**
+ * The id being *in the list* is not the same as the id being *usable*. Each row is one version of a
+ * workflow group and new sessions always use the latest published version, so a workflow that only
+ * exists as a draft (or whose rows are archived) is listed by GET /v3/workflows/ and still refuses
+ * every member's POST /v3/session/. That is the "admin says ready, every member fails" shape, so
+ * the probe must separate "found" from "usable".
+ */
+test('a workflow that only exists as a draft is not reported as usable', async () => {
+  const { probeDidit } = await didit()
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = (async () =>
+    new Response(
+      JSON.stringify({
+        count: 1,
+        next: null,
+        results: [{ workflow_id: 'wf_123', workflow_label: 'Standard KYC', status: 'draft', version: 3 }],
+      }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    )) as typeof fetch
+
+  try {
+    const result = await probeDidit()
+    assert.equal(result.workflowFound, true, 'the id does appear in the provider list')
+    assert.equal(result.workflowUsable, false, 'but a draft cannot serve a session')
+    assert.match(result.detail, /no published, non-archived version/i)
+    assert.match(result.hint ?? '', /publish the workflow/i, 'the operator must be told to publish it')
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('an archived workflow is not reported as usable', async () => {
+  const { probeDidit } = await didit()
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = (async () =>
+    new Response(
+      JSON.stringify({
+        results: [
+          { workflow_id: 'wf_123', workflow_label: 'Old KYC', status: 'published', is_archived: true },
+          { workflow_id: 'wf_123', workflow_label: 'Old KYC', status: 'published', is_archived: false, version: 4 },
+        ],
+      }),
+      { status: 200 },
+    )) as typeof fetch
+
+  try {
+    const result = await probeDidit()
+    assert.equal(result.workflowFound, true)
+    assert.equal(
+      result.workflowUsable,
+      true,
+      'one live published version is enough — the archived row must not condemn a usable workflow',
+    )
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('a workflow the page did not show is not called missing', async () => {
+  const { probeDidit } = await didit()
+  const originalFetch = globalThis.fetch
+  // The list paginates at 50 rows, so the configured id can simply be on the next page.
+  globalThis.fetch = (async () =>
+    new Response(
+      JSON.stringify({
+        count: 74,
+        next: 'https://verification.didit.me/v3/workflows/?offset=50',
+        results: [{ workflow_id: 'wf_other', workflow_label: 'Other KYC', status: 'published' }],
+      }),
+      { status: 200 },
+    )) as typeof fetch
+
+  try {
+    const result = await probeDidit()
+    assert.equal(result.workflowFound, false)
+    assert.equal(result.morePages, true)
+    assert.match(result.detail, /shown on this page/i)
+    assert.match(result.hint ?? '', /later page/i, 'a missing id must not be blamed when the list is truncated')
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('the credit balance is read, and an empty one is explained in current pricing terms', async () => {
+  const { probeDiditBilling } = await didit()
+  const originalFetch = globalThis.fetch
+  try {
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ balance: '0.0000', auto_refill_enabled: false }), { status: 200 })) as typeof fetch
+    const empty = await probeDiditBilling()
+    assert.equal(empty.ok, true)
+    assert.equal(empty.balance, 0)
+    assert.match(empty.hint ?? '', /\$10 a month/i, 'the Free plan is $10 of credit a month, not 500 checks')
+    assert.match(empty.hint ?? '', /work email/i)
+
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ balance: '42.5000', auto_refill_enabled: true }), { status: 200 })) as typeof fetch
+    const funded = await probeDiditBilling()
+    assert.equal(funded.balance, 42.5)
+    assert.equal(funded.autoRefill, true)
+    assert.match(funded.detail, /128 checks/i, 'the balance must be translated into checks at $0.33 each')
+    assert.equal(funded.hint, null, 'a funded account needs no billing hint')
+
+    globalThis.fetch = (async () => new Response(JSON.stringify({ detail: 'nope' }), { status: 403 })) as typeof fetch
+    const refused = await probeDiditBilling()
+    assert.equal(refused.ok, false)
+    assert.equal(refused.status, 403)
+    assert.equal(refused.balance, null, 'an unreadable balance must not be shown as $0')
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('the diagnose route gates "ready to verify" on a usable workflow and reads the balance', () => {
+  const diagnose = read('app/api/admin/kyc/diagnose/route.ts')
+  assert.match(diagnose, /probe\.workflowUsable/, 'a draft workflow id lists fine and refuses every session')
+  assert.match(diagnose, /probeDiditBilling/, 'the credit balance is the one thing a refused session cannot say')
+  assert.match(diagnose, /billing/, 'the balance must reach the operator')
+
+  const security = read('app/admin/security/page.tsx')
+  assert.match(security, /kyc\.billing/, 'the operator must see the balance, not a guess about the free plan')
+  assert.match(security, /kyc\.probe\.workflowUsable/, 'the workflow row must distinguish published from not')
+})
+
+test('a standalone check script exists for diagnosing without a deploy', () => {
+  const script = read('scripts/didit-check.mjs')
+  assert.match(script, /\/v3\/workflows\//, 'the cheap read that proves host and key')
+  assert.match(script, /\/v3\/billing\/balance\//, 'the credit balance')
+  assert.match(script, /\/v3\/session\//, 'the call a member actually makes')
+  assert.match(script, /--session/, 'opening a real session must be opt-in, not the default')
+  assert.match(script, /vendor_data: 'afterworks-console-connection-test'/, 'the probe identity the app reuses')
+  assert.doesNotMatch(script, /console\.log\([^)]*API_KEY/, 'the script must never print the key')
+})
+
 test('a member is told the truth when the deployment is not configured', () => {
   const submit = read('app/api/kyc/submit/route.ts')
   // The generic "try again in a few minutes" hid a missing key behind an outage message.

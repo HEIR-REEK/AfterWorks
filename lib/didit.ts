@@ -203,19 +203,43 @@ export function diditConfigHint(): string | null {
   return null
 }
 
+/** One workflow row as the provider reports it — enough to tell *why* an id is unusable. */
+export type DiditWorkflowRow = {
+  id: string
+  label: string
+  /** "published" | "draft" | "unknown" — new sessions always use the latest *published* version. */
+  status: string
+  version?: number
+  archived?: boolean
+  /** Raw feature string, e.g. "OCR + LIVENESS + FACE_MATCH" (a phone step is not billable on Free). */
+  features?: string
+  totalPrice?: number
+  workflowType?: string
+  isDefault?: boolean
+}
+
 /**
  * Live read-through of the provider's workflow list.
  *
- * `GET /v3/workflows/` is the cheapest call that proves three things at once — the host is right,
- * the API key is accepted, and the configured workflow exists in this application — and it does
- * not spend verification credits the way a test session would.
+ * `GET /v3/workflows/` is the cheapest call that proves the host is right and the API key is
+ * accepted, and it names every workflow on the application. Two things it must NOT be read as
+ * proof of, because both used to pass this check while every member's session creation failed:
+ *
+ *  • that the configured `DIDIT_WORKFLOW_ID` is *usable*. Each row is one version of a workflow
+ *    group and new sessions use the latest **published** version, so an id that exists only as a
+ *    draft — or whose only rows are archived — lists fine and still refuses every session.
+ *    `workflowUsable` is the check that matters; `workflowFound` only says the id was seen.
+ *  • that the whole list was seen. The endpoint paginates at 50 rows per page, so an id on page
+ *    two reads as "not on this key" — `morePages` says when that is possible.
  */
 export async function probeDidit(): Promise<{
   reachable: boolean
   status: number | null
   detail: string
-  workflows: { id: string; label: string; status: string; version?: number }[]
+  workflows: DiditWorkflowRow[]
   workflowFound: boolean
+  workflowUsable: boolean
+  morePages: boolean
   hint: string | null
 }> {
   const config = diditConfig()
@@ -227,6 +251,8 @@ export async function probeDidit(): Promise<{
       detail: 'No API key is configured, so Didit cannot be called.',
       workflows: [],
       workflowFound: false,
+      workflowUsable: false,
+      morePages: false,
       hint,
     }
   }
@@ -250,6 +276,8 @@ export async function probeDidit(): Promise<{
           : `Didit answered ${response.status} from ${config.host}: ${detail}`,
         workflows: [],
         workflowFound: false,
+        workflowUsable: false,
+        morePages: false,
         hint:
           hint ??
           (config.usesRegistrationHost
@@ -271,7 +299,7 @@ export async function probeDidit(): Promise<{
           ? (payload.workflows as unknown[])
           : []
 
-    const workflows = rows.flatMap((row) => {
+    const workflows: DiditWorkflowRow[] = rows.flatMap((row) => {
       const record = row && typeof row === 'object' ? (row as Record<string, unknown>) : null
       if (!record) return []
       const id = String(record.workflow_id ?? record.uuid ?? record.id ?? '')
@@ -282,22 +310,44 @@ export async function probeDidit(): Promise<{
           label: String(record.workflow_label ?? record.label ?? 'Untitled workflow'),
           status: String(record.status ?? 'unknown'),
           version: typeof record.version === 'number' ? record.version : undefined,
+          archived: record.is_archived === true,
+          features: typeof record.features === 'string' ? record.features : undefined,
+          totalPrice: typeof record.total_price === 'number' ? record.total_price : undefined,
+          workflowType: typeof record.workflow_type === 'string' ? record.workflow_type : undefined,
+          isDefault: record.is_default === true,
         },
       ]
     })
 
-    const workflowFound = workflows.some((workflow) => workflow.id === DIDIT_WORKFLOW_ID)
+    const matches = workflows.filter((workflow) => workflow.id === DIDIT_WORKFLOW_ID)
+    const workflowFound = matches.length > 0
+    // A missing `status` field must not fail a working deployment, but an explicit "draft" or an
+    // archived row must: neither can serve a session.
+    const workflowUsable = matches.some((workflow) => (workflow.status === 'published' || workflow.status === 'unknown') && !workflow.archived)
+    const morePages = Boolean(payload.next)
+
+    const statusesSeen = [...new Set(matches.map((workflow) => (workflow.archived ? 'archived' : workflow.status)))].join(', ')
     return {
       reachable: true,
       status: response.status,
-      detail: workflowFound
-        ? `Didit accepted the key and the workflow is published in this application (${workflows.length} workflow${workflows.length === 1 ? '' : 's'} visible).`
-        : workflows.length === 0
+      detail: !workflowFound
+        ? workflows.length === 0
           ? 'The key works, but this application has no workflows. Create one in the Didit console, then set DIDIT_WORKFLOW_ID.'
-          : `The key works, but DIDIT_WORKFLOW_ID is not one of the ${workflows.length} workflow(s) on this application. Copy the id from the console.`,
+          : `The key works, but DIDIT_WORKFLOW_ID is not one of the ${workflows.length} workflow(s) on this application${morePages ? ' shown on this page' : ''}. Copy the id from the console.`
+        : !workflowUsable
+          ? `DIDIT_WORKFLOW_ID matches a workflow on this application, but no published, non-archived version exists (versions seen: ${statusesSeen || 'none'}). New sessions always use the latest published version, so every member's session creation is refused until the workflow is published.`
+          : `Didit accepted the key and the workflow is published in this application (${workflows.length} workflow${workflows.length === 1 ? '' : 's'} visible).`,
       workflows,
       workflowFound,
-      hint: workflowFound ? hint : 'DIDIT_WORKFLOW_ID must be the id of a workflow that exists on the application bound to this API key.',
+      workflowUsable,
+      morePages,
+      hint: !workflowFound
+        ? morePages
+          ? 'The workflow list is paginated (50 per page), so the configured workflow may simply be on a later page. Open Workflows in the Didit console and copy the workflow_id exactly.'
+          : 'DIDIT_WORKFLOW_ID must be the id of a workflow that exists on the application bound to this API key.'
+        : !workflowUsable
+          ? `Publish the workflow in the Didit console (Workflows → open it → Publish). Versions seen for this id: ${statusesSeen || 'none'}.`
+          : hint,
     }
   } catch (err) {
     return {
@@ -306,7 +356,89 @@ export async function probeDidit(): Promise<{
       detail: `Could not reach ${DIDIT_BASE_URL}: ${err instanceof Error ? err.message : 'unknown error'}`,
       workflows: [],
       workflowFound: false,
+      workflowUsable: false,
+      morePages: false,
       hint: config.usesRegistrationHost ? diditConfigHint() : "Check the deployment's outbound network access to verification.didit.me.",
+    }
+  }
+}
+
+// ─── Billing probe (console connection test) ────────────────────────────────
+
+/**
+ * Live read of the organization's credit balance.
+ *
+ * `GET /v3/billing/balance/` answers the one question a refused session cannot: whether there is
+ * anything to pay with. Since 1 November 2026 the Free plan grants **$10 of credit a month — about
+ * 30 full KYC checks at $0.33 — not 500 free checks**, and only to organizations that signed up
+ * with a work email; it also does not cover phone verification. A deployment whose workflow read
+ * passes and whose sessions are all refused with "not enough credits" has a billing fact, not a
+ * code bug, so the console reads the balance instead of leaving the operator to guess.
+ */
+export async function probeDiditBilling(): Promise<{
+  ok: boolean
+  status: number | null
+  balance: number | null
+  autoRefill: boolean | null
+  detail: string
+  hint: string | null
+}> {
+  const config = diditConfig()
+  if (!config.hasApiKey) {
+    return {
+      ok: false,
+      status: null,
+      balance: null,
+      autoRefill: null,
+      detail: 'No API key is configured, so the balance cannot be read.',
+      hint: diditConfigHint(),
+    }
+  }
+
+  try {
+    const response = await fetch(`${DIDIT_BASE_URL}/v3/billing/balance/`, {
+      method: 'GET',
+      headers: { 'x-api-key': DIDIT_API_KEY, Accept: 'application/json' },
+      cache: 'no-store',
+      signal: AbortSignal.timeout(10_000),
+    })
+
+    if (!response.ok) {
+      const detail = (await response.text()).slice(0, 300)
+      return {
+        ok: false,
+        status: response.status,
+        balance: null,
+        autoRefill: null,
+        detail: `Didit answered ${response.status} for the balance read: ${detail}`,
+        hint: 'The balance could not be read. A refused session still reports its own reason, so use that.',
+      }
+    }
+
+    const payload = (await response.json()) as Record<string, unknown>
+    const balance = Number.parseFloat(String(payload.balance ?? ''))
+    const autoRefill = typeof payload.auto_refill_enabled === 'boolean' ? payload.auto_refill_enabled : null
+    const readable = Number.isFinite(balance)
+    return {
+      ok: readable,
+      status: response.status,
+      balance: readable ? balance : null,
+      autoRefill,
+      detail: readable
+        ? `Credit balance is $${balance.toFixed(2)}${autoRefill ? ' (auto top-up on)' : ''}. A full KYC check costs $0.33, so that is about ${Math.max(0, Math.floor(balance / 0.33))} checks.`
+        : 'The balance response did not contain a readable number.',
+      hint: readable && balance <= 0
+        ? 'The balance is empty, so Didit refuses to open sessions. On the Free plan the grant is $10 a month (about 30 checks) for organizations that signed up with a work email — check Billing in the Didit console, or top up.'
+        : null,
+    }
+  } catch (err) {
+    return {
+      ok: false,
+      status: null,
+      balance: null,
+      autoRefill: null,
+      detail: `Could not read the balance from ${DIDIT_BASE_URL}: ${err instanceof Error ? err.message : 'unknown error'}`,
+      hint: null,
     }
   }
 }
@@ -375,7 +507,7 @@ export async function probeDiditSession(origin?: string): Promise<{
         status: err.status,
         detail: `Didit refused to open a session (${err.status}): ${err.detail.slice(0, 300)}`,
         sessionId: null,
-        hint: sessionProbeHint(err.status, err.detail),
+        hint: sessionProbeHint(err.status, err.detail, callbackTarget(origin).url),
       }
     }
     return {
@@ -388,26 +520,49 @@ export async function probeDiditSession(origin?: string): Promise<{
   }
 }
 
-/** The one-line operator fix for each way session creation can fail while the workflow read passes. */
-function sessionProbeHint(status: number, detail: string): string {
+/**
+ * The one-line operator fix for each way session creation can fail while the workflow read passes.
+ *
+ * `detail` is the provider's own words, so the mapping keys off its phrasing rather than off
+ * status alone: Didit reports expired keys, IP-restricted keys, deleted applications and missing
+ * credits under statuses that would otherwise all read as the same "refused".
+ */
+function sessionProbeHint(status: number, detail: string, callbackUrl?: string): string {
   const body = detail.toLowerCase()
   if (status === 403) {
+    if (body.includes('application_deleted')) {
+      return 'Didit reports the application behind this key was deleted, so nothing can be verified on it. Create a new application in the Didit console, then issue a fresh API key and workflow and point DIDIT_API_KEY and DIDIT_WORKFLOW_ID at those.'
+    }
+    if (body.includes('ip list') || body.includes('ip allowlist') || body.includes('ip whitelist') || body.includes('outside its ip')) {
+      return 'This API key is restricted to an IP allow-list and this request did not come from a listed address. Add the deployment’s egress IP (on Render: service → Outbound IPs) to the key’s IP list in the Didit console, or drop the restriction.'
+    }
     return 'The key is accepted for reads but lacks write:sessions. Create a key with session-write permission in the Didit console (Settings → API & Webhooks) and set DIDIT_API_KEY to it.'
   }
   if (status === 401) {
-    return 'Didit refused the key for session creation. Confirm DIDIT_API_KEY belongs to this application.'
+    return body.includes('expired')
+      ? 'This API key has expired. Create a new key in the Didit console (Settings → API & Webhooks) and set DIDIT_API_KEY to it — reads can keep succeeding after an expiry the provider only enforces on writes.'
+      : 'Didit refused the key for session creation. Confirm DIDIT_API_KEY belongs to this application.'
+  }
+  if (status === 404) {
+    return 'Didit cannot see this session or its workflows under this key, which is what a key scoped to a different application (or a deleted one) looks like. Check the key’s application and workflow scope in the Didit console.'
   }
   if (body.includes('credit')) {
-    return 'The application is out of verification credits: the workflow list is free, but opening a session is not. Top up in the Didit console (Billing), then test again.'
+    return 'The application is out of verification credits: the workflow list is free, but opening a session is not. Since 1 November 2026 the Free plan grants $10 of credit a month — about 30 full KYC checks, not 500 — and only to organizations that signed up with a work email. Check Billing in the Didit console, or top up.'
   }
   if (body.includes('allowed domain')) {
-    return 'Didit refuses the callback origin: it must be one of the application’s allowed domains (PATCH /v3/webhook/). Add the deployed origin there — or set NEXT_PUBLIC_APP_URL to an origin that is already allowed.'
+    return `Didit refuses the callback origin: ${callbackUrl ?? 'the configured callback URL'} must be one of the application’s allowed domains (PATCH /v3/webhook/). Add that origin there — or set NEXT_PUBLIC_APP_URL to an origin that is already allowed.`
+  }
+  if (body.includes('phone')) {
+    return 'The workflow includes a phone verification step, and the Free plan’s monthly credit does not pay for phone verification. Remove the phone step from the workflow, or move to a plan that covers it.'
   }
   if (body.includes('blocked')) {
     return 'Didit has an identity blocklisted on this application, so no session can be opened for it. Remove the block, or the members it covers cannot verify.'
   }
   if (body.includes('portrait')) {
     return 'The workflow expects a reference face (portrait_image) or a stored face for this identity. Send one when creating the session, or move Face Match after ID Verification in the workflow.'
+  }
+  if (body.includes('workflow')) {
+    return 'Didit did not accept DIDIT_WORKFLOW_ID for this session. It must be the workflow_id of a workflow that is published on the application bound to this key — a draft or archived workflow id lists fine but refuses every session.'
   }
   if (status === 429) {
     return 'Didit rate-limited the call (600 successful calls per minute). Wait a minute and test again.'

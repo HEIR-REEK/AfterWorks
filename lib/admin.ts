@@ -466,10 +466,37 @@ export const adminApi = {
         reachable: boolean
         status: number | null
         detail: string
-        workflows: { id: string; label: string; status: string; version?: number }[]
+        workflows: {
+          id: string
+          label: string
+          status: string
+          version?: number
+          archived?: boolean
+          features?: string
+          totalPrice?: number
+          workflowType?: string
+          isDefault?: boolean
+        }[]
         workflowFound: boolean
+        /** A published, non-archived version of the configured workflow exists — what a session needs. */
+        workflowUsable: boolean
+        /** The provider reported another page of workflows this read did not see. */
+        morePages: boolean
         hint: string | null
       }
+      /**
+       * The organization's credit balance, read from GET /v3/billing/balance/. Null when the
+       * workflow read already failed. The Free plan is $10 of credit a month (about 30 checks)
+       * since 1 November 2026, so an empty balance is a billing fact rather than a code bug.
+       */
+      billing: {
+        ok: boolean
+        status: number | null
+        balance: number | null
+        autoRefill: boolean | null
+        detail: string
+        hint: string | null
+      } | null
       /**
        * The member-facing call (POST /v3/session/) run once under a fixed probe identity Didit
        * reuses. Null when the workflow read already failed, so no session attempt was made.

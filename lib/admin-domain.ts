@@ -352,7 +352,20 @@ export function adminUserRowFromDoc(
       ? doc.paidTrainings.length
       : asCount(doc.paidTrainingsCount, 0),
     profileIncomplete: !name && !email,
+    // Idempotent projection: the server scores this from the FULL document. When the input is an
+    // already-projected wire row — which carries no raw bio/skills/languages/location and only a
+    // masked phone — re-scoring it would read as 1/6 (17%) for everyone and overwrite the correct
+    // server values, so keep the carried values instead.
     ...(() => {
+      if (typeof doc.profileComplete === 'boolean' && typeof doc.profilePercent === 'number') {
+        return {
+          profileComplete: doc.profileComplete === true,
+          profilePercent: asCount(doc.profilePercent, 0),
+          profileMissing: Array.isArray(doc.profileMissing)
+            ? doc.profileMissing.map((entry) => asText(entry)).filter(Boolean)
+            : [],
+        }
+      }
       const completion = profileCompletion(doc)
       return {
         profileComplete: completion.complete,

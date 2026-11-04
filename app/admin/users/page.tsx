@@ -1,6 +1,7 @@
 'use client'
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react'
+import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import {
   BadgeCheck,
@@ -706,7 +707,8 @@ function UsersPageInner() {
               {isOwner ? (
                 <p className="text-[11px] leading-relaxed text-muted-foreground">
                   Every action below is sent to <code className="font-mono">PATCH /api/admin/users</code> with a reason, checked against the allowed state transitions, and appended to
-                  <code className="font-mono"> admin_logs</code>.
+                  <code className="font-mono"> admin_logs</code>. To add staff by email + password (no worker account needed), use the{' '}
+                  <Link href="/admin/staff" className="font-medium text-primary hover:underline">Staff page</Link>.
                 </p>
               ) : (
                 <p className="text-[11px] leading-relaxed text-muted-foreground">
@@ -771,8 +773,45 @@ function UsersPageInner() {
               }
               return act({ ...base, action: 'grant-welcome-bonus', payload: { confirmPasscode } })
             }
-            case 'role':
-              return act({ ...base, action: 'role', payload: { isAdmin: selected.role !== 'admin', email: selected.email } })
+            case 'role': {
+              const granting = selected.role !== 'admin'
+              if (granting) {
+                // A real console account needs a password: create the admin_accounts entry
+                // (owner-chosen passcode, scrypt-hashed server-side) so the person actually
+                // appears on the Staff page and can sign in to /admin/login.
+                const passcode = (document.getElementById('role-passcode') as HTMLInputElement | null)?.value ?? ''
+                const repeat = (document.getElementById('role-passcode2') as HTMLInputElement | null)?.value ?? ''
+                if (passcode.length < 10) {
+                  push('error', 'Choose a console password of at least 10 characters.')
+                  return undefined
+                }
+                if (passcode !== repeat) {
+                  push('error', 'The two passwords do not match.')
+                  return undefined
+                }
+                try {
+                  await adminApi.staffAdd({ email: selected.email, passcode })
+                } catch (err) {
+                  // 409 = a console account already exists for this email; keep going and just
+                  // refresh the label (the password can be reset from the Staff page).
+                  if (errorStatus(err) !== 409) {
+                    push('error', describeError(err))
+                    return undefined
+                  }
+                }
+              } else {
+                // Revoking removes the console account too (404 = there was none to remove).
+                try {
+                  await adminApi.staffRemove(selected.email)
+                } catch (err) {
+                  if (errorStatus(err) !== 404) {
+                    push('error', describeError(err))
+                    return undefined
+                  }
+                }
+              }
+              return act({ ...base, action: 'role', payload: { isAdmin: granting, email: selected.email } })
+            }
             case 'wallet': {
               const pending = Number((document.getElementById('adj-pending') as HTMLInputElement | null)?.value)
               const available = Number((document.getElementById('adj-available') as HTMLInputElement | null)?.value)
@@ -846,6 +885,30 @@ function UsersPageInner() {
                   autoComplete="current-password"
                   className={inputClass}
                   placeholder="Re-enter the master passcode"
+                />
+              </Field>
+            </div>
+          ) : confirm?.action === 'role' && selected && selected.role !== 'admin' ? (
+            <div className="mt-3 flex flex-col gap-3">
+              <Field
+                label={`Console password for ${selected.email || 'this member'}`}
+                hint="You choose it — it opens /admin/login only, stored as a scrypt hash, never shown again. Works even if they never created a worker account. To add staff by email alone, use the Staff page."
+              >
+                <input
+                  id="role-passcode"
+                  type="password"
+                  autoComplete="new-password"
+                  className={inputClass}
+                  placeholder="At least 10 characters"
+                />
+              </Field>
+              <Field label="Repeat console password">
+                <input
+                  id="role-passcode2"
+                  type="password"
+                  autoComplete="new-password"
+                  className={inputClass}
+                  placeholder="Repeat the password"
                 />
               </Field>
             </div>

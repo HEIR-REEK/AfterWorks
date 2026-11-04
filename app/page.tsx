@@ -503,7 +503,7 @@ export default function LandingPage() {
                 {
                   icon: Fingerprint,
                   title: 'One account, one identity',
-                  body: 'Email confirmation and a government-ID check keep duplicate accounts off the board, so the person who did the work is the person who gets paid.',
+                  body: 'Email confirmation and a one-time identity review keep duplicate accounts off the board, so the person who did the work is the person who gets paid.',
                 },
                 {
                   icon: Wallet,

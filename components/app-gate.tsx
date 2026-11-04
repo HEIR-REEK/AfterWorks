@@ -48,7 +48,7 @@ export function AppGate({ children }: { children: React.ReactNode }) {
       {/* Ten minutes without input ends the session and reloads the page — see the component for
           why an idle *signed-in* tab is the thing worth closing. Mounted at the top of the tree
           rather than inside the shell so it also covers the public routes a signed-in member can
-          wander onto (/verify-email, /kyc/callback), and it is a no-op while signed out. */}
+          wander onto (/verify-email), and it is a no-op while signed out. */}
       <IdleSessionGuard />
     </MaintenanceProvider>
   )

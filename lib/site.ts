@@ -110,5 +110,5 @@ export const SITE_FAQ = [
 export const TRUST_POINTS = [
   { label: 'Zero fees to apply', detail: 'You are never charged to browse or apply.' },
   { label: 'Escrowed payouts', detail: `${site.clearingWindowHours}h clearing, then payouts in 24h.` },
-  { label: 'Verified workers only', detail: 'Government ID + liveness check.' },
+  { label: 'Verified workers only', detail: 'One-time identity review, approved by our team.' },
 ] as const

@@ -183,3 +183,33 @@ test('member-facing copy asks for a review rather than telling them to verify th
   assert.doesNotMatch(landing, /liveness check/)
   assert.match(landing, /Request identity verification/)
 })
+
+test('no member-facing surface still promises a provider or a liveness check', () => {
+  // These are the files a member actually reads. Each one promised a verification partner, a
+  // government-ID and liveness check, or both — describing a service that no longer runs.
+  const surfaces = [
+    'app/page.tsx',
+    'app/jobs/[id]/page.tsx',
+    'app/jobs/page.tsx',
+    'app/training/[id]/page.tsx',
+    'app/wallet/page.tsx',
+    'app/work/[id]/page.tsx',
+    'app/profile/page.tsx',
+    'components/withdraw-panel.tsx',
+    'lib/site.ts',
+    'lib/terms.ts',
+  ]
+  for (const file of surfaces) {
+    const body = read(file)
+    assert.doesNotMatch(body, /verification partner/i, `${file} still names a verification partner`)
+    assert.doesNotMatch(body, /liveness/i, `${file} still promises a liveness check`)
+    assert.doesNotMatch(body, /government-ID/i, `${file} still promises a government-ID check`)
+    // And no button tells a member to perform the check themselves.
+    assert.doesNotMatch(body, /Verify (your )?identity|Verify KYC/, `${file} still says "verify", not "request"`)
+  }
+
+  // The privacy notice must say who actually reviews it.
+  const terms = read('lib/terms.ts')
+  assert.match(terms, /our own review team/, 'the privacy notice names our staff as the reviewer')
+  assert.match(terms, /We keep the outcome rather than the document/, 'and says what is retained')
+})

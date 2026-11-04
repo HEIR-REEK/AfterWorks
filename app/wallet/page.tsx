@@ -56,7 +56,7 @@ export default function WalletPage() {
         ) : (
           <Button render={<Link href="/profile" />} size="sm" variant="outline" className="gap-1.5">
             <ShieldCheck className="size-3.5" />
-            Verify identity to withdraw
+            Request verification to withdraw
           </Button>
         )}
       </section>

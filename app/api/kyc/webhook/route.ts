@@ -8,8 +8,12 @@
  *   https://your-domain.com/api/kyc/webhook
  *
  * Set DIDIT_WEBHOOK_SECRET in your environment to the secret Didit provides.
- * Didit signs every request body with HMAC-SHA256; we verify that signature
- * before acting on the payload.
+ *
+ * Didit signs `X-Signature-V2` as HMAC-SHA256 over a *canonical re-encoding* of the JSON body
+ * (keys sorted recursively, whole-valued floats shortened, compact separators) and sends the
+ * signing time in `X-Timestamp`. We verify both before touching the payload — see
+ * `verifyWebhookSignature` in lib/didit.ts — and refuse a V2 delivery that arrives without a
+ * timestamp, so a captured request cannot be replayed outside the five-minute window.
  *
  * ── Handled Status Transitions ───────────────────────────────────────────────
  *
@@ -35,6 +39,8 @@ import {
   verifyWebhookSignature,
   normaliseStatus,
   getKycSessionStatus,
+  extractFailedChecks,
+  extractRejectionReason,
   type DiditSessionStatus,
 } from '@/lib/didit'
 import { updateUserProfile, saveKycRecord, getUserProfile } from '@/lib/firestore-admin'
@@ -59,10 +65,11 @@ export async function POST(req: NextRequest) {
   }
 
   // ── Signature verification ────────────────────────────────────────────────
-  const signature =
-    req.headers.get('x-signature-v2') ||
-    req.headers.get('x-didit-signature') ||
-    req.headers.get('x-hub-signature-256') // some Didit versions use this header
+  const signatureV2 = req.headers.get('x-signature-v2')
+  const signature = signatureV2 || req.headers.get('x-signature') || req.headers.get('x-didit-signature')
+  // Sent alongside X-Signature-V2; the verifier rejects a delivery older than five minutes so a
+  // captured webhook cannot be replayed to re-approve an account later.
+  const timestamp = req.headers.get('x-timestamp')
 
   if (!process.env.DIDIT_WEBHOOK_SECRET) {
     // Fail closed. A missing webhook secret previously turned this endpoint into an
@@ -71,7 +78,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Webhook is not configured.' }, { status: 503 })
   }
 
-  const isValid = await verifyWebhookSignature(rawBody, signature)
+  const isValid = verifyWebhookSignature(rawBody, signature, {
+    timestamp,
+    // A V2 delivery is signed over canonical JSON and always carries a timestamp. Insist on one
+    // so dropping the header cannot be used to bypass the replay window.
+    requireTimestamp: Boolean(signatureV2),
+  })
   if (!isValid) {
     console.warn('[KYC webhook] Invalid signature — rejecting request.')
     return NextResponse.json({ error: 'Invalid webhook signature.' }, { status: 401 })
@@ -104,21 +116,29 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ received: true, warning: 'Missing session_id.' })
   }
 
-  // A signed payload proves Didit sent it; it does not prove the session belongs to this uid.
-  // Re-read the session server-side and use its authoritative status and vendor_data.
-  let live
+  // A signed payload proves Didit sent it, and its vendor_data is Didit's own statement of who
+  // the session belongs to — so it is authoritative on its own. The session read is kept as
+  // defence in depth (a leaked webhook secret should not be enough to verify an arbitrary
+  // account), but it is *not* allowed to fail the delivery: Didit times out at five seconds and
+  // only retries twice, so a slow status call used to strand real approvals. When the read
+  // fails, the signed payload is used, with the degradation logged.
+  let live: Awaited<ReturnType<typeof getKycSessionStatus>> | null = null
   try {
-    live = await getKycSessionStatus(sessionId)
+    live = await getKycSessionStatus(sessionId, { timeoutMs: 2_500 })
   } catch (err) {
-    console.error('[KYC webhook] Could not verify session ownership:', err instanceof Error ? err.message : err)
-    return NextResponse.json({ error: 'Could not verify the identity session.' }, { status: 502 })
+    console.warn(
+      '[KYC webhook] Session read unavailable, continuing on the signed payload:',
+      err instanceof Error ? err.message : err,
+    )
   }
-  if (!live.vendor_data || live.vendor_data !== userId) {
+  if (live && live.vendor_data && live.vendor_data !== userId) {
     console.warn(`[KYC webhook] Session ${sessionId} does not belong to uid=${userId}; refusing.`)
     return NextResponse.json({ error: 'Session does not belong to this account.' }, { status: 403 })
   }
-  status = live.status
-  rawStatus = live.raw_status || rawStatus
+  if (live) {
+    status = live.status
+    rawStatus = live.raw_status || rawStatus
+  }
 
   console.log(
     `[KYC webhook] uid=${userId} session=${sessionId} ` +
@@ -126,8 +146,11 @@ export async function POST(req: NextRequest) {
   )
 
   // ── Extract optional detail fields ────────────────────────────────────────
-  const rejectionReason = extractRejectionReason(payload)
-  const failedChecks = extractFailedChecks(payload)
+  // v3 puts every per-feature result in a plural array (id_verifications[], liveness_checks[], …)
+  // either at the root of a decision GET or under `decision` in the envelope, so one parser reads
+  // both. Without this a declined worker was told "try again" with no reason at all.
+  const rejectionReason = live?.rejection_reason ?? extractRejectionReason(payload)
+  const failedChecks = live?.failed_checks ?? extractFailedChecks(payload)
   const verificationLevel = (payload.verification_level ?? 'Identity') as string
 
   // ── Persist to kyc_records (always, for every status) ─────────────────────
@@ -254,35 +277,4 @@ export async function POST(req: NextRequest) {
 
   // Always return 200 so Didit does not retry unnecessarily
   return NextResponse.json({ received: true })
-}
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function extractRejectionReason(payload: Record<string, unknown>): string | undefined {
-  const candidates = [
-    payload.rejection_reason,
-    payload.decline_reason,
-    payload.resubmission_reason,
-    payload.reason,
-    (payload.decision as Record<string, unknown> | undefined)?.reason,
-  ]
-  for (const c of candidates) {
-    if (typeof c === 'string' && c.trim()) return c.trim()
-  }
-  return undefined
-}
-
-function extractFailedChecks(payload: Record<string, unknown>): string[] | undefined {
-  const checks = payload.verification_checks as Record<string, unknown> | undefined
-  if (!checks) return undefined
-
-  const failed: string[] = []
-  for (const [key, value] of Object.entries(checks)) {
-    const check = value as Record<string, unknown> | undefined
-    const passed = check?.passed ?? check?.status
-    if (passed === false || passed === 'failed' || passed === 'declined') {
-      failed.push(key)
-    }
-  }
-  return failed.length > 0 ? failed : undefined
 }

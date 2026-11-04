@@ -40,6 +40,13 @@ type StatusApiResponse = {
   status?: string
 }
 
+type KycFailure = {
+  /** Didit's own reason for the verdict, when it gives one. */
+  reason: string | null
+  /** The checks that did not pass, as "Label: status — reason". */
+  checks: string[]
+}
+
 type KycQrModalProps = {
   isOpen: boolean
   onClose: () => void
@@ -48,8 +55,8 @@ type KycQrModalProps = {
   userId: string | undefined
   /** Called when Didit confirms the user is approved. */
   onVerified: () => void
-  /** Called when any non-approved terminal outcome is reached. */
-  onFailed?: () => void
+  /** Called when any non-approved terminal outcome is reached, with whatever Didit explained. */
+  onFailed?: (failure?: KycFailure) => void
 }
 
 /** Maximum poll attempts before giving up (6 minutes at 4-second intervals). */
@@ -66,6 +73,7 @@ export function KycQrModal({
 }: KycQrModalProps) {
   const [modalStatus, setModalStatus] = useState<ModalStatus>('verifying')
   const [phoneConnected, setPhoneConnected] = useState(false)
+  const [failure, setFailure] = useState<KycFailure | null>(null)
   const pollCountRef = useRef(0)
 
   // ── Polling loop ─────────────────────────────────────────────────────────────
@@ -120,8 +128,16 @@ export function KycQrModal({
 
         if (isFailed) {
           clearInterval(interval)
+          // Didit explains a decline in `decision.*[]`; the route normalises that into these two
+          // fields. Carrying them into the modal is the difference between "try again" and
+          // "your document expired on 3 March".
+          const detail: KycFailure = {
+            reason: data.rejectionReason ?? null,
+            checks: Array.isArray(data.failedChecks) ? data.failedChecks : [],
+          }
+          setFailure(detail)
           setModalStatus('failed')
-          onFailed?.()
+          onFailed?.(detail)
           return
         }
 
@@ -145,6 +161,7 @@ export function KycQrModal({
     if (isOpen) {
       setModalStatus('verifying')
       setPhoneConnected(false)
+      setFailure(null)
       pollCountRef.current = 0
     }
   }, [isOpen])
@@ -194,11 +211,24 @@ export function KycQrModal({
                 We were unable to verify your identity. Please try again — make
                 sure your document is clear, unexpired, and well-lit.
               </p>
+              {failure?.reason ? (
+                <p className="mt-2 text-xs font-medium text-destructive">{failure.reason}</p>
+              ) : null}
+              {failure && failure.checks.length > 0 ? (
+                <ul className="mt-2 space-y-1 text-left text-xs text-muted-foreground">
+                  {failure.checks.map((check) => (
+                    <li key={check} className="flex items-start gap-1.5">
+                      <span className="mt-1 size-1 shrink-0 rounded-full bg-destructive/70" aria-hidden />
+                      <span>{check}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
             </div>
             <Button
               onClick={() => {
                 onClose()
-                onFailed?.()
+                onFailed?.(failure ?? undefined)
               }}
               className="w-full gap-2"
             >

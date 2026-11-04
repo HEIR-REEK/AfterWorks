@@ -100,7 +100,6 @@ export async function GET(req: NextRequest) {
 
     // ── Self-healing: Sync Didit status to Profile if Webhook was missed ──
     const nowIso = new Date().toISOString()
-    let awaitingWebhook = false
 
     if (didit.is_approved && !firestoreVerified) {
       console.log(`[KYC status] Auto-syncing Approved state for uid=${userId} (webhook missed or delayed)`)
@@ -144,10 +143,8 @@ export async function GET(req: NextRequest) {
         kycStatus: didit.raw_status,
         kycOnHoldAt: nowIso,
       })
-    } else if (didit.status === 'Pending' || didit.status === 'InProgress') {
-      // If we are still processing, we wait.
-      awaitingWebhook = didit.is_approved && !firestoreVerified
     }
+    // Pending / InProgress need no profile write: the client keeps its spinner and polls again.
 
     // Re-evaluate what we just synced so the client gets accurate boolean flags
     const finalIsApproved = didit.is_approved || firestoreVerified
@@ -179,9 +176,6 @@ export async function GET(req: NextRequest) {
       diditAbandoned: didit.is_abandoned,
       diditOnHold: didit.is_on_hold,
       diditNeedsResubmission: didit.needs_resubmission,
-
-      // Useful for "still processing" spinner
-      awaitingWebhook,
 
       // Human-readable details for the client to display
       rejectionReason: didit.rejection_reason ?? null,

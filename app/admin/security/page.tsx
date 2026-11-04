@@ -223,8 +223,9 @@ function AdminSecurityPageInner() {
           <p className="rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">{kycError}</p>
         ) : !kyc ? (
           <p className="text-xs text-muted-foreground">
-            Reads the provider’s workflow list — the cheapest call that proves the API host, key and workflow together,
-            without spending a verification credit or creating a session.
+            Reads the provider’s workflow list, then opens one probe session — the same call a member’s “Verify” makes —
+            under a fixed test identity Didit reuses, so repeated tests do not stack up sessions. Key scope, credits and
+            callback-domain faults only appear here.
           </p>
         ) : (
           <div className="flex flex-col gap-3">
@@ -252,6 +253,21 @@ function AdminSecurityPageInner() {
                 mono
                 tone={kyc.probe.status && kyc.probe.status < 300 ? 'ok' : 'fail'}
               />
+              {/* The call a member's "Verify" actually makes. A green workflow read with a red row
+                  here is the signature of a key without write scope, exhausted credits, or a
+                  callback origin that is not on the application's allowed domains. */}
+              <Row
+                label="Session creation"
+                value={
+                  !kyc.sessionProbe
+                    ? 'Not tested — the workflow read failed first'
+                    : kyc.sessionProbe.ok
+                      ? `HTTP ${kyc.sessionProbe.status ?? 201} — session opened`
+                      : `HTTP ${kyc.sessionProbe.status ?? 'error'} — refused`
+                }
+                mono
+                tone={kyc.sessionProbe?.ok ? 'ok' : kyc.sessionProbe ? 'fail' : 'warn'}
+              />
               <Row
                 label="Callback URL"
                 value={kyc.callback?.origin ?? 'unknown'}
@@ -272,6 +288,11 @@ function AdminSecurityPageInner() {
             <p className={cn('text-xs leading-relaxed', kyc.healthy ? 'text-muted-foreground' : 'text-destructive')}>
               {kyc.probe.detail}
             </p>
+            {kyc.sessionProbe ? (
+              <p className={cn('text-xs leading-relaxed', kyc.sessionProbe.ok ? 'text-muted-foreground' : 'text-destructive')}>
+                {kyc.sessionProbe.detail}
+              </p>
+            ) : null}
             {kyc.hint || kyc.probe.hint ? (
               <p className="rounded-xl border border-border/70 bg-background/60 px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
                 <span className="font-semibold text-foreground">Fix: </span>

@@ -463,6 +463,18 @@ export const adminApi = {
         workflowFound: boolean
         hint: string | null
       }
+      /**
+       * The member-facing call (POST /v3/session/) run once under a fixed probe identity Didit
+       * reuses. Null when the workflow read already failed, so no session attempt was made.
+       * This is where credits, key scope and callback-domain refusals become visible.
+       */
+      sessionProbe: {
+        ok: boolean
+        status: number | null
+        detail: string
+        sessionId: string | null
+        hint: string | null
+      } | null
       /** Where Didit sends the member after the flow — and whether their browser can reach it. */
       callback: {
         url: string
@@ -471,7 +483,7 @@ export const adminApi = {
         isPublicHttps: boolean
       }
       hint: string | null
-    }>('/api/admin/kyc/diagnose', { timeoutMs: 20_000 }),
+    }>('/api/admin/kyc/diagnose', { timeoutMs: 30_000 }),
   /** Staff desk (owner only): list console accounts, add staff with an owner-chosen password, reset, disable, remove. */
   staff: () => apiFetch<{ ok: boolean; owners: string[]; staff: AdminStaffAccountRow[]; degraded?: string }>('/api/admin/staff'),
   staffAdd: (body: { email: string; passcode: string }) =>

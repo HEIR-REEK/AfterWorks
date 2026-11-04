@@ -311,6 +311,113 @@ export async function probeDidit(): Promise<{
   }
 }
 
+// ─── Session probe (console connection test) ────────────────────────────────
+
+/**
+ * The fixed identity the console's connection test opens its probe session under.
+ *
+ * Didit allows only one non-finished session per (workflow_id, vendor_data) and returns the
+ * existing one instead of opening a duplicate, so every "Test connection" click after the first
+ * reuses this session: the test proves the member-facing call works without stacking up sessions
+ * or spending a verification credit per click.
+ */
+export const DIDIT_PROBE_VENDOR_DATA = 'afterworks-console-connection-test'
+
+/**
+ * Live read-through of the *member-facing* call: `POST /v3/session/`.
+ *
+ * `GET /v3/workflows/` proves the host, the key and the workflow — and nothing else. A key without
+ * write:sessions, an application out of credits, a callback origin that is not on the application's
+ * allowed domains and a blocklisted identity all pass the workflow read and still refuse the
+ * session a member needs. That is the exact shape of the failure where the console reports "Ready
+ * to verify" while every member is told verification could not be started, so the console now
+ * makes the same request the member's "Verify" button makes.
+ *
+ * The provider's answer (status + detail) is for the operator's console and the server log only —
+ * it never reaches the browser.
+ */
+export async function probeDiditSession(origin?: string): Promise<{
+  ok: boolean
+  status: number | null
+  detail: string
+  sessionId: string | null
+  hint: string | null
+}> {
+  const config = diditConfig()
+  if (!config.hasApiKey || !config.hasWorkflowId || config.usesRegistrationHost) {
+    return {
+      ok: false,
+      status: null,
+      detail: 'No session was opened: the API key, workflow id or host is not usable.',
+      sessionId: null,
+      hint: diditConfigHint(),
+    }
+  }
+
+  try {
+    // Same endpoint, headers and body shape the member flow uses — a probe that called anything
+    // else could pass while members still fail.
+    const session = await createKycSession(DIDIT_PROBE_VENDOR_DATA, true, origin)
+    return {
+      ok: true,
+      status: 201,
+      detail: `Didit opened session ${session.session_id} — the call a member's "Verify" makes succeeds on this deployment.`,
+      sessionId: session.session_id,
+      hint: null,
+    }
+  } catch (err) {
+    if (err instanceof DiditConfigError) {
+      return { ok: false, status: null, detail: err.message, sessionId: null, hint: diditConfigHint() }
+    }
+    if (err instanceof DiditApiError) {
+      return {
+        ok: false,
+        status: err.status,
+        detail: `Didit refused to open a session (${err.status}): ${err.detail.slice(0, 300)}`,
+        sessionId: null,
+        hint: sessionProbeHint(err.status, err.detail),
+      }
+    }
+    return {
+      ok: false,
+      status: null,
+      detail: `Could not open a session: ${err instanceof Error ? err.message : 'unknown error'}`,
+      sessionId: null,
+      hint: "Check the deployment's outbound network access to verification.didit.me, then retry.",
+    }
+  }
+}
+
+/** The one-line operator fix for each way session creation can fail while the workflow read passes. */
+function sessionProbeHint(status: number, detail: string): string {
+  const body = detail.toLowerCase()
+  if (status === 403) {
+    return 'The key is accepted for reads but lacks write:sessions. Create a key with session-write permission in the Didit console (Settings → API & Webhooks) and set DIDIT_API_KEY to it.'
+  }
+  if (status === 401) {
+    return 'Didit refused the key for session creation. Confirm DIDIT_API_KEY belongs to this application.'
+  }
+  if (body.includes('credit')) {
+    return 'The application is out of verification credits: the workflow list is free, but opening a session is not. Top up in the Didit console (Billing), then test again.'
+  }
+  if (body.includes('allowed domain')) {
+    return 'Didit refuses the callback origin: it must be one of the application’s allowed domains (PATCH /v3/webhook/). Add the deployed origin there — or set NEXT_PUBLIC_APP_URL to an origin that is already allowed.'
+  }
+  if (body.includes('blocked')) {
+    return 'Didit has an identity blocklisted on this application, so no session can be opened for it. Remove the block, or the members it covers cannot verify.'
+  }
+  if (body.includes('portrait')) {
+    return 'The workflow expects a reference face (portrait_image) or a stored face for this identity. Send one when creating the session, or move Face Match after ID Verification in the workflow.'
+  }
+  if (status === 429) {
+    return 'Didit rate-limited the call (600 successful calls per minute). Wait a minute and test again.'
+  }
+  if (status >= 500) {
+    return 'The provider failed while opening a session. Check the Didit status page, then retry — the passing workflow read means the host and key are fine.'
+  }
+  return 'Didit refused to open a session. The full provider answer is in this deployment’s server log for the KYC diagnostic run.'
+}
+
 // ─── Callback URL ────────────────────────────────────────────────────────────
 
 /**

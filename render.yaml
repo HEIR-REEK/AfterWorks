@@ -118,8 +118,11 @@ services:
         value: "24"
 
       # ── Identity verification ──────────────────────────────────────────────
+      # /v3/* (session creation, decision, status) lives on verification.didit.me. apx.didit.me
+      # serves registration only — a base URL copied from there 404s every session creation, so
+      # members are told verification could not be started while the workflow read still works.
       - key: DIDIT_API_URL
-        value: "https://apx.didit.me"
+        value: "https://verification.didit.me"
       - key: DIDIT_API_KEY
         sync: false
       - key: DIDIT_WORKFLOW_ID

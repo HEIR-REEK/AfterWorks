@@ -306,3 +306,96 @@ test('a member is told the truth when the deployment is not configured', () => {
   assert.match(health, /function identityCheck/)
   assert.match(health, /apx\\\.didit\\\.me/i)
 })
+
+test('the console connection test opens the same session a member opens', async () => {
+  const { probeDiditSession, DIDIT_PROBE_VENDOR_DATA } = await didit()
+  const originalFetch = globalThis.fetch
+  const calls: { url: string; body: string }[] = []
+
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    calls.push({ url: String(input), body: String(init?.body ?? '') })
+    return new Response(JSON.stringify({ session_id: 'ses_probe', url: 'https://verify.didit.me/en/session/tok' }), {
+      status: 201,
+      headers: { 'content-type': 'application/json' },
+    })
+  }) as typeof fetch
+
+  try {
+    const result = await probeDiditSession('https://afterworks.site')
+    assert.equal(result.ok, true)
+    assert.equal(result.sessionId, 'ses_probe')
+    assert.ok(
+      calls[0]!.url.endsWith('/v3/session/'),
+      'the probe must call the member-facing endpoint, not the workflow list',
+    )
+    const body = JSON.parse(calls[0]!.body)
+    assert.equal(body.vendor_data, DIDIT_PROBE_VENDOR_DATA, 'a fixed probe identity lets Didit reuse the session')
+    assert.equal(body.workflow_id, 'wf_123')
+    assert.match(body.callback, /^https:\/\/afterworks\.site\/kyc\/callback/)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('a session refusal the workflow read cannot see is reported with its cause', async () => {
+  const { probeDiditSession } = await didit()
+  const originalFetch = globalThis.fetch
+
+  // Every one of these passes GET /v3/workflows/ (200 + workflow found) and refuses POST
+  // /v3/session/ — the failure shape where the console says "Ready to verify" and every member
+  // is told verification could not be started.
+  const cases: { status: number; body: unknown; expect: RegExp }[] = [
+    {
+      status: 403,
+      body: { detail: 'You do not have permission to perform this action.' },
+      expect: /write:sessions/,
+    },
+    {
+      status: 400,
+      body: { detail: "You don't have enough credits to perform this request. Please top up at https://business.didit.me" },
+      expect: /credit/i,
+    },
+    {
+      status: 400,
+      body: { callback: ["callback must be on one of the application's allowed domains: https://app.example.com"] },
+      expect: /allowed domains/i,
+    },
+    {
+      status: 429,
+      body: { detail: 'Request was throttled.' },
+      expect: /rate-limited/i,
+    },
+  ]
+
+  try {
+    for (const testCase of cases) {
+      globalThis.fetch = (async () =>
+        new Response(JSON.stringify(testCase.body), { status: testCase.status })) as typeof fetch
+      const result = await probeDiditSession('https://afterworks.site')
+      assert.equal(result.ok, false)
+      assert.equal(result.status, testCase.status)
+      assert.match(result.hint ?? '', testCase.expect)
+    }
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('the diagnose route runs the session probe and folds it into the verdict', () => {
+  const diagnose = read('app/api/admin/kyc/diagnose/route.ts')
+  assert.match(diagnose, /probeDiditSession/, 'the workflow read alone cannot see a session-creation failure')
+  assert.match(diagnose, /sessionProbe\?\.ok === true/, 'a green workflow read alone must not read as "Ready to verify"')
+
+  const security = read('app/admin/security/page.tsx')
+  assert.match(security, /kyc\.sessionProbe/, 'the operator must see the session-creation answer, not just the workflow read')
+})
+
+test('the deployment blueprint points the API at the verification host', () => {
+  const render = read('render.yaml')
+  assert.doesNotMatch(
+    render,
+    /DIDIT_API_URL[\s\S]{0,120}?apx\.didit\.me/,
+    'apx serves registration only — every /v3/session/ call 404s there while the workflow read still looks fine',
+  )
+  assert.match(render, /DIDIT_API_URL[\s\S]{0,120}?verification\.didit\.me/)
+})

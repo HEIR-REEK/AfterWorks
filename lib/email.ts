@@ -599,6 +599,268 @@ export function applicationReceiptEmailHtml(copy: ApplicationReceiptEmailCopy): 
 </html>`
 }
 
+// ─── Identity verification (manual review) ──────────────────────────────────
+
+/**
+ * The two emails that make the manual identity review legible to a member.
+ *
+ * A review has no provider webhook and no redirect, so the only moments a member learns anything
+ * are the ones we tell them. These two are the whole of it: "we have your request, it is with our
+ * team" and "your account is verified". Both are deliberately explicit that a person is doing the
+ * reviewing, because the alternative is a member waiting on a status that looks broken.
+ */
+
+export type KycRequestReceivedCopy = {
+  name: string
+  email: string
+  /** When the request was recorded, shown so a member can see it landed. */
+  requestedAt: string
+}
+
+export function kycRequestReceivedEmailSubject(): string {
+  return 'We have your identity verification request'
+}
+
+export function kycRequestReceivedEmailText(copy: KycRequestReceivedCopy): string {
+  const first = firstName(copy.name, copy.email)
+  const when = formatEmailTimestamp(copy.requestedAt)
+  return [
+    `Hi ${first},`,
+    '',
+    'We have your identity verification request, and it is with the AfterWorks team.',
+    when ? `Requested: ${when}` : '',
+    '',
+    'What happens next:',
+    '  1. A member of our team reviews your profile.',
+    `  2. You will hear back within ${KYC_REVIEW_SLA_HOURS} hours.`,
+    '  3. You can follow the status from your profile.',
+    '',
+    'What approval unlocks:',
+    '  - Paid job cards and assessments',
+    '  - Withdrawals from your wallet',
+    '  - Referral payouts',
+    '',
+    `Follow your status: ${site.url}/profile`,
+    '',
+    'You do not need to do anything else right now. We will email you again as soon as a decision is made.',
+    '',
+    `Questions? Reply to this email or write to ${site.supportEmail}.`,
+    '',
+    `— ${site.name}`,
+  ]
+    .filter((line) => line !== '')
+    .join('\n')
+}
+
+export function kycRequestReceivedEmailHtml(copy: KycRequestReceivedCopy): string {
+  const first = escapeHtml(firstName(copy.name, copy.email))
+  const when = escapeHtml(formatEmailTimestamp(copy.requestedAt))
+  const profileUrl = escapeHtml(`${site.url}/profile`)
+  const support = escapeHtml(site.supportEmail)
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Verification request received</title>
+</head>
+<body style="margin:0;padding:0;background:#F4F6FB;font-family:Inter,Segoe UI,Helvetica,Arial,sans-serif;color:#1A1F36;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F4F6FB;padding:32px 12px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;">
+          <tr>
+            <td align="center" style="padding:8px 8px 20px;">
+              ${EMAIL_BRAND_LOGO_HTML}
+            </td>
+          </tr>
+          <tr>
+            <td style="background:#ffffff;border:1px solid #E4E7F1;border-radius:16px;padding:36px 32px;">
+              <p style="margin:0 0 8px;font-size:13px;font-weight:600;color:#2F5FE0;">Identity verification</p>
+              <h1 style="margin:0 0 16px;font-size:24px;line-height:1.3;font-weight:700;color:#1A1F36;">Your request is with our team</h1>
+              <p style="margin:0 0 20px;font-size:15px;line-height:1.6;color:#3C4257;">
+                Hi ${first}, we have your identity verification request${when ? `, received ${when}` : ''}. A member of the AfterWorks team is reviewing it.
+              </p>
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 24px;background:#F7F9FF;border:1px solid #DCE4FA;border-radius:12px;">
+                <tr>
+                  <td style="padding:16px 18px;">
+                    <p style="margin:0 0 4px;font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#2F5FE0;">What happens next</p>
+                    <ol style="margin:8px 0 0;padding-left:18px;font-size:14px;line-height:1.7;color:#3C4257;">
+                      <li>Our team reviews your profile.</li>
+                      <li>You hear back within <strong>${KYC_REVIEW_SLA_HOURS} hours</strong>.</li>
+                      <li>You can follow the status from your profile.</li>
+                    </ol>
+                  </td>
+                </tr>
+              </table>
+              <p style="margin:0 0 10px;font-size:15px;line-height:1.6;color:#3C4257;font-weight:600;">Once it is approved, you can</p>
+              <ul style="margin:0 0 24px;padding-left:20px;font-size:14px;line-height:1.7;color:#3C4257;">
+                <li>Take paid job cards and their assessments</li>
+                <li>Withdraw from your wallet</li>
+                <li>Earn from referrals</li>
+              </ul>
+              <table role="presentation" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td style="border-radius:10px;background:#2F5FE0;">
+                    <a href="${profileUrl}" style="display:inline-block;padding:14px 22px;font-size:15px;font-weight:600;color:#ffffff;text-decoration:none;">
+                      Follow your status
+                    </a>
+                  </td>
+                </tr>
+              </table>
+              <p style="margin:20px 0 0;font-size:13px;line-height:1.6;color:#667085;">
+                There is nothing else you need to do right now. We will email you again the moment a decision is made.
+              </p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:20px 8px 0;font-size:12px;line-height:1.55;color:#667085;">
+              Questions? Reply to this email or write to ${support}.
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`
+}
+
+export type KycApprovedCopy = {
+  name: string
+  email: string
+  /** When the approval was recorded. */
+  verifiedAt: string
+}
+
+export function kycApprovedEmailSubject(): string {
+  return 'Your identity is verified'
+}
+
+export function kycApprovedEmailText(copy: KycApprovedCopy): string {
+  const first = firstName(copy.name, copy.email)
+  const when = formatEmailTimestamp(copy.verifiedAt)
+  return [
+    `Hi ${first},`,
+    '',
+    'Your AfterWorks identity verification is complete. Your account is now verified.',
+    when ? `Approved: ${when}` : '',
+    '',
+    'What that unlocks:',
+    '  - Paid job cards and their assessments',
+    '  - Withdrawals from your wallet',
+    '  - Referral payouts',
+    '',
+    `Find paid work: ${site.url}/jobs`,
+    `Check your wallet: ${site.url}/wallet`,
+    '',
+    'Thank you for completing this step.',
+    '',
+    `Questions? Reply to this email or write to ${site.supportEmail}.`,
+    '',
+    `— ${site.name}`,
+  ]
+    .filter((line) => line !== '')
+    .join('\n')
+}
+
+export function kycApprovedEmailHtml(copy: KycApprovedCopy): string {
+  const first = escapeHtml(firstName(copy.name, copy.email))
+  const when = escapeHtml(formatEmailTimestamp(copy.verifiedAt))
+  const jobsUrl = escapeHtml(`${site.url}/jobs`)
+  const walletUrl = escapeHtml(`${site.url}/wallet`)
+  const support = escapeHtml(site.supportEmail)
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Identity verified</title>
+</head>
+<body style="margin:0;padding:0;background:#F4F6FB;font-family:Inter,Segoe UI,Helvetica,Arial,sans-serif;color:#1A1F36;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F4F6FB;padding:32px 12px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;">
+          <tr>
+            <td align="center" style="padding:8px 8px 20px;">
+              ${EMAIL_BRAND_LOGO_HTML}
+            </td>
+          </tr>
+          <tr>
+            <td style="background:#ffffff;border:1px solid #E4E7F1;border-radius:16px;padding:36px 32px;">
+              <p style="margin:0 0 8px;font-size:13px;font-weight:600;color:#1F9D55;">Identity verification</p>
+              <h1 style="margin:0 0 16px;font-size:24px;line-height:1.3;font-weight:700;color:#1A1F36;">Your account is verified</h1>
+              <p style="margin:0 0 20px;font-size:15px;line-height:1.6;color:#3C4257;">
+                Hi ${first}, your identity verification is complete${when ? ` as of ${when}` : ''}. Your account is now verified, and everything that needed it is open to you.
+              </p>
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 24px;background:#F2FBF6;border:1px solid #C7EBD5;border-radius:12px;">
+                <tr>
+                  <td style="padding:16px 18px;">
+                    <p style="margin:0 0 4px;font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#1F9D55;">Now unlocked</p>
+                    <ul style="margin:8px 0 0;padding-left:18px;font-size:14px;line-height:1.7;color:#3C4257;">
+                      <li>Paid job cards and their assessments</li>
+                      <li>Withdrawals from your wallet</li>
+                      <li>Referral payouts</li>
+                    </ul>
+                  </td>
+                </tr>
+              </table>
+              <table role="presentation" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td style="border-radius:10px;background:#2F5FE0;">
+                    <a href="${jobsUrl}" style="display:inline-block;padding:14px 22px;font-size:15px;font-weight:600;color:#ffffff;text-decoration:none;">
+                      Find paid work
+                    </a>
+                  </td>
+                  <td style="width:10px;">&nbsp;</td>
+                  <td style="border-radius:10px;background:#ffffff;border:1px solid #D6DAE6;">
+                    <a href="${walletUrl}" style="display:inline-block;padding:14px 22px;font-size:15px;font-weight:600;color:#2F5FE0;text-decoration:none;">
+                      Check your wallet
+                    </a>
+                  </td>
+                </tr>
+              </table>
+              <p style="margin:20px 0 0;font-size:13px;line-height:1.6;color:#667085;">
+                You only need to do this once — it now applies everywhere on AfterWorks.
+              </p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:20px 8px 0;font-size:12px;line-height:1.55;color:#667085;">
+              Questions? Reply to this email or write to ${support}.
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`
+}
+
+/**
+ * How long a member is told to wait for a review. The console shows the same figure, and it is a
+ * promise we make in an email, so it lives in one place rather than in each template.
+ */
+const KYC_REVIEW_SLA_HOURS = 24
+
+/** "4 November 2026, 14:32" — or empty when the timestamp is unusable. */
+function formatEmailTimestamp(iso: string): string {
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return ''
+  return date.toLocaleString('en-GB', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: 'UTC',
+  })
+}
+
 function firstName(name: string, email: string): string {
   const trimmed = name.trim()
   if (trimmed) return trimmed.split(/\s+/)[0]!.slice(0, 40)

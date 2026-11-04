@@ -6,6 +6,12 @@ import {
   applicationReceiptEmailHtml,
   applicationReceiptEmailSubject,
   applicationReceiptEmailText,
+  kycApprovedEmailHtml,
+  kycApprovedEmailSubject,
+  kycApprovedEmailText,
+  kycRequestReceivedEmailHtml,
+  kycRequestReceivedEmailSubject,
+  kycRequestReceivedEmailText,
   passwordResetEmailHtml,
   passwordResetEmailSubject,
   passwordResetEmailText,
@@ -17,6 +23,8 @@ import {
 const reset = { name: 'Amina', email: 'member@example.com', code: '004 213', expiresMinutes: 15 }
 const verification = { name: 'Amina', email: 'member@example.com', verifyUrl: 'https://afterworks.site/verify-email?token=test-only', expiresHours: 24 }
 const receipt = { name: 'Amina', email: 'member@example.com', jobTitle: 'Transcription — Swahili', applicationId: 'app-test-abc' }
+const kycRequested = { name: 'Amina', email: 'member@example.com', requestedAt: '2026-11-04T09:15:00.000Z' }
+const kycVerified = { name: 'Amina', email: 'member@example.com', verifiedAt: '2026-11-04T11:40:00.000Z' }
 
 function mockEmailConfig(t: TestContext) {
   const values = { RESEND_API_KEY: 're_test_key_for_mock_transport', EMAIL_FROM: 'AfterWorks <noreply@afterworks.example>' }
@@ -36,7 +44,13 @@ test('account and application emails use the actual PNG logo as an inline image,
   assert.equal(logo.readUInt32BE(16), 400)
   assert.equal(logo.readUInt32BE(20), 240)
 
-  for (const html of [passwordResetEmailHtml(reset), verificationEmailHtml(verification), applicationReceiptEmailHtml(receipt)]) {
+  for (const html of [
+    passwordResetEmailHtml(reset),
+    verificationEmailHtml(verification),
+    applicationReceiptEmailHtml(receipt),
+    kycRequestReceivedEmailHtml(kycRequested),
+    kycApprovedEmailHtml(kycVerified),
+  ]) {
     assert.ok(html.includes(EMAIL_BRAND_LOGO_HTML))
     assert.match(html, /alt="AfterWorks"/)
     assert.doesNotMatch(html, /<img[^>]+src="(?:https?:|\/|data:)/)
@@ -66,6 +80,37 @@ test('the reset code, verification link and application details remain accessibl
   assert.match(passwordResetEmailHtml({ ...reset, name: '<script>' }), /&lt;script&gt;/)
   assert.doesNotMatch(applicationReceiptEmailHtml({ ...receipt, jobTitle: '<script>alert(1)</script>' }), /<script>/)
   assert.match(applicationReceiptEmailHtml({ ...receipt, jobTitle: '<script>alert(1)</script>' }), /&lt;script&gt;/)
+})
+
+test('the verification request and approval emails carry what a member needs to know', () => {
+  // A manual review has no webhook and no redirect, so these two emails are the only moments the
+  // member learns anything. Both must say a person is doing it, and both must say what unlocks.
+  assert.equal(kycRequestReceivedEmailSubject(), 'We have your identity verification request')
+  assert.equal(kycApprovedEmailSubject(), 'Your identity is verified')
+
+  const requestText = kycRequestReceivedEmailText(kycRequested)
+  assert.match(requestText, /with the AfterWorks team/, 'the request must be confirmed as received')
+  assert.match(requestText, /24 hours/, 'and the member must be told how long to wait')
+  assert.match(requestText, /\/profile/, 'with somewhere to check')
+  assert.ok(kycRequestReceivedEmailHtml(kycRequested).includes('Amina'))
+
+  const approvedText = kycApprovedEmailText(kycVerified)
+  assert.match(approvedText, /account is now verified/, 'the outcome must be unambiguous')
+  assert.match(approvedText, /\/jobs/, 'and say what it opens')
+  assert.match(approvedText, /\/wallet/)
+  assert.ok(kycApprovedEmailHtml(kycVerified).includes('Amina'))
+
+  // Neither may promise the provider that no longer exists.
+  for (const body of [requestText, approvedText, kycRequestReceivedEmailHtml(kycRequested), kycApprovedEmailHtml(kycVerified)]) {
+    assert.doesNotMatch(body, /provider/i, 'no email may name a verification provider')
+    assert.doesNotMatch(body, /liveness/i, 'and none may promise a liveness check')
+  }
+
+  // Injection is escaped in HTML, and a bad timestamp must not render "Invalid Date".
+  assert.doesNotMatch(kycApprovedEmailHtml({ ...kycVerified, name: '<script>' }), /<script>/)
+  assert.match(kycApprovedEmailHtml({ ...kycVerified, name: '<script>' }), /&lt;script&gt;/)
+  assert.doesNotMatch(kycRequestReceivedEmailText({ ...kycRequested, requestedAt: 'not-a-date' }), /Invalid Date/)
+  assert.doesNotMatch(kycRequestReceivedEmailHtml({ ...kycRequested, requestedAt: 'not-a-date' }), /Invalid Date/)
 })
 
 test('Resend receives the inline attachment with the REST content_id field for account and application templates', async (t) => {

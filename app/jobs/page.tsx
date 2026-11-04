@@ -4,8 +4,9 @@ import { Suspense, useEffect, useMemo, useState } from 'react'
 import { useAfterWorks } from '@/components/afterworks-provider'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
-import { AlertCircle, ChevronRight, ExternalLink, GraduationCap, RefreshCw, Search } from 'lucide-react'
+import { AlertCircle, ChevronRight, GraduationCap, RefreshCw, Search } from 'lucide-react'
 import { JobCard } from '@/components/job-card'
+import { ExternalJobsSection } from '@/components/external-jobs-section'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import type { JobCategory } from '@/lib/afterworks-data'
@@ -96,15 +97,6 @@ function JobsPageInner() {
               Sample jobs
             </span>
           )}
-          <Button
-            render={<Link href="/work/external" target="_blank" rel="noreferrer" />}
-            variant="ghost"
-            size="sm"
-            className="h-8 gap-1.5 text-xs"
-          >
-            <ExternalLink className="size-3.5" />
-            External roles
-          </Button>
           <Button
             type="button"
             variant="outline"
@@ -208,6 +200,8 @@ function JobsPageInner() {
           ))}
         </div>
       )}
+
+      <ExternalJobsSection />
     </div>
   )
 }

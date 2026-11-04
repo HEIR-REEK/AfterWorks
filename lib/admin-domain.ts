@@ -196,6 +196,8 @@ export type AdminUserRowModel = {
   /** Labels of the required profile fields still empty when the request was held. */
   kycHoldMissing?: string[]
   role: string
+  /** True when the member's email is on the ADMIN_EMAILS roster — the main administrator, shown as Admin rather than Staff. */
+  isOwner?: boolean
   qualityScore: number
   jobsCompleted: number
   memberSince: string

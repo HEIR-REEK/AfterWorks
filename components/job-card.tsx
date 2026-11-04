@@ -72,12 +72,17 @@ export function JobCard({ job }: { job: Job }) {
         </span>
       </div>
 
-      {jobHasTraining(job) && (
+      {jobHasTraining(job) ? (
         <div className={`mt-3 inline-flex w-fit items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium relative z-10 pointer-events-none ${
           isPaid ? 'bg-success/15 text-success' : 'bg-primary/10 text-primary border border-primary/20'
         }`}>
           <GraduationCap className="size-3.5" />
           {isPaid ? 'Training Unlocked ✓' : `Payment Required — ${trainingFee}`}
+        </div>
+      ) : (
+        <div className="mt-3 inline-flex w-fit items-center gap-1.5 rounded-md border border-border bg-muted/50 px-2 py-1 text-xs font-medium text-muted-foreground relative z-10 pointer-events-none">
+          <CheckCircle2 className="size-3.5" />
+          Assessment only — no training fee
         </div>
       )}
 
@@ -105,7 +110,7 @@ export function JobCard({ job }: { job: Job }) {
           ) : (
             <Button render={<Link href={`/training/${job.id}`} />} variant="secondary" size="sm" className="w-full gap-2">
               <GraduationCap className="size-4" />
-              {jobHasTraining(job) ? 'Continue Training & Assessment' : 'Start Training & Assessment'}
+              {jobHasTraining(job) ? 'Continue Training & Assessment' : 'Start Assessment'}
             </Button>
           )}
         </div>

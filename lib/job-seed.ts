@@ -6,13 +6,13 @@
  * is the one place that copies the expansion into the live catalogue, used by both
  * `scripts/seed-jobs.ts` and the owner-only console action.
  *
- * It is deliberately narrow: only ids listed in `EXPANDED_CATALOGUE_JOB_IDS` are accepted, so a
+ * It is deliberately narrow: only ids listed in `IMPORTABLE_CATALOGUE_JOB_IDS` are accepted, so a
  * seed or a console import cannot rewrite older or hand-authored cards. Every write still goes
  * through `upsertJob()`, which sanitises the payload and records an audit entry.
  */
 
 import { jobHasTraining,
-  EXPANDED_CATALOGUE_JOB_IDS,
+  IMPORTABLE_CATALOGUE_JOB_IDS,
   seedJobs,
   type Job,
 } from '@/lib/afterworks-data'
@@ -67,7 +67,7 @@ export async function importStarterJobs(opts: {
   overwrite?: boolean
   actorEmail?: string
 } = {}): Promise<StarterImportResult> {
-  const allowed = new Set<string>(EXPANDED_CATALOGUE_JOB_IDS)
+  const allowed = new Set<string>(IMPORTABLE_CATALOGUE_JOB_IDS)
   const requested = (opts.ids && opts.ids.length > 0 ? opts.ids : [...allowed])
     .map((id) => id.trim())
     .filter(Boolean)

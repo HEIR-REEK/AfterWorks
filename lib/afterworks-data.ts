@@ -434,6 +434,33 @@ export const EXPANDED_CATALOGUE_JOB_IDS = [
   'job-grant-deadline-research',
 ] as const
 
+/**
+ * A second batch: cards with no training, and therefore no fee.
+ *
+ * A board made mostly of paid-training cards leaves a new member with nothing to start on until
+ * they can pay, and nothing at all if they cannot. These are assessment-only cards — a verified
+ * member goes straight to the assessment — so they are the cards that make the board usable before
+ * any money changes hands.
+ */
+export const ASSESSMENT_ONLY_CATALOGUE_JOB_IDS = [
+  'job-ai-description-check',
+  'job-recipe-policy-screen',
+  'job-drone-crop-tag',
+  'job-packaging-defect-label',
+  'job-radio-interview-transcription',
+  'job-focus-group-overlap',
+  'job-sacco-loan-register',
+  'job-pharmacy-contact-verify',
+  'job-county-health-translation',
+  'job-app-onboarding-sheng',
+] as const
+
+/** Every id either import path is allowed to publish. */
+export const IMPORTABLE_CATALOGUE_JOB_IDS = [
+  ...EXPANDED_CATALOGUE_JOB_IDS,
+  ...ASSESSMENT_ONLY_CATALOGUE_JOB_IDS,
+] as const
+
 export function seedJobs(): Job[] {
   return [
     // ── Transcription ────────────────────────────────────────────────────────
@@ -1467,6 +1494,230 @@ export function seedJobs(): Job[] {
       requiresVerified: true,
       status: 'open',
       closesAt: daysFromNow(9),
+      postedAgo: '1 day ago',
+    },
+    // ── Assessment-only additions ────────────────────────────────────────────
+    // Cards with no training, and therefore no fee: a verified member goes straight to the
+    // assessment. These exist because a board that is mostly paid-training cards gives a new
+    // member nothing to start on until they can pay.
+    {
+      id: 'job-ai-description-check',
+      title: 'Check AI-written product descriptions against source specs',
+      category: 'Content Review',
+      description:
+        'A retailer generates product descriptions with AI and needs a human to catch what the model invented. Compare each description against the supplied spec sheet and mark anything the source does not support.',
+      responsibilities: [
+        'Check 60 AI-written descriptions against their spec sheets',
+        'Flag claims the source does not support',
+        'Mark invented dimensions, materials or compatibility',
+        'Return a short correction for each flagged claim',
+      ],
+      payAmountUsd: 30,
+      estimatedMinutes: 220,
+      capacity: 80,
+      slotsRemaining: 63,
+      trainingRequired: false,
+      requiresVerified: true,
+      status: 'open',
+      closesAt: daysFromNow(6),
+      postedAgo: '3 hours ago',
+    },
+    {
+      id: 'job-recipe-policy-screen',
+      title: 'Screen submitted recipes for copied text and policy breaches',
+      category: 'Content Review',
+      description:
+        'Review user-submitted recipes before publication. You are checking three things: text copied from another site, unsafe food-handling advice, and ingredients or claims the policy forbids. Full policy and examples are supplied.',
+      responsibilities: [
+        'Screen 50 submitted recipes against the policy',
+        'Flag copied text with the source you matched it to',
+        'Flag unsafe handling advice and forbidden claims',
+        'Approve, flag or reject each submission with a reason',
+      ],
+      payAmountUsd: 26,
+      estimatedMinutes: 200,
+      capacity: 70,
+      slotsRemaining: 54,
+      trainingRequired: false,
+      requiresVerified: true,
+      status: 'open',
+      closesAt: daysFromNow(7),
+      postedAgo: '9 hours ago',
+    },
+    {
+      id: 'job-drone-crop-tag',
+      title: 'Tag crop types in drone field photos',
+      category: 'Image Labeling',
+      description:
+        'Tag the crop in each drone-captured field photo using the supplied eight-class guide. Fields are photographed from above, so expect partial occlusion and mixed boundaries between neighbouring plots.',
+      responsibilities: [
+        'Tag 120 drone field photos by crop type',
+        'Follow the eight-class guide exactly',
+        'Mark mixed-boundary photos rather than forcing one class',
+        'Skip and report blurred or unusable frames',
+      ],
+      payAmountUsd: 32,
+      estimatedMinutes: 200,
+      capacity: 90,
+      slotsRemaining: 71,
+      trainingRequired: false,
+      requiresVerified: true,
+      status: 'open',
+      closesAt: daysFromNow(5),
+      postedAgo: '1 day ago',
+    },
+    {
+      id: 'job-packaging-defect-label',
+      title: 'Label defects on manufactured packaging',
+      category: 'Image Labeling',
+      description:
+        'Mark print and packaging defects on photos of finished cartons: misregistration, smearing, tears, creases and missing panels. A tight box on each defect; one photo can carry several.',
+      responsibilities: [
+        'Label defects on 100 packaging photos',
+        'Use the five defect classes in the supplied guide',
+        'Allow multiple defects per photo',
+        'Record severity for each marked defect',
+      ],
+      payAmountUsd: 34,
+      estimatedMinutes: 210,
+      capacity: 100,
+      slotsRemaining: 82,
+      trainingRequired: false,
+      requiresVerified: true,
+      status: 'open',
+      closesAt: daysFromNow(8),
+      postedAgo: '2 days ago',
+    },
+    {
+      id: 'job-radio-interview-transcription',
+      title: 'Transcribe Swahili radio interviews',
+      category: 'Transcription',
+      description:
+        'Transcribe recorded radio interviews in Swahili, 10 to 15 minutes each. Presenters switch between Swahili and English mid-sentence, and callers phone in with varying audio quality.',
+      responsibilities: [
+        'Transcribe 8 radio interviews verbatim',
+        'Label presenter and caller separately',
+        'Transcribe each language as spoken, without translating',
+        'Flag inaudible passages with the recorder timestamp',
+      ],
+      payAmountUsd: 24,
+      estimatedMinutes: 190,
+      capacity: 65,
+      slotsRemaining: 51,
+      trainingRequired: false,
+      requiresVerified: true,
+      status: 'open',
+      closesAt: daysFromNow(6),
+      postedAgo: '5 hours ago',
+    },
+    {
+      id: 'job-focus-group-overlap',
+      title: 'Transcribe focus-group recordings with overlapping speakers',
+      category: 'Transcription',
+      description:
+        'Transcribe focus-group recordings where participants talk over each other. You are producing a readable record of who said what, so overlaps must be attributed rather than flattened into one line.',
+      responsibilities: [
+        'Transcribe 5 focus-group recordings (15-20 min each)',
+        'Attribute overlapping speech to each speaker',
+        'Mark an unclear attribution rather than guessing',
+        'Keep filler words only where they change the meaning',
+      ],
+      payAmountUsd: 38,
+      estimatedMinutes: 240,
+      capacity: 45,
+      slotsRemaining: 36,
+      trainingRequired: false,
+      requiresVerified: true,
+      status: 'open',
+      closesAt: daysFromNow(9),
+      postedAgo: '2 days ago',
+    },
+    {
+      id: 'job-sacco-loan-register',
+      title: 'Enter SACCO member applications into the loan register',
+      category: 'Data Entry',
+      description:
+        'Enter loan applications into the SACCO loan register from scanned forms. Fields are fixed and validation rules are supplied; a form that fails a rule is queued for a human rather than corrected by you.',
+      responsibilities: [
+        'Enter 70 loan applications from scanned forms',
+        'Apply the supplied field validation rules',
+        'Queue failed forms with the rule that failed',
+        'Keep member identifiers exactly as printed',
+      ],
+      payAmountUsd: 18,
+      estimatedMinutes: 150,
+      capacity: 110,
+      slotsRemaining: 88,
+      trainingRequired: false,
+      requiresVerified: true,
+      status: 'open',
+      closesAt: daysFromNow(4),
+      postedAgo: '1 day ago',
+    },
+    {
+      id: 'job-pharmacy-contact-verify',
+      title: 'Verify pharmacy contact details from county records',
+      category: 'Research',
+      description:
+        'Verify pharmacy names, addresses, phone numbers and licence numbers against county health records. Where a record is missing or contradicted, mark it unverified rather than filling the gap from a directory.',
+      responsibilities: [
+        'Verify 80 pharmacy records against county records',
+        'Record the source document and date checked',
+        'Mark unverified rather than guessing',
+        'Normalise phone numbers to the requested format',
+      ],
+      payAmountUsd: 22,
+      estimatedMinutes: 170,
+      capacity: 80,
+      slotsRemaining: 62,
+      trainingRequired: false,
+      requiresVerified: true,
+      status: 'open',
+      closesAt: daysFromNow(7),
+      postedAgo: '11 hours ago',
+    },
+    {
+      id: 'job-county-health-translation',
+      title: 'Translate county health announcements into Kiswahili',
+      category: 'Translation',
+      description:
+        'Translate short county health announcements from English into Kiswahili. These go out to the public, so a dosage, an age limit or a clinic time must survive the translation exactly.',
+      responsibilities: [
+        'Translate 40 county announcements into Kiswahili',
+        'Preserve every number, dose, date and time exactly',
+        'Use the supplied term list for clinical terms',
+        'Flag an English sentence you cannot translate safely',
+      ],
+      payAmountUsd: 28,
+      estimatedMinutes: 200,
+      capacity: 75,
+      slotsRemaining: 59,
+      trainingRequired: false,
+      requiresVerified: true,
+      status: 'open',
+      closesAt: daysFromNow(5),
+      postedAgo: '4 hours ago',
+    },
+    {
+      id: 'job-app-onboarding-sheng',
+      title: 'Localise app onboarding strings into Sheng',
+      category: 'Translation',
+      description:
+        'Localise short app onboarding strings into Sheng, the mixed Swahili and English register younger urban speakers use. Tone matters as much as accuracy, and a string that reads stiff is a failed string.',
+      responsibilities: [
+        'Localise 60 onboarding strings into Sheng',
+        'Keep each string within the supplied character limit',
+        'Keep placeholders and variables untouched',
+        'Flag any string with no natural Sheng equivalent',
+      ],
+      payAmountUsd: 25,
+      estimatedMinutes: 190,
+      capacity: 70,
+      slotsRemaining: 55,
+      trainingRequired: false,
+      requiresVerified: true,
+      status: 'open',
+      closesAt: daysFromNow(8),
       postedAgo: '1 day ago',
     },
   ]

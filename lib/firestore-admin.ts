@@ -3347,9 +3347,22 @@ export async function notifyUser(uid: string, input: NotificationInput): Promise
 
 // ─── Audit log reads ───────────────────────────────────────────────────────────
 
-export async function listAuditLogs(opts: { limit?: number; action?: string; search?: string } = {}): Promise<AdminAuditRow[]> {
+/**
+ * Reads the console's audit ledger, newest first.
+ *
+ * The filtered read (`action ==` + `orderBy timestamp desc`) needs the composite index declared in
+ * `firestore.indexes.json` (admin_logs: action ASC, timestamp DESC). An index that is declared but
+ * never deployed (`npm run deploy:indexes`) fails the whole query with FAILED_PRECONDITION, and the
+ * old fallback then read `limit` documents with **no ordering at all** — an arbitrary, usually the
+ * oldest, slice of the ledger, presented as if it were the log. An operator auditing an incident
+ * reads the wrong rows and trusts them. The fallback now scans a bounded window, sorts it here, and
+ * returns `degraded` so the console says the view is approximate instead of pretending it is not.
+ */
+export async function listAuditLogs(
+  opts: { limit?: number; action?: string; search?: string } = {},
+): Promise<{ rows: AdminAuditRow[]; degraded?: string }> {
   const db = dbOrNull()
-  if (!db) return []
+  if (!db) return { rows: [] }
   const size = Math.min(200, Math.max(10, opts.limit ?? 60))
   const search = normaliseSearch(opts.search)
   try {
@@ -3363,15 +3376,24 @@ export async function listAuditLogs(opts: { limit?: number; action?: string; sea
     if (search) {
       rows = rows.filter((row) => JSON.stringify(row).toLowerCase().includes(search)).slice(0, size)
     }
-    return rows
+    return { rows }
   } catch (err) {
-    console.warn('[FirestoreAdmin] listAuditLogs fell back to unordered read:', err)
-    const snap = await db.collection('admin_logs').limit(size).get()
-    const rows = snap.docs.map((d) => d.data() as AdminAuditRow)
+    console.warn('[FirestoreAdmin] listAuditLogs fell back to a bounded scan (composite index missing?):', err)
+    const scanLimit = Math.min(1_000, Math.max(ADMIN_SEARCH_SCAN_LIMIT, size * 5))
+    const snap = await db.collection('admin_logs').limit(scanLimit).get()
+    let rows = snap.docs.map((d) => d.data() as AdminAuditRow)
+    // Firestore cannot merge single-field indexes, so the ordering has to happen here — and a
+    // bounded scan can only see the window it read, which is why the caller is told it is
+    // approximate rather than being handed a confident, wrong answer.
     rows.sort((a, b) => String(b.timestamp).localeCompare(String(a.timestamp)))
-    return search
+    rows = search
       ? rows.filter((r) => JSON.stringify(r).toLowerCase().includes(search)).slice(0, size)
-      : rows
+      : rows.slice(0, size)
+    return {
+      rows,
+      degraded:
+        'This view is an approximate scan: the admin_logs composite index (action + timestamp) is not deployed on this project, so the newest entries may be missing. Deploy it with `npm run deploy:indexes`.',
+    }
   }
 }
 

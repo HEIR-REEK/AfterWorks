@@ -59,6 +59,12 @@ function AdminAuditLogPageInner() {
   const [expanded, setExpanded] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [unlocked, setUnlocked] = useState<Set<string>>(new Set())
+  /**
+   * Set when the admin_logs composite index is not deployed on this project: the rows are then a
+   * bounded scan sorted in memory, which can miss the newest entries. The console must say so —
+   * an audit log that is quietly incomplete is worse than one that admits it.
+   */
+  const [degraded, setDegraded] = useState<string | null>(null)
 
   useEffect(() => {
     const id = setTimeout(() => setSearch(searchInput.trim()), 350)
@@ -72,6 +78,7 @@ function AdminAuditLogPageInner() {
       setRows(data.logs as Row[])
       setActions(data.actions)
       setExportUrl(data.exportUrl)
+      setDegraded(data.degraded ?? null)
       setError(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'The audit ledger is not reachable.')
@@ -150,10 +157,17 @@ function AdminAuditLogPageInner() {
           <StatusBadge tone={stats.failures ? 'danger' : 'success'}>{stats.failures} failed sign-ins in view</StatusBadge>
           <StatusBadge tone="info">{stats.moneyish} money-moving entries</StatusBadge>
           {stats.notServer > 0 && <StatusBadge tone="warning">{stats.notServer} legacy rows written before the server guard</StatusBadge>}
+          {degraded && <StatusBadge tone="warning">approximate view</StatusBadge>}
           <span className="ml-auto">{actions.length} distinct actions in this page</span>
         </div>
 
         {error && <p className="mb-3 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-[11px] text-destructive">{error}</p>}
+
+        {degraded && (
+          <p className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] leading-relaxed text-amber-600 dark:text-amber-400">
+            {degraded}
+          </p>
+        )}
 
         {loading && rows.length === 0 ? (
           <div className="flex items-center justify-center gap-2 py-16 text-xs text-muted-foreground">

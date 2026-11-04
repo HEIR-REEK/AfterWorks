@@ -411,7 +411,14 @@ export const adminApi = {
       timeoutMs: 60_000,
     }),
   auditLogs: (query: { limit?: number; action?: string; search?: string }) =>
-    apiFetch<{ ok: boolean; logs: Record<string, unknown>[]; actions: string[]; exportUrl: string }>('/api/admin/audit', { query }),
+    apiFetch<{
+      ok: boolean
+      logs: Record<string, unknown>[]
+      actions: string[]
+      exportUrl: string
+      /** Set when the admin_logs composite index is not deployed: the view is an approximate scan. */
+      degraded?: string | null
+    }>('/api/admin/audit', { query }),
   /** Who you are to the API right now — the authority the console runs on, with its real expiry. */
   sessionInfo: () =>
     apiFetch<{

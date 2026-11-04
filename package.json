@@ -11,6 +11,7 @@
     "seed:catalogue": "tsx scripts/seed-jobs.ts",
     "hash:admin-password": "node scripts/hash-admin-password.mjs",
     "deploy:rules": "firebase deploy --only firestore:rules,firestore:indexes",
+    "deploy:indexes": "firebase deploy --only firestore:indexes",
     "test": "tsx --test tests/*.test.ts",
     "test:browser": "playwright test"
   },

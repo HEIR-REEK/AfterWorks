@@ -143,7 +143,7 @@ export default async function PublicJobPage({ params }: Props) {
                 </li>
                 <li className="flex gap-3">
                   <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">2</span>
-                  <div><p className="font-medium">Verify your identity once</p><p className="mt-1 text-muted-foreground">A government ID and liveness check through our verification partner. AfterWorks stores the result, not your document.</p></div>
+                  <div><p className="font-medium">Request identity verification</p><p className="mt-1 text-muted-foreground">Ask from your profile and our team reviews it. Once approved it applies everywhere on the platform.</p></div>
                 </li>
                 <li className="flex gap-3">
                   <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">3</span>

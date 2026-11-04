@@ -139,3 +139,47 @@ test('the console no longer advertises a connection test', () => {
   assert.doesNotMatch(posture, /DIDIT_API_KEY'\) &&/, 'no "is the provider configured" gate')
   assert.match(posture, /diditLeftovers/, 'but it does flag leftovers so they get deleted')
 })
+
+test('a staff session can decide a review, not only an owner', () => {
+  const domain = read('lib/admin-domain.ts')
+  assert.match(domain, /STAFF_USER_ACTIONS = \[['"]kyc['"]/, 'the kyc action must be in the staff capability list')
+  // Staff may *restore* but never *restrict*; a KYC verdict is neither, so it stays with them.
+  let verdict = domain.slice(domain.indexOf('export function staffUserActionVerdict'))
+  verdict = verdict.slice(0, verdict.indexOf('\n}\n'))
+  assert.doesNotMatch(verdict, /kyc/, 'no extra gate on the kyc action beyond being in the list')
+})
+
+test('the member side reflects the decision without a reload', () => {
+  // The profile is a realtime listener, so an approval written by a staff session lands in the
+  // member's open browser. A one-time read here would mean the member has to guess.
+  const firestore = read('lib/firestore.ts')
+  assert.match(firestore, /export function subscribeToUserDocument/)
+  assert.match(firestore, /onSnapshot\(\s*doc\(db, 'users', uid\)/, 'the user document is watched, not fetched once')
+
+  // And the approval notifies the member, so it is not only visible if they happen to be looking.
+  const admin = read('lib/firestore-admin.ts')
+  let approve = admin.slice(admin.indexOf('await notifyUser(uid, {'))
+  approve = approve.slice(0, approve.indexOf('link:'))
+  assert.match(approve, /Identity verified/, 'an approval tells the member it happened')
+  assert.match(approve, /could not verify your document/, 'and a rejection tells them why')
+})
+
+test('the staff queue is live rather than a page you have to reload', () => {
+  const users = read('app/admin/users/page.tsx')
+  assert.match(users, /RefreshCw/, 'there is a manual refresh like the other console pages')
+  // The one view where somebody waits for work is the queue, and only that view polls.
+  assert.match(users, /state === 'kyc_pending'/, 'the live refresh is scoped to the queue filter')
+  assert.match(users, /setInterval/, 'and it re-reads on a timer')
+  assert.match(users, /clearInterval/, 'and stops when the view is left')
+})
+
+test('member-facing copy asks for a review rather than telling them to verify themselves', () => {
+  const jobs = read('app/jobs/[id]/page.tsx')
+  assert.doesNotMatch(jobs, /Verify KYC/, 'no button implies the member performs the check')
+  assert.match(jobs, /Request verification/, 'the buttons say what the member actually does')
+  // The landing page used to promise a partner and a liveness check. Neither is true now.
+  const landing = read('app/page.tsx')
+  assert.doesNotMatch(landing, /verification partner/)
+  assert.doesNotMatch(landing, /liveness check/)
+  assert.match(landing, /Request identity verification/)
+})

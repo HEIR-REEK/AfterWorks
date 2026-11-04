@@ -13,6 +13,7 @@ import {
   ShieldCheck,
   Trash2,
   Unlock,
+  RefreshCw,
   UserCheck,
   Users,
   Wallet,
@@ -128,6 +129,9 @@ function UsersPageInner() {
   }, [searchInput])
 
   const pageIndex = cursors.length - 1
+  // The review queue is the one view where somebody sits and waits for work to arrive. Polling is
+  // scoped to it and only while it is on screen, so the cost is paid by the person using it.
+  const queueView = state === 'kyc_pending'
 
   const load = useCallback(async (cursor: string | null) => {
     setLoading(true)
@@ -151,6 +155,22 @@ function UsersPageInner() {
     void load(cursors[cursors.length - 1] ?? null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session.status, load, cursors.length])
+
+  // Bounded live refresh for the queue only: a member's request reaches the staff member without a
+  // page reload, and the moment they approve or decline it the row leaves the queue on its own.
+  useEffect(() => {
+    if (session.status !== 'authorized' || !queueView) return
+    const id = setInterval(() => {
+      void load(cursors[cursors.length - 1] ?? null)
+    }, 20_000)
+    return () => clearInterval(id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session.status, queueView, load, cursors.length])
+
+  const refresh = useCallback(() => {
+    void load(cursors[cursors.length - 1] ?? null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [load, cursors.length])
 
   const openDetail = async (uid: string) => {
     setBusy(true)
@@ -280,6 +300,10 @@ function UsersPageInner() {
         icon={<Users className="size-4" />}
         actions={
           <div className="flex flex-wrap items-center gap-2">
+            <Button type="button" size="sm" variant="outline" className="h-8 gap-1.5" onClick={refresh} disabled={loading}>
+              <RefreshCw className={cn('size-3.5', loading && 'animate-spin')} />
+              Refresh
+            </Button>
             <Button
               type="button"
               size="sm"

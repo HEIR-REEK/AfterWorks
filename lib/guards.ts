@@ -198,12 +198,10 @@ function isAuthRoute(pathname: string): boolean {
  *  1. `ADMIN_EMAILS` env roster        → `owner`  (the main administrator; master passcode)
  *  2. active `admin_accounts` document → the role stored on it (staff accounts the owner created
  *     in the console, each with its own password)
- *  3. anything else                    → `null`   (no console access)
- *
- * There is deliberately no `users.isAdmin` fallback. That flag is written onto member documents
- * (and used as a UI hint), so trusting it would let any member who ever logged into the console
- * keep a staff role after the staff account was disabled or deleted. Console authority comes only
- * from the roster or an active staff account, both of which the owner controls.
+ *  3. member profile label (`users.isAdmin` / `role: 'admin'`, owner-settable only — the rules
+ *     force both off on member writes) → `staff`, so a staff member with an existing worker
+ *     account can use their usual sign-in at /admin/login
+ *  4. anything else                    → `null`   (no console access)
  */
 export async function resolveAdminRole(email: string): Promise<AdminRole | null> {
   const clean = email.trim().toLowerCase()
@@ -221,6 +219,7 @@ export async function resolveAdminRole(email: string): Promise<AdminRole | null>
     try {
       const firestore = await import('@/lib/firestore-admin')
       role = await firestore.getAdminAccountRole(clean)
+      if (!role) role = await firestore.getUserRoleByEmail(clean)
     } catch (err) {
       console.warn('[guard] Firestore role lookup failed; denying privilege escalation:', err)
       role = null

@@ -723,6 +723,32 @@ export async function getAdminAccountRole(email: string): Promise<'owner' | 'sta
   return account.role === 'owner' ? 'owner' : 'staff'
 }
 
+/**
+ * Console role from a member profile label: `users.isAdmin` / `users.role === 'admin'`.
+ *
+ * firestore.rules forces `role: 'user'` and `isAdmin: false` on every member-side write and
+ * lists both in the protected-fields set, so only the owner (through /api/admin/users) can set
+ * them — the label is an owner-controlled grant. It exists so a staff member who already has a
+ * worker account can sign in to the console at /admin/login with the same email + password they
+ * use for the worker app. Revoking staff clears the label, and the guard cache is invalidated on
+ * the same request, so access ends immediately.
+ */
+export async function getUserRoleByEmail(email: string): Promise<'staff' | null> {
+  const db = dbOrNull()
+  if (!db) return null
+  try {
+    const clean = email.trim().toLowerCase()
+    if (!clean) return null
+    const snap = await db.collection('users').where('email', '==', clean).limit(1).get()
+    if (snap.empty) return null
+    const data = (snap.docs[0].data() ?? {}) as Record<string, unknown>
+    return data.isAdmin === true || data.role === 'admin' ? 'staff' : null
+  } catch (err) {
+    console.warn('[FirestoreAdmin] getUserRoleByEmail failed:', err)
+    return null
+  }
+}
+
 export async function listAdminAccounts(): Promise<AdminAccountRow[]> {
   const db = dbOrNull()
   if (!db) return []

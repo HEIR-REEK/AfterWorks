@@ -109,13 +109,15 @@ export async function POST(req: NextRequest) {
   // hash the candidate, compare digests).
   //
   //   • owner  — email on the ADMIN_EMAILS roster; signs in with the shared master passcode.
-  //   • staff  — an `admin_accounts` entry created by the owner in the console, with an
-  //              individual password the owner chose. A worker account with the same email is
-  //              unaffected: this password opens the console only, never the worker app.
-  // There is no third path: `users.isAdmin` is a label, not a credential.
+  //   • staff  — an `admin_accounts` entry created by the owner on the Staff page, with an
+  //              individual password the owner chose.
+  //   • staff with an existing worker account — no `admin_accounts` entry needed: the owner taps
+  //     "Make staff" in the Users drawer (which sets the rules-protected `users.isAdmin` label),
+  //     and the member signs in here with the SAME email + password they use on the worker app.
+  //     The password is verified against Firebase Auth server-side before any session exists.
   const roster = parseEmailList(env('ADMIN_EMAILS'))
   let role: AdminRole | null = null
-  let credential: 'master' | 'staff-account' = 'master'
+  let credential: 'master' | 'staff-account' | 'firebase-account' = 'master'
   let passcodeOk = false
 
   if (roster.includes(email)) {
@@ -137,12 +139,21 @@ export async function POST(req: NextRequest) {
         role = account.role === 'owner' ? 'owner' : 'staff'
         credential = 'staff-account'
         passcodeOk = verifyPasscode(account.passcodeHash, passcode)
+      } else {
+        // No separate console account: try the worker-app credential (Firebase Auth password).
+        // Only a profile the owner marked as staff gets a console session from it — the label
+        // itself is never trusted as a credential, and firestore.rules keeps members from
+        // setting it on their own document.
+        const firebase = await signInWithFirebasePassword(email, passcode)
+        if (firebase) {
+          const labelRole = await firestore.getUserRoleByEmail(firebase.email)
+          if (labelRole === 'staff') {
+            role = 'staff'
+            credential = 'firebase-account'
+            passcodeOk = true
+          }
+        }
       }
-      // No `users.isAdmin` fallback. That flag is a profile label an operator can set from the
-      // Users drawer (and the signup document used to carry), so treating it as a console
-      // credential was a privilege-escalation path: a member could be flagged, or flag themselves
-      // in older rules, then use the shared master passcode. Console roles come from ADMIN_EMAILS
-      // or an active admin_accounts entry only.
     } catch (err) {
       console.warn('[admin/auth] account lookup failed:', err)
     }
@@ -269,4 +280,44 @@ export async function GET(req: NextRequest) {
     sessionMinutes: Math.round(cfg.sessionTtlMs / 60_000),
     production: isProduction(),
   })
+}
+
+/**
+ * Verify an email+password pair against Firebase Auth (Identity Toolkit REST) and, on success,
+ * verify the returned ID token with the Admin SDK. Returns the canonical email + uid, or null.
+ *
+ * Used for the "staff who already has a worker account" door: the owner marks the member staff
+ * in the Users drawer, and that member signs in to /admin/login with the same credentials they
+ * use on the worker app. The profile label alone never grants anything — the password must be
+ * valid AND the label must be set.
+ */
+async function signInWithFirebasePassword(
+  email: string,
+  password: string,
+): Promise<{ email: string; uid: string } | null> {
+  const apiKey = env('FIREBASE_WEB_API_KEY') || env('NEXT_PUBLIC_FIREBASE_API_KEY')
+  if (!apiKey) return null
+  try {
+    const res = await fetch(
+      `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${encodeURIComponent(apiKey)}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password, returnSecureToken: true }),
+        cache: 'no-store',
+      },
+    )
+    if (!res.ok) return null
+    const data = (await res.json().catch(() => null)) as { idToken?: string } | null
+    if (!data?.idToken) return null
+    const firestore = await import('@/lib/firestore-admin')
+    if (!firestore.isFirebaseAdminUsable()) return null
+    const decoded = await firestore.verifyIdToken(data.idToken)
+    if (!decoded) return null
+    const verifiedEmail = String(decoded.email ?? '').trim().toLowerCase()
+    if (!verifiedEmail || verifiedEmail !== email.trim().toLowerCase()) return null
+    return { email: verifiedEmail, uid: decoded.uid }
+  } catch {
+    return null
+  }
 }

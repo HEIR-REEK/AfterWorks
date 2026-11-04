@@ -45,6 +45,7 @@ export function AssessmentQuiz({ category, jobId, onPass }: { category: JobCateg
   const [submitting, setSubmitting] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [submitError, setSubmitError] = useState<string | null>(null)
+  const [active, setActive] = useState(0)
 
   // Questions come from the server *without* the answer key. There is no local passing flag to
   // edit: a pass exists only after POST /api/assessments wrote it to the profile.
@@ -56,6 +57,7 @@ export function AssessmentQuiz({ category, jobId, onPass }: { category: JobCateg
     setSubmitted(false)
     setPassed(false)
     setReview({})
+    setActive(0)
     void (async () => {
       try {
         const data = await authedFetch<{ questions: QuizQuestion[]; passMark: number }>(
@@ -198,129 +200,184 @@ export function AssessmentQuiz({ category, jobId, onPass }: { category: JobCateg
     )
   }
 
+  const answeredCount = Object.keys(answers).length
+  const currentIndex = Math.min(active, questions.length - 1)
+  const current = questions[currentIndex]
+  const progress = Math.round((answeredCount / questions.length) * 100)
+
+  const goTo = (index: number) => {
+    setActive(Math.max(0, Math.min(questions.length - 1, index)))
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+    }
+  }
+
   return (
-    <div className="flex flex-col gap-6">
-      <div className="rounded-xl bg-card p-6 border border-border shadow-sm">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 pb-6 border-b border-border">
+    <div className="flex flex-col gap-4">
+      <div className="rounded-xl border border-border bg-card p-5 shadow-sm sm:p-6">
+        <div className="flex flex-col justify-between gap-4 border-b border-border pb-5 sm:flex-row sm:items-center">
           <div>
-            <h3 className="text-xl font-bold">Skill Assessment</h3>
-            <p className="text-sm text-muted-foreground mt-1">
-              {category} · based on the preparation course
+            <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-primary">
+              Assessment
+            </p>
+            <h3 className="mt-1 text-xl font-bold">Skill Assessment</h3>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {category} · {questions.length} questions · scenario-based
             </p>
             <p className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
               <BookOpen className="size-3.5 text-primary" />
               Every question maps to a rule or example from the lessons.
             </p>
           </div>
-          <div className="flex items-center gap-2 bg-accent/50 px-3 py-1.5 rounded-lg text-sm font-medium">
+          <div className="flex items-center gap-2 rounded-lg bg-accent/50 px-3 py-1.5 text-sm font-medium">
             <AlertCircle className="size-4 text-primary" />
             <span>Pass mark: {passMark}/{questions.length}</span>
           </div>
         </div>
 
-        <div className="flex flex-col gap-10">
-          {questions.map((q, i) => (
-            <div key={q.id} className="flex flex-col gap-4">
-              <p className="font-semibold text-base leading-relaxed text-foreground">
-                <span className="text-muted-foreground mr-2">{i + 1}.</span>
-                {q.question}
-              </p>
-              {q.image && (
-                <TrainingFigure
-                  src={q.image}
-                  alt={q.imageAlt}
-                  className="max-w-2xl"
-                />
+        {!submitted && (
+          <>
+            <div className="mt-4 flex items-center justify-between gap-3 text-[11px] font-medium text-muted-foreground">
+              <span>
+                Question {currentIndex + 1} of {questions.length}
+              </span>
+              <span>
+                {answeredCount} answered · {questions.length - answeredCount} left
+              </span>
+            </div>
+            <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-muted">
+              <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${progress}%` }} />
+            </div>
+            <div className="mt-3 flex flex-wrap gap-1.5" role="tablist" aria-label="Question navigator">
+              {questions.map((question, index) => {
+                const isAnswered = answers[question.id] !== undefined
+                return (
+                  <button
+                    key={question.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={index === currentIndex}
+                    aria-label={`Question ${index + 1}${isAnswered ? ', answered' : ', unanswered'}`}
+                    onClick={() => goTo(index)}
+                    className={[
+                      'size-7 rounded-md border font-mono text-[10px] font-semibold transition-colors',
+                      index === currentIndex
+                        ? 'border-primary bg-primary text-primary-foreground'
+                        : isAnswered
+                          ? 'border-success/40 bg-success/10 text-success-foreground'
+                          : 'border-border bg-background text-muted-foreground hover:border-primary/40',
+                    ].join(' ')}
+                  >
+                    {index + 1}
+                  </button>
+                )
+              })}
+            </div>
+          </>
+        )}
+
+        {!submitted ? (
+          <div className="mt-5 flex flex-col gap-4">
+            <div className="flex flex-col gap-4 rounded-xl border border-border/70 bg-background p-4 sm:p-5">
+              <div className="flex items-start gap-2">
+                <span className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10 font-mono text-[10px] font-semibold text-primary">
+                  {currentIndex + 1}
+                </span>
+                <p className="font-semibold text-base leading-relaxed text-foreground">{current.question}</p>
+              </div>
+              {current.image && (
+                <TrainingFigure src={current.image} alt={current.imageAlt} className="max-w-2xl" />
               )}
               <div className="grid gap-2 sm:grid-cols-2">
-                {q.options.map((opt, oIdx) => {
-                  const isSelected = answers[q.id] === oIdx
-                  const isCorrect = review[q.id]?.correctIndex === oIdx
-                  
-                  let optionClass = "flex items-start gap-3 p-4 rounded-xl border text-left text-sm transition-all duration-200 "
-                  if (!submitted) {
-                    optionClass += isSelected 
-                      ? "border-primary bg-primary/10 text-primary font-medium ring-1 ring-primary/20" 
-                      : "border-border bg-card hover:border-primary/40 hover:bg-accent/30"
-                  } else {
-                    if (isCorrect) {
-                      optionClass += "border-success bg-success/15 text-success-foreground font-medium ring-1 ring-success/30"
-                    } else if (isSelected) {
-                      optionClass += "border-destructive bg-destructive/15 text-destructive-foreground font-medium ring-1 ring-destructive/30"
-                    } else {
-                      optionClass += "border-border bg-card/50 opacity-40 grayscale"
-                    }
-                  }
-
+                {current.options.map((option, optionIndex) => {
+                  const isSelected = answers[current.id] === optionIndex
                   return (
                     <button
-                      key={oIdx}
+                      key={optionIndex}
                       type="button"
-                      disabled={submitted}
-                      onClick={() => handleSelect(q.id, oIdx)}
-                      className={optionClass}
+                      onClick={() => handleSelect(current.id, optionIndex)}
+                      className={[
+                        'flex items-start gap-3 rounded-xl border p-4 text-left text-sm transition-all duration-200',
+                        isSelected
+                          ? 'border-primary bg-primary/10 font-medium text-primary ring-1 ring-primary/20'
+                          : 'border-border bg-card hover:border-primary/40 hover:bg-accent/30',
+                      ].join(' ')}
                     >
-                      <div className="mt-0.5 shrink-0">
+                      <span className="mt-0.5 shrink-0">
                         {isSelected ? <CheckCircle2 className="size-4" /> : <Circle className="size-4" />}
-                      </div>
-                      <span className="leading-snug">{opt}</span>
+                      </span>
+                      <span className="leading-snug">{option}</span>
                     </button>
                   )
                 })}
               </div>
-              {submitted && review[q.id]?.explanation && (
-                <div className="flex items-start gap-2 rounded-lg border border-primary/20 bg-primary/[0.04] px-3 py-2 text-xs leading-relaxed text-foreground/80">
-                  <BookOpen className="mt-0.5 size-3.5 shrink-0 text-primary" />
-                  <span>
-                    <span className="font-semibold text-foreground">Why this matters: </span>
-                    {review[q.id]?.explanation}
-                  </span>
-                </div>
-              )}
             </div>
-          ))}
-        </div>
 
-        {!submitted ? (
-          <div className="mt-10 pt-8 border-t border-border flex flex-col items-center gap-3">
-            <Button 
-              size="lg" 
-              onClick={handleSubmit} 
-              disabled={submitting || Object.keys(answers).length < questions.length}
-              className="w-full sm:w-auto min-w-[240px] shadow-md"
-            >
-              {submitting ? 'Scoring…' : 'Submit Answers'}
-            </Button>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => goTo(currentIndex - 1)}
+                disabled={currentIndex === 0}
+              >
+                Previous
+              </Button>
+              <div className="flex flex-wrap items-center gap-2">
+                {currentIndex < questions.length - 1 ? (
+                  <Button type="button" onClick={() => goTo(currentIndex + 1)}>
+                    Next question
+                  </Button>
+                ) : (
+                  <Button
+                    type="button"
+                    onClick={handleSubmit}
+                    disabled={submitting || answeredCount < questions.length}
+                    className="shadow-md"
+                  >
+                    {submitting ? 'Scoring…' : 'Submit answers'}
+                  </Button>
+                )}
+                {currentIndex < questions.length - 1 && answeredCount === questions.length && (
+                  <Button type="button" variant="outline" onClick={handleSubmit} disabled={submitting}>
+                    {submitting ? 'Scoring…' : 'Submit answers'}
+                  </Button>
+                )}
+              </div>
+            </div>
             {submitError && (
               <p className="text-xs text-destructive" role="alert">
                 {submitError}
               </p>
             )}
-            <p className="text-xs text-muted-foreground font-medium">
-              Answered {Object.keys(answers).length} of {questions.length} questions
+            <p className="text-[11px] text-muted-foreground">
+              Answer every question to submit. Use the number grid to jump back and change an answer.
             </p>
           </div>
         ) : (
-          <div className="mt-10 pt-8 border-t border-border flex flex-col items-center gap-4 bg-destructive/5 rounded-xl p-6">
-            <p className="text-destructive font-bold text-lg flex items-center gap-2">
-              <AlertCircle className="size-5" />
-              You scored {score}/{questions.length} — the pass mark is {passMark}/{questions.length}.
-            </p>
-            <p className="text-sm text-muted-foreground text-center">
-              Review the preparation course, then try again. Answers are shown only after a pass.
-            </p>
-            <Button
-              size="lg"
-              variant="outline"
-              onClick={() => {
-                setAnswers({})
-                setSubmitted(false)
-                window.scrollTo({ top: 0, behavior: 'smooth' })
-              }}
-              className="mt-2 w-full sm:w-auto min-w-[200px]"
-            >
-              Retake Assessment
-            </Button>
+          <div className="mt-5 flex flex-col gap-4">
+            <div className="flex flex-col items-center gap-3 rounded-xl border border-destructive/20 bg-destructive/5 p-6 text-center">
+              <p className="flex items-center gap-2 text-lg font-bold text-destructive">
+                <AlertCircle className="size-5" />
+                You scored {score}/{questions.length} — the pass mark is {passMark}/{questions.length}.
+              </p>
+              <p className="max-w-lg text-sm text-muted-foreground">
+                Revisit the preparation course, then try again. Correct answers stay hidden until a
+                passing attempt, so the assessment cannot be used as an answer sheet.
+              </p>
+              <div className="mt-1 flex flex-col gap-2 sm:flex-row">
+                <Button
+                  onClick={() => {
+                    setAnswers({})
+                    setSubmitted(false)
+                    setActive(0)
+                    window.scrollTo({ top: 0, behavior: 'smooth' })
+                  }}
+                >
+                  Retake assessment
+                </Button>
+              </div>
+            </div>
+
           </div>
         )}
       </div>

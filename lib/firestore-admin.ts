@@ -31,7 +31,7 @@ import {
   type AdminUserDetailModel,
   type AdminUserRowModel,
 } from '@/lib/admin-domain'
-import { assessmentPassMark, type AssessmentQuestion, type TrainingSection } from '@/lib/afterworks-data'
+import { assessmentPassMark, type AssessmentQuestion, type TrainingSection, TRAINING_LESSON_KINDS } from '@/lib/afterworks-data'
 import { safeImageSrc } from '@/lib/afterworks-data'
 import { normaliseAssessmentQuestions, normaliseTrainingSections } from '@/lib/job-catalogue'
 
@@ -2631,6 +2631,8 @@ export function sanitizeJob(input: AdminJobInput, existing?: Record<string, unkn
         .slice(0, 4)
       const checkQuestion = String(checkRaw?.question ?? '').replace(/\s+/g, ' ').trim().slice(0, 400)
       const checkExplanation = String(checkRaw?.explanation ?? '').replace(/\s+/g, ' ').trim().slice(0, 500)
+      const checkImage = safeImageSrc(checkRaw?.image)
+      const checkImageAlt = String(checkRaw?.imageAlt ?? '').replace(/\s+/g, ' ').trim().slice(0, 240)
       const check =
         checkRaw && checkQuestion && checkOptions.length >= 2
           ? {
@@ -2638,11 +2640,19 @@ export function sanitizeJob(input: AdminJobInput, existing?: Record<string, unkn
               options: checkOptions,
               correctIndex: Math.max(0, Math.min(checkOptions.length - 1, Math.round(Number(checkRaw.correctIndex) || 0))),
               ...(checkExplanation ? { explanation: checkExplanation } : {}),
+              ...(checkImage ? { image: checkImage } : {}),
+              ...(checkImage && checkImageAlt ? { imageAlt: checkImageAlt } : {}),
             }
           : undefined
+      const unit = String(section.unit ?? '').replace(/\s+/g, ' ').trim().slice(0, 80)
+      const kind = String(section.kind ?? '')
+      const objective = String(section.objective ?? '').replace(/\s+/g, ' ').trim().slice(0, 300)
       return {
         title: String(section.title ?? '').replace(/\s+/g, ' ').trim().slice(0, 140),
         content: String(section.content ?? '').trim().slice(0, 8_000),
+        ...(unit ? { unit } : {}),
+        ...(TRAINING_LESSON_KINDS.includes(kind as never) ? { kind: kind as TrainingSection['kind'] } : {}),
+        ...(objective ? { objective } : {}),
         ...(image ? { image } : {}),
         ...(image && imageAlt ? { imageAlt } : {}),
         ...(image && imageCaption ? { imageCaption } : {}),

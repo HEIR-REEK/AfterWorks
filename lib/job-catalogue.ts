@@ -28,6 +28,7 @@ import {
   type JobStatus,
   type TrainingCheck,
   type TrainingSection,
+  TRAINING_LESSON_KINDS,
   safeImageSrc,
 } from '@/lib/afterworks-data'
 
@@ -71,11 +72,15 @@ function trainingCheck(value: unknown): TrainingCheck | undefined {
   const options = stringList(raw.options, 4, 300)
   if (!question || options.length < 2) return undefined
   const explanation = text(raw.explanation, 500)
+  const image = safeImageSrc(raw.image)
+  const imageAlt = text(raw.imageAlt, 240)
   return {
     question,
     options,
     correctIndex: clamp(Math.round(number(raw.correctIndex, 0)), 0, options.length - 1),
     ...(explanation ? { explanation } : {}),
+    ...(image ? { image } : {}),
+    ...(image && imageAlt ? { imageAlt } : {}),
   }
 }
 
@@ -90,9 +95,15 @@ export function normaliseTrainingSections(value: unknown): TrainingSection[] {
       const imageCaption = text(section.imageCaption, 300)
       const duration = Math.round(number(section.durationMinutes, 0))
       const check = trainingCheck(section.check)
+      const unit = text(section.unit, 80)
+      const kind = String(section.kind ?? '')
+      const objective = text(section.objective, 300)
       return {
         title: text(section.title, 140),
         content: typeof section.content === 'string' ? section.content.trim().slice(0, 8_000) : '',
+        ...(unit ? { unit } : {}),
+        ...(TRAINING_LESSON_KINDS.includes(kind as never) ? { kind: kind as TrainingSection['kind'] } : {}),
+        ...(objective ? { objective } : {}),
         ...(image ? { image } : {}),
         ...(image && imageAlt ? { imageAlt } : {}),
         ...(image && imageCaption ? { imageCaption } : {}),

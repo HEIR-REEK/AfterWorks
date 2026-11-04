@@ -7,6 +7,7 @@
  * `publicAssessmentQuestions()` (question, options and figure).
  */
 import { safeImageSrc, type JobCategory } from '@/lib/afterworks-data'
+import { EXTRA_BANKS, type RawBankQuestion } from '@/lib/assessment-bank-extra'
 
 export type BankQuestion = {
   id: number
@@ -141,13 +142,17 @@ export function builtInQuestions(category: JobCategory): BankQuestion[] {
   }
 
   // Fallback generic questions
-  const generic = Array.from({ length: 15 }).map((_, i) => ({
+  const generic: RawBankQuestion[] = Array.from({ length: 15 }).map((_, i) => ({
     q: `General Question ${i + 1}: What is a key principle of task accuracy?`,
     opts: ['Following instructions carefully and verifying details.', 'Rushing to finish quickly.', 'Guessing when unsure.', 'Ignoring the provided guidelines.'],
     ans: 0
   }))
 
-  const rawQuestions = banks[category as string] || generic
+  // The advanced scenarios are appended to the original bank, so the built-in assessment grows
+  // from 15 to 25 questions per category without duplicating the earlier content.
+  const baseQuestions = banks[category as string] ?? []
+  const extraQuestions = EXTRA_BANKS[category as string] ?? []
+  const rawQuestions = baseQuestions.length > 0 ? [...baseQuestions, ...extraQuestions] : generic
 
   return rawQuestions.map((rq, idx) => ({
     id: idx + 1,

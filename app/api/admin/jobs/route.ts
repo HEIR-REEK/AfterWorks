@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import { audit, consumeBucket, fail, json, requireAdmin, requireOwner, routeError } from '@/lib/guards'
 import { sanitizeLine } from '@/lib/security-core'
+import { TRAINING_LESSON_KINDS, type TrainingSection } from '@/lib/afterworks-data'
 
 /**
  * /api/admin/jobs — the catalogue desk.
@@ -89,9 +90,13 @@ export async function PUT(req: NextRequest) {
                 section?.check && typeof section.check === 'object'
                   ? (section.check as Record<string, unknown>)
                   : null
+              const kind = String(section?.kind ?? '') as TrainingSection['kind']
               return {
                 title: String(section?.title ?? ''),
                 content: String(section?.content ?? ''),
+                unit: String(section?.unit ?? ''),
+                ...(kind && TRAINING_LESSON_KINDS.includes(kind) ? { kind } : {}),
+                objective: String(section?.objective ?? ''),
                 image: String(section?.image ?? ''),
                 imageAlt: String(section?.imageAlt ?? ''),
                 imageCaption: String(section?.imageCaption ?? ''),
@@ -106,6 +111,8 @@ export async function PUT(req: NextRequest) {
                         options: Array.isArray(check.options) ? (check.options as unknown[]).map(String) : [],
                         correctIndex: Number(check.correctIndex ?? 0),
                         explanation: String(check.explanation ?? ''),
+                        image: String(check.image ?? ''),
+                        imageAlt: String(check.imageAlt ?? ''),
                       },
                     }
                   : {}),

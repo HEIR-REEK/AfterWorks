@@ -23,7 +23,17 @@ import { adminApi, useAdminSession, type AdminJobRow } from '@/lib/admin'
 import { AdminCard, Field, ReasonDialog, inputClass, useToasts } from '@/components/admin-ui'
 import { Button } from '@/components/ui/button'
 import { StatusBadge } from '@/components/status-badge'
-import { assessmentPassMark, formatUsd, trainingFeeKesFor, JOB_CATEGORY_LIST } from '@/lib/afterworks-data'
+import {
+  assessmentPassMark,
+  formatUsd,
+  trainingFeeKesFor,
+  BUILT_IN_QUESTION_COUNT,
+  JOB_CATEGORY_LIST,
+  TRAINING_LESSON_KINDS,
+  type JobCategory,
+  type TrainingLessonKind,
+} from '@/lib/afterworks-data'
+import { getBuiltInTrainingCourse } from '@/lib/training-curriculum'
 import { cn } from '@/lib/utils'
 
 /**
@@ -44,10 +54,18 @@ type DraftCheck = {
   options: [string, string, string, string]
   correctIndex: number
   explanation: string
+  image: string
+  imageAlt: string
 }
 type DraftSection = {
   title: string
   content: string
+  /** Chapter grouping shown in the course map, e.g. "Unit 2 · Method & standards". */
+  unit: string
+  /** Concept, scenario, lab or checkpoint. */
+  kind: TrainingLessonKind
+  /** Measurable outcome shown at the top of the lesson. */
+  objective: string
   image: string
   imageAlt: string
   imageCaption: string
@@ -88,11 +106,20 @@ const EMPTY_CHECK: DraftCheck = {
   options: ['', '', '', ''],
   correctIndex: 0,
   explanation: '',
+  image: '',
+  imageAlt: '',
+}
+
+function courseCategory(value: string): JobCategory {
+  return (JOB_CATEGORY_LIST as readonly string[]).includes(value) ? (value as JobCategory) : 'Data Entry'
 }
 
 const EMPTY_SECTION: DraftSection = {
   title: '',
   content: '',
+  unit: '',
+  kind: 'concept',
+  objective: '',
   image: '',
   imageAlt: '',
   imageCaption: '',
@@ -192,6 +219,9 @@ export default function AdminJobsPage() {
       trainingNotes: (job.trainingNotes ?? []).map((section) => ({
         title: section.title,
         content: section.content,
+        unit: section.unit ?? '',
+        kind: section.kind ?? 'concept',
+        objective: section.objective ?? '',
         image: section.image ?? '',
         imageAlt: section.imageAlt ?? '',
         imageCaption: section.imageCaption ?? '',
@@ -207,6 +237,8 @@ export default function AdminJobsPage() {
               ],
               correctIndex: section.check.correctIndex ?? 0,
               explanation: section.check.explanation ?? '',
+              image: section.check.image ?? '',
+              imageAlt: section.check.imageAlt ?? '',
             }
           : null,
       })),
@@ -239,6 +271,53 @@ export default function AdminJobsPage() {
     const section = editing.trainingNotes[index]
     if (!section?.check) return
     updateSection(index, { check: { ...section.check, ...patch } })
+  }
+
+  /** Copy the full 12-lesson built-in coursebook into the editor, ready to edit and save. */
+  const loadBuiltInCourse = () => {
+    if (!editing) return
+    const hasContent = editing.trainingNotes.some(
+      (section) => section.title.trim() || section.content.trim(),
+    )
+    if (
+      hasContent &&
+      !window.confirm(
+        'Replace the current training notes with the built-in coursebook for this category? Unsaved edits will be lost.',
+      )
+    ) {
+      return
+    }
+    const course = getBuiltInTrainingCourse(courseCategory(editing.category))
+    setEditing({
+      ...editing,
+      trainingNotes: course.modules.map((section) => ({
+        title: section.title,
+        content: section.content,
+        unit: section.unit ?? '',
+        kind: section.kind ?? 'concept',
+        objective: section.objective ?? '',
+        image: section.image ?? '',
+        imageAlt: section.imageAlt ?? '',
+        imageCaption: section.imageCaption ?? '',
+        durationMinutes: section.durationMinutes ? String(section.durationMinutes) : '',
+        check: section.check
+          ? {
+              question: section.check.question,
+              options: [
+                section.check.options[0] ?? '',
+                section.check.options[1] ?? '',
+                section.check.options[2] ?? '',
+                section.check.options[3] ?? '',
+              ],
+              correctIndex: section.check.correctIndex ?? 0,
+              explanation: section.check.explanation ?? '',
+              image: section.check.image ?? '',
+              imageAlt: section.check.imageAlt ?? '',
+            }
+          : null,
+      })),
+    })
+    push('success', `Loaded the built-in ${editing.category} coursebook — ${course.modules.length} lessons. Save to publish it.`)
   }
 
   const save = async () => {
@@ -280,7 +359,19 @@ export default function AdminJobsPage() {
         ) {
           throw new Error(`Section ${index + 1}: reading time must be between 1 and 120 minutes, or left blank to estimate.`)
         }
-        let check: { question: string; options: string[]; correctIndex: number; explanation?: string } | undefined
+        const kind: TrainingLessonKind = TRAINING_LESSON_KINDS.includes(section.kind)
+          ? section.kind
+          : 'concept'
+        let check:
+          | {
+              question: string
+              options: string[]
+              correctIndex: number
+              explanation?: string
+              image?: string
+              imageAlt?: string
+            }
+          | undefined
         if (section.check) {
           const options = section.check.options.map((option) => option.trim())
           const chosen = options[section.check.correctIndex] ?? ''
@@ -295,11 +386,18 @@ export default function AdminJobsPage() {
             options: filled,
             correctIndex: options.slice(0, section.check.correctIndex).filter(Boolean).length,
             ...(section.check.explanation.trim() ? { explanation: section.check.explanation.trim() } : {}),
+            ...(section.check.image.trim() ? { image: section.check.image.trim() } : {}),
+            ...(section.check.image.trim() && section.check.imageAlt.trim()
+              ? { imageAlt: section.check.imageAlt.trim() }
+              : {}),
           }
         }
         return {
           title: section.title.trim() || 'Untitled section',
           content: section.content.trim(),
+          ...(section.unit.trim() ? { unit: section.unit.trim() } : {}),
+          ...(section.kind !== 'concept' ? { kind } : {}),
+          ...(section.objective.trim() ? { objective: section.objective.trim() } : {}),
           ...(section.image.trim() ? { image: section.image.trim() } : {}),
           ...(section.image.trim() && section.imageAlt.trim() ? { imageAlt: section.imageAlt.trim() } : {}),
           ...(section.image.trim() && section.imageCaption.trim() ? { imageCaption: section.imageCaption.trim() } : {}),
@@ -358,6 +456,26 @@ export default function AdminJobsPage() {
       setBusy(false)
     }
   }
+
+  const builtInCourse = editing ? getBuiltInTrainingCourse(courseCategory(editing.category)) : null
+  const authoredSections =
+    editing?.trainingNotes.filter((section) => section.title.trim() || section.content.trim()) ?? []
+  const courseSections: Array<DraftSection | NonNullable<typeof builtInCourse>['modules'][number]> =
+    authoredSections.length > 0 ? authoredSections : (builtInCourse?.modules ?? [])
+  const courseUnits = new Set(courseSections.map((section) => section.unit?.trim() || 'Course lessons')).size
+  const courseChecks = courseSections.filter((section) => section.check).length
+  const courseFigures = courseSections.reduce(
+    (total, section) => total + (section.image ? 1 : 0) + (section.check?.image ? 1 : 0),
+    0,
+  )
+  const courseMinutes = courseSections.reduce(
+    (total, section) => total + (Number(section.durationMinutes) || 0),
+    0,
+  )
+  const questionCount =
+    (editing?.assessmentQuestions.length ?? 0) > 0
+      ? editing!.assessmentQuestions.length
+      : BUILT_IN_QUESTION_COUNT
 
   return (
     <div className="flex flex-col gap-4">
@@ -562,12 +680,24 @@ export default function AdminJobsPage() {
                   </p>
                   <div className="mt-2 flex flex-wrap gap-1.5 text-[10px] font-medium text-muted-foreground">
                     <span className="rounded-full border border-border bg-background px-2 py-0.5">
-                      Course · {editing.trainingNotes.length > 0 ? `${editing.trainingNotes.length} authored section${editing.trainingNotes.length === 1 ? '' : 's'}` : `built-in ${editing.category}`}
+                      Course · {authoredSections.length > 0 ? `${authoredSections.length} authored` : `built-in ${editing.category}`}
                     </span>
                     <span className="rounded-full border border-border bg-background px-2 py-0.5">
-                      Assessment · {editing.assessmentQuestions.length > 0
-                        ? `${editing.assessmentQuestions.length} question${editing.assessmentQuestions.length === 1 ? '' : 's'} · pass ${assessmentPassMark(editing.assessmentQuestions.length)}`
-                        : 'built-in 15 · pass 10'}
+                      {courseUnits} units · {courseSections.length} lessons · {courseChecks} checks
+                    </span>
+                    <span className="rounded-full border border-border bg-background px-2 py-0.5">
+                      {courseFigures} figures · ~{courseMinutes} min
+                    </span>
+                    <span className="rounded-full border border-border bg-background px-2 py-0.5">
+                      Assessment · {questionCount} question{questionCount === 1 ? '' : 's'} · pass {assessmentPassMark(questionCount)}
+                    </span>
+                  </div>
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                    <Button type="button" size="sm" variant="outline" className="h-7 gap-1 text-[11px]" onClick={loadBuiltInCourse}>
+                      Load built-in coursebook
+                    </Button>
+                    <span className="text-[10px] leading-tight text-muted-foreground">
+                      Copies the full {builtInCourse?.modules.length ?? 12}-lesson book, figures and checks into the editor.
                     </span>
                   </div>
                 </header>
@@ -714,8 +844,38 @@ export default function AdminJobsPage() {
                               next[index] = { ...section, content: e.target.value }
                               setEditing({ ...editing, trainingNotes: next })
                             }}
-                            placeholder="What the worker should learn in this section… Use blank lines for paragraphs, - for bullets, **bold** for emphasis."
+                            placeholder="What the worker should learn in this section… Use blank lines for paragraphs, - for bullets, **bold** for emphasis, > for a callout, and ## for a sub-heading."
                             className={cn(inputClass, 'leading-relaxed')}
+                          />
+                          <div className="grid gap-1.5 sm:grid-cols-[1fr_9rem]">
+                            <input
+                              value={section.unit}
+                              onChange={(e) => updateSection(index, { unit: e.target.value })}
+                              placeholder="Unit 2 · Method & standards"
+                              maxLength={80}
+                              className={cn(inputClass, 'h-8 text-[11px]')}
+                              aria-label={`Section ${index + 1} unit`}
+                            />
+                            <select
+                              value={section.kind}
+                              onChange={(e) => updateSection(index, { kind: e.target.value as TrainingLessonKind })}
+                              className={cn(inputClass, 'h-8 text-[11px]')}
+                              aria-label={`Section ${index + 1} lesson kind`}
+                            >
+                              {TRAINING_LESSON_KINDS.map((value) => (
+                                <option key={value} value={value}>
+                                  {value.charAt(0).toUpperCase() + value.slice(1)}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <input
+                            value={section.objective}
+                            onChange={(e) => updateSection(index, { objective: e.target.value })}
+                            placeholder="By the end the worker can… (one measurable outcome)"
+                            maxLength={240}
+                            className={cn(inputClass, 'h-8 text-[11px]')}
+                            aria-label={`Section ${index + 1} objective`}
                           />
                           <div className="flex flex-wrap items-center gap-2">
                             <label className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
@@ -859,6 +1019,28 @@ export default function AdminJobsPage() {
                                 <p className="text-[10px] text-muted-foreground">
                                   At least two options are required. Workers answer this before the next lesson unlocks.
                                 </p>
+                                <div className="grid gap-1.5 rounded-lg border border-border/70 bg-background p-2">
+                                  <p className="flex items-center gap-1.5 text-[10px] font-medium text-muted-foreground">
+                                    <ImageIcon className="size-3 text-primary" />
+                                    Question figure (optional)
+                                  </p>
+                                  <input
+                                    value={section.check.image}
+                                    onChange={(e) => updateCheck(index, { image: e.target.value })}
+                                    placeholder="/training/transcription-capstone.svg or https://…"
+                                    maxLength={500}
+                                    className={cn(inputClass, 'h-8 font-mono text-[11px]')}
+                                    aria-label={`Section ${index + 1} check image`}
+                                  />
+                                  <input
+                                    value={section.check.imageAlt}
+                                    onChange={(e) => updateCheck(index, { imageAlt: e.target.value })}
+                                    placeholder="Alt text describing what the question figure shows"
+                                    maxLength={240}
+                                    className={cn(inputClass, 'h-8')}
+                                    aria-label={`Section ${index + 1} check image alt text`}
+                                  />
+                                </div>
                                 <textarea
                                   rows={2}
                                   value={section.check.explanation}
@@ -899,7 +1081,7 @@ export default function AdminJobsPage() {
                     </Button>
                   </div>
                   <p className="text-[11px] leading-snug text-muted-foreground">
-                    Shown in the assessment on the user side — workers need two-thirds correct. Leave empty to use the built-in {editing.category} question bank.{' '}
+                    Shown in the assessment on the user side — workers need two-thirds correct. Leave empty to use the built-in {editing.category} question bank ({BUILT_IN_QUESTION_COUNT} questions).{' '}
                     {editing.assessmentQuestions.length > 0 && (
                       <span className="font-medium text-foreground">
                         Pass mark: {assessmentPassMark(editing.assessmentQuestions.length)} of {editing.assessmentQuestions.length}.
@@ -908,7 +1090,8 @@ export default function AdminJobsPage() {
                   </p>
                   {editing.assessmentQuestions.length === 0 ? (
                     <p className="rounded-lg border border-dashed border-border px-3 py-2.5 text-[11px] text-muted-foreground">
-                      No custom questions — the built-in {editing.category} bank (15 questions, pass 10) will be used.
+                      No custom questions — the built-in {editing.category} bank ({BUILT_IN_QUESTION_COUNT} questions, pass{' '}
+                      {assessmentPassMark(BUILT_IN_QUESTION_COUNT)}) will be used.
                     </p>
                   ) : (
                     <ul className="flex flex-col gap-2">

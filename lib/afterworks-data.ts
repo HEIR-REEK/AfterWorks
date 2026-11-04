@@ -11,14 +11,41 @@ export type JobCategory =
 export type JobStatus = 'open' | 'paused' | 'closed'
 
 /**
+ * The pedagogical role of a lesson. Built-in courses are structured like a short academy
+ * coursebook: concepts explain a rule, scenarios ask the learner to apply it, labs produce a
+ * deliverable, and checkpoints prove readiness before the assessment.
+ */
+export type TrainingLessonKind = 'concept' | 'scenario' | 'lab' | 'checkpoint'
+
+export const TRAINING_LESSON_KINDS: readonly TrainingLessonKind[] = [
+  'concept',
+  'scenario',
+  'lab',
+  'checkpoint',
+]
+
+/** A glossary entry rendered in the course reference section. */
+export type TrainingKeyTerm = {
+  term: string
+  definition: string
+}
+
+/**
  * One training lesson. `content` is a small, plain-text markup subset (paragraphs, `-` bullets,
- * `**bold**`, `` `code` ``) rendered by the training reader. `image` is an optional figure shown
- * beneath the lesson body — a same-origin path such as `/training/transcription-quality.svg`
- * or a plain https URL. Alt text and a caption are authored alongside it.
+ * `> callouts`, `**bold**`, `` `code` ``) rendered by the training reader. `image` is an optional
+ * figure shown beneath the lesson body — a same-origin path such as
+ * `/training/transcription-quality.svg` or a plain https URL. Alt text and a caption are authored
+ * alongside it.
  */
 export type TrainingSection = {
   title: string
   content: string
+  /** Chapter the lesson belongs to, e.g. "Unit 2 · Method & standards". */
+  unit?: string
+  /** Concept, scenario, lab or checkpoint. Drives the badge and course map. */
+  kind?: TrainingLessonKind
+  /** One sentence explaining what the learner can do after this lesson. */
+  objective?: string
   image?: string
   imageAlt?: string
   imageCaption?: string
@@ -28,12 +55,14 @@ export type TrainingSection = {
   check?: TrainingCheck
 }
 
-/** A short end-of-lesson knowledge check. */
+/** A short end-of-lesson knowledge check. It can carry a diagram, like an academy checkpoint. */
 export type TrainingCheck = {
   question: string
   options: string[]
   correctIndex: number
   explanation?: string
+  image?: string
+  imageAlt?: string
 }
 
 /**
@@ -304,8 +333,15 @@ export function paystackSubunitsFor(jobFeeUsd?: number | string | null): number 
 }
 
 /**
- * Pass mark for an assessment of any length. Keeps the original 10-of-15 ratio (⅔, rounded up),
- * so a custom bank of 6 questions needs 4, and the built-in 15-question banks still need 10.
+ * How many questions each built-in category bank carries. Kept in a client-safe module so the
+ * admin console can show the real number without ever importing the answer key. The training
+ * curriculum test checks this against `builtInQuestions()`.
+ */
+export const BUILT_IN_QUESTION_COUNT = 25
+
+/**
+ * Pass mark for an assessment of any length. Keeps the ⅔ ratio, rounded up, so the built-in
+ * 25-question banks need 17 correct and a custom bank of 6 questions needs 4.
  */
 export function assessmentPassMark(questionCount: number): number {
   const n = Math.max(1, Math.floor(questionCount) || 1)

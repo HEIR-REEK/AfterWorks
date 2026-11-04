@@ -68,6 +68,8 @@ function ProfilePageContent() {
   const [activeVerificationUrl, setActiveVerificationUrl] = useState<string | null>(null)
   const [isQrModalOpen, setIsQrModalOpen] = useState(false)
   const [kycFailureReason, setKycFailureReason] = useState<string | null>(null)
+  /** What Didit said about the decline — the reason and the checks that failed, if it said anything. */
+  const [kycFailureDetail, setKycFailureDetail] = useState<{ reason: string | null; checks: string[] } | null>(null)
   /**
    * Client-side phone feedback, so a mistyped number is caught before the round trip. The server
    * re-checks the same rule — including "this number already belongs to another account", which
@@ -131,8 +133,14 @@ function ProfilePageContent() {
     setStartingKyc(true)
     setKycError(null)
     setKycFailureReason(null)
+    setKycFailureDetail(null)
     try {
-      const isMobile = typeof window !== 'undefined' && /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent)
+      // iPadOS in desktop mode sends a "Macintosh" user agent, so the UA test alone sends a tablet
+      // down the desktop QR branch. A touch-capable Mac is a tablet in disguise.
+      const isMobile =
+        typeof window !== 'undefined' &&
+        (/Mobi|Android|iPhone|iPad|iPod|Tablet/i.test(navigator.userAgent) ||
+          (navigator.maxTouchPoints > 1 && /Macintosh/i.test(navigator.userAgent)))
 
       const { getAuth } = await import('firebase/auth')
       const auth = getAuth()
@@ -176,9 +184,12 @@ function ProfilePageContent() {
     }
   }
 
-  const handleKycFailed = () => {
+  const handleKycFailed = (failure?: { reason?: string | null; checks?: string[] | null }) => {
     setIsQrModalOpen(false)
     setKycFailureReason('KYC verification was unsuccessful. Please try again.')
+    if (failure && (failure.reason || (failure.checks && failure.checks.length > 0))) {
+      setKycFailureDetail({ reason: failure.reason ?? null, checks: failure.checks ?? [] })
+    }
   }
 
   // Form state for editing profile
@@ -695,12 +706,44 @@ function ProfilePageContent() {
           </div>
 
           <div className="mt-6 flex flex-col gap-3 pt-2">
+            {/* Didit's verdict is stored on the profile, so a member who comes back tomorrow still
+                sees *why* the last attempt failed instead of a fresh "Verify Now" button. */}
+            {!worker.kycVerified && (worker.kycRejectionReason || (worker.kycFailedChecks?.length ?? 0) > 0) && (
+              <div className="rounded-xl border border-border bg-muted/40 px-4 py-3 text-xs">
+                <p className="font-semibold text-foreground">Last attempt</p>
+                {worker.kycRejectionReason ? (
+                  <p className="mt-0.5 text-muted-foreground">{worker.kycRejectionReason}</p>
+                ) : null}
+                {worker.kycFailedChecks && worker.kycFailedChecks.length > 0 ? (
+                  <ul className="mt-1.5 space-y-1 text-muted-foreground">
+                    {worker.kycFailedChecks.map((check) => (
+                      <li key={check} className="flex items-start gap-1.5">
+                        <span className="mt-1 size-1 shrink-0 rounded-full bg-muted-foreground/60" aria-hidden />
+                        <span>{check}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+            )}
             {kycFailureReason && (
               <div className="flex items-start gap-2.5 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
                 <AlertCircle className="size-4 shrink-0 mt-0.5" />
-                <div>
+                <div className="min-w-0">
                   <p className="font-semibold">Verification Unsuccessful</p>
-                  <p className="mt-0.5 text-xs text-destructive/80">Your KYC check did not pass. Please try again below.</p>
+                  <p className="mt-0.5 text-xs text-destructive/80">
+                    {kycFailureDetail?.reason ?? 'Your KYC check did not pass. Please try again below.'}
+                  </p>
+                  {kycFailureDetail && kycFailureDetail.checks.length > 0 ? (
+                    <ul className="mt-2 space-y-1 text-xs text-destructive/80">
+                      {kycFailureDetail.checks.map((check) => (
+                        <li key={check} className="flex items-start gap-1.5">
+                          <span className="mt-1 size-1 shrink-0 rounded-full bg-destructive/70" aria-hidden />
+                          <span>{check}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
                 </div>
               </div>
             )}

@@ -135,6 +135,10 @@ test('payout audit records the state the request actually moved from', () => {
 
 test('Didit calls carry a hard timeout so a stuck provider cannot pin a worker', () => {
   const didit = read('lib/didit.ts')
-  const matches = didit.match(/AbortSignal\.timeout\(10_000\)/g) ?? []
-  assert.ok(matches.length >= 3, 'session creation and both status fetches need a timeout')
+  assert.match(didit, /AbortSignal\.timeout\(10_000\)/, 'session creation needs a hard timeout')
+  // Status reads go through one helper with a budget the caller can shorten (the webhook cannot
+  // spend ten seconds of Didit's five-second delivery window on a defence-in-depth check).
+  assert.match(didit, /const timeoutMs = options\.timeoutMs \?\? 10_000/)
+  const reads = didit.match(/AbortSignal\.timeout\(timeoutMs\)/g) ?? []
+  assert.ok(reads.length >= 1, 'the status read needs a timeout')
 })

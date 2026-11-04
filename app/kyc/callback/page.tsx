@@ -30,6 +30,8 @@ type StatusApiResponse = {
   diditExpired?: boolean
   diditAbandoned?: boolean
   diditApproved?: boolean
+  rejectionReason?: string | null
+  failedChecks?: string[] | null
 }
 
 function KycCallbackContent() {
@@ -37,6 +39,8 @@ function KycCallbackContent() {
   const router = useRouter()
 
   const [outcome, setOutcome] = useState<KycOutcome>('loading')
+  // Didit's own explanation of a decline, when it gives one.
+  const [failure, setFailure] = useState<{ reason: string | null; checks: string[] } | null>(null)
 
   const device = searchParams.get('device')
   const isCrossDevice = device === 'cross_device'
@@ -87,6 +91,13 @@ function KycCallbackContent() {
           }
 
           const data: StatusApiResponse = await res.json()
+
+          if (!data.isApproved && !data.diditApproved) {
+            setFailure({
+              reason: data.rejectionReason ?? null,
+              checks: Array.isArray(data.failedChecks) ? data.failedChecks : [],
+            })
+          }
 
           if (data.isApproved || data.diditApproved) {
             setOutcome('approved')
@@ -206,6 +217,17 @@ function KycCallbackContent() {
         We were unable to verify your identity. Please try again — make sure your document is
         clear, valid, and well-lit.
       </p>
+      {failure?.reason ? <p className="mt-2 text-xs font-medium text-destructive">{failure.reason}</p> : null}
+      {failure && failure.checks.length > 0 ? (
+        <ul className="mt-3 space-y-1 text-left text-xs text-muted-foreground">
+          {failure.checks.map((check) => (
+            <li key={check} className="flex items-start gap-1.5">
+              <span className="mt-1 size-1 shrink-0 rounded-full bg-destructive/70" aria-hidden />
+              <span>{check}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
       <div className="mt-6 flex flex-col gap-2">
         <button
           onClick={() => router.push('/profile')}

@@ -81,6 +81,17 @@ test('production host checking fails closed and CSP no longer allows arbitrary H
   assert.doesNotMatch(middleware, /connect-src 'self' https:/)
 })
 
+test('the realtime Firestore channel is not blocked out of its WebSocket transport', () => {
+  const middleware = read('middleware.ts')
+  // connect-src lists the Firestore hosts under `https:` only. A WebSocket URL is matched
+  // scheme-by-scheme, so `wss://firestore.googleapis.com/...Listen/channel?...&TYPE=websocket`
+  // was refused and the SDK silently fell back to XHR long-polling (`TYPE=xmlhttp`).
+  assert.match(middleware, /FIREBASE_WSS_HOSTS = 'wss:\/\/\*\.googleapis\.com'/)
+  assert.match(middleware, /connect-src[^`]*\$\{FIREBASE_WSS_HOSTS\}/)
+  // Still not a blanket scheme allowance: the https/wss wildcards are host-scoped.
+  assert.doesNotMatch(middleware, /connect-src[^`]*' wss: /)
+})
+
 test('job slot counters move inside the application transaction', () => {
   const source = read('lib/firestore-admin.ts')
   const start = source.indexOf('export async function transitionApplicationAdmin')

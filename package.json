@@ -11,11 +11,11 @@
     "seed:catalogue": "tsx scripts/seed-jobs.ts",
     "hash:admin-password": "node scripts/hash-admin-password.mjs",
     "deploy:rules": "firebase deploy --only firestore:rules,firestore:indexes",
+    "deploy:indexes": "firebase deploy --only firestore:indexes",
     "test": "tsx --test tests/*.test.ts",
     "test:browser": "playwright test"
   },
   "dependencies": {
-    "@didit-protocol/sdk-web": "^0.2.1",
     "@fontsource-variable/inter": "^5.3.0",
     "@fontsource-variable/jetbrains-mono": "^5.3.0",
     "autoprefixer": "^10.5.2",

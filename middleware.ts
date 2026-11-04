@@ -70,12 +70,12 @@ const ALLOWED_HOSTS = new Set(
 const EXTENSION_PATH = /\.(?:ico|png|jpe?g|svg|webp|avif|gif|css|js|mjs|woff2?|ttf|txt|xml|json|map|webmanifest)$/i
 const ALWAYS_OPEN = ['/maintenance', '/status', '/offline', '/api/health', '/api/maintenance', '/api/admin/auth', '/api/admin/session']
 /** Signature-authenticated inbound integrations: no cookies, no Origin header. */
-const WEBHOOK_PATHS = ['/api/paystack/webhook', '/api/kyc/webhook']
+const WEBHOOK_PATHS = ['/api/paystack/webhook']
 const ADMIN_PATH = /^\/(admin|api\/admin)(\/|$)/
 const RATE_LIMITED: Array<[RegExp, number]> = [
   [/^\/api\/admin\/auth$/, 8],
   [/^\/api\/auth\//, 8],
-  [/^\/api\/kyc\//, 20],
+  [/^\/api\/kyc\//, 10],
   [/^\/api\/paystack\//, 25],
   [/^\/api\/applications/, 30],
   [/^\/api\/wallet/, 60],
@@ -150,7 +150,6 @@ const FIREBASE_HOSTS = 'https://*.firebaseapp.com https://*.firebaseio.com https
  */
 const FIREBASE_WSS_HOSTS = 'wss://*.googleapis.com'
 const PAYSTACK_HOSTS = 'https://checkout.paystack.com https://api.paystack.co https://js.paystack.co'
-const DIDIT_HOSTS = 'https://*.didit.me https://apx.didit.me'
 
 function buildCsp(production: boolean): string {
   const scriptSrc = production
@@ -166,9 +165,9 @@ function buildCsp(production: boolean): string {
     `font-src 'self' data:`,
     `img-src 'self' data: blob: https:`,
     // No blanket `https: wss:`. A successful script injection could otherwise exfiltrate the
-    // member's data to any host; the app only talks to Firebase, Paystack and Didit.
-    `connect-src 'self' ${production ? '' : 'ws: '}${FIREBASE_HOSTS} ${FIREBASE_WSS_HOSTS} ${PAYSTACK_HOSTS} ${DIDIT_HOSTS} wss://*.firebaseio.com wss://*.firebaseapp.com`,
-    `frame-src 'self' ${FIREBASE_HOSTS} ${PAYSTACK_HOSTS} ${DIDIT_HOSTS} https://apis.google.com`,
+    // member's data to any host; the app only talks to Firebase and Paystack.
+    `connect-src 'self' ${production ? '' : 'ws: '}${FIREBASE_HOSTS} ${FIREBASE_WSS_HOSTS} ${PAYSTACK_HOSTS} wss://*.firebaseio.com wss://*.firebaseapp.com`,
+    `frame-src 'self' ${FIREBASE_HOSTS} ${PAYSTACK_HOSTS} https://apis.google.com`,
     `worker-src 'self' blob:`,
     `manifest-src 'self'`,
     `object-src 'none'`,

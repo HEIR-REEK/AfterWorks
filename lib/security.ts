@@ -565,31 +565,26 @@ export function securityChecks(extra?: { firestoreAdminOk?: boolean; maintenance
     fix: 'Create an API key at resend.com, verify the sending domain, set RESEND_API_KEY and EMAIL_FROM.',
   })
 
-  const diditKey = env('DIDIT_API_KEY')
-  const diditWorkflow = env('DIDIT_WORKFLOW_ID')
-  const diditWebhook = env('DIDIT_WEBHOOK_SECRET')
-  const diditConfigured = Boolean(diditKey && diditWorkflow && diditWebhook)
-  // Keys can all be present and the integration still be dead: /v3/* lives on verification.didit.me,
-  // so a base URL pointing at the registration host 404s every call. That failure is invisible in
-  // a "keys present" check, so it gets its own signal.
-  const diditApiUrl = env('DIDIT_API_URL') ?? ''
-  const diditHostWrong = /apx\.didit\.me/i.test(diditApiUrl)
+  // Identity verification is a human review now, so there is no key to be missing and no host to be
+  // wrong. What is worth checking is the opposite of the old one: leftover DIDIT_* variables. They
+  // are inert, but an operator reading this report should be told to delete them rather than
+  // wondering whether some part of the flow still depends on a provider that is no longer called.
+  const diditLeftovers = ['DIDIT_API_KEY', 'DIDIT_WORKFLOW_ID', 'DIDIT_WEBHOOK_SECRET', 'DIDIT_API_URL'].filter(
+    (name) => env(name),
+  )
   checks.push({
-    id: 'didit',
-    label: 'Identity verification (Didit)',
-    severity: diditConfigured && !diditHostWrong ? 'pass' : production ? 'fail' : 'warn',
-    detail: diditHostWrong
-      ? `DIDIT_API_URL is set to ${diditApiUrl}, which serves registration only — /v3/session/ does not exist there, so every verification attempt fails. Run the connection test in Security Centre for the provider's own answer.`
-      : diditConfigured
-        ? 'KYC sessions are created server-side, callbacks are signature-verified, and the webhook re-reads the session before changing a profile.'
-        : `KYC is fail-closed: missing ${[
-            !diditKey ? 'DIDIT_API_KEY' : '',
-            !diditWorkflow ? 'DIDIT_WORKFLOW_ID' : '',
-            !diditWebhook ? 'DIDIT_WEBHOOK_SECRET' : '',
-          ].filter(Boolean).join(', ')}. New sessions and unsigned callbacks are rejected; nobody is auto-approved.`,
-    fix: diditHostWrong
-      ? 'Unset DIDIT_API_URL (the default is https://verification.didit.me), then redeploy.'
-      : 'Set DIDIT_API_KEY, DIDIT_WORKFLOW_ID and DIDIT_WEBHOOK_SECRET from the Didit dashboard (the webhook secret is required; there is no unsigned demo mode).',
+    id: 'kyc',
+    label: 'Identity verification (admin review)',
+    severity: diditLeftovers.length === 0 ? 'pass' : 'warn',
+    detail:
+      diditLeftovers.length === 0
+        ? 'Verification is decided by an owner in the admin console. No provider credentials are required, and kycVerified / kycRequestedAt are server-written only.'
+        : `Verification is decided by an owner in the admin console and no provider is called. Leftover settings are inert and can be deleted: ${diditLeftovers.join(', ')}.`,
+    ...(diditLeftovers.length === 0
+      ? {}
+      : {
+          fix: 'Delete the DIDIT_* variables from the deployment environment (they are no longer read) and from render.yaml.',
+        }),
   })
 
   checks.push({

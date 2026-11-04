@@ -15,7 +15,6 @@ import {
 import { getAuth, type DecodedIdToken, type Auth, type UserInfo } from 'firebase-admin/auth'
 import * as fs from 'fs'
 import * as path from 'path'
-import type { DiditSessionStatus } from '@/lib/didit'
 import { isEmailLike, normalizeEmail, sanitizeLine } from '@/lib/security-core'
 import {
   PHONE_CLAIMS_COLLECTION,
@@ -315,112 +314,37 @@ export async function getUserProfile(uid: string): Promise<Record<string, unknow
   }
 }
 
-// ─── KYC Records ─────────────────────────────────────────────────────────────
+// ─── Identity verification requests ─────────────────────────────────────────
 
 /**
- * Shape of a KYC record stored in the `kyc_records` collection.
+ * Marks a member as waiting for a manual identity review.
  *
- * One document per user (uid = doc ID). Tracks the full lifecycle of the most
- * recent KYC attempt plus a running counter of all-time attempts.
- */
-export type KycRecord = {
-  userId: string
-  sessionId: string
-  sessionToken: string
-  /** Canonical DiditSessionStatus string. */
-  status: DiditSessionStatus
-  /** Raw status string from Didit (for debugging / auditing). */
-  rawStatus?: string
-  /** Human-readable reason if declined, on-hold, or resubmission needed. */
-  rejectionReason?: string
-  /** Which verification sub-checks failed, e.g. ['liveness', 'document']. */
-  failedChecks?: string[]
-  /** Total number of KYC attempts made by this user. */
-  attemptCount?: number
-  /** Timestamp of the very first attempt (ISO 8601). */
-  firstAttemptAt?: string
-  /** Timestamp of the most recent status update (ISO 8601). Set server-side. */
-  updatedAt?: FieldValue
-}
-
-/**
- * Creates or updates the KYC record for a user with the latest session details.
+ * There is no verification provider any more: an owner reviews the member in the admin console and
+ * calls `verifyKycAdmin` to approve or reject. This function is the member's half of that exchange,
+ * so it only stamps the request — it must never write `kycVerified` or any other privileged field,
+ * and the timestamp is what the console's queue is built on.
  *
- * The document is keyed by uid so there is at most one record per user.
- * `attemptCount` increments atomically only when a brand-new session ID is written.
+ * `updateUserProfile` refuses privileged keys, so the write goes through the Admin SDK directly.
  */
-export async function saveKycRecord(
-  uid: string,
-  sessionId: string,
-  sessionToken: string,
-  status: DiditSessionStatus,
-  extras?: {
-    rawStatus?: string
-    rejectionReason?: string
-    failedChecks?: string[]
-  },
-): Promise<void> {
-  try {
-    const app = getAdminApp()
-    const db = getFirestore(app)
-    const recordRef = db.collection('kyc_records').doc(uid)
-
-    // Atomically increment attemptCount when a new session begins
-    await db.runTransaction(async (tx) => {
-      const snap = await tx.get(recordRef)
-      const existing = snap.data() as Partial<KycRecord> | undefined
-
-      // Only bump the attempt counter when the session ID changes
-      const isNewSession = !existing?.sessionId || existing.sessionId !== sessionId
-      const currentCount = typeof existing?.attemptCount === 'number' ? existing.attemptCount : 0
-      const newCount = isNewSession ? currentCount + 1 : currentCount
-
-      const update: Partial<KycRecord> & { updatedAt: FieldValue; attemptCount: number } = {
-        userId: uid,
-        sessionId,
-        sessionToken,
-        status,
-        rawStatus: extras?.rawStatus ?? status,
-        attemptCount: newCount,
-        updatedAt: FieldValue.serverTimestamp(),
-      }
-
-      if (extras?.rejectionReason) update.rejectionReason = extras.rejectionReason
-      if (extras?.failedChecks?.length) update.failedChecks = extras.failedChecks
-
-      // Preserve firstAttemptAt across updates
-      if (!existing?.firstAttemptAt) {
-        (update as Record<string, unknown>).firstAttemptAt = new Date().toISOString()
-      }
-
-      // Strip undefined — Firestore doesn't accept it
-      const clean = Object.fromEntries(
-        Object.entries(update).filter(([, v]) => v !== undefined),
-      )
-      tx.set(recordRef, clean, { merge: true })
-    })
-
-    console.log(`[FirestoreAdmin] KYC record saved for uid=${uid}:`, { sessionId, status })
-  } catch (err) {
-    console.error('[FirestoreAdmin] saveKycRecord failed for uid:', uid, err)
-  }
-}
-
-/**
- * Retrieves the KYC record for a user.
- * Returns null if no record exists or an error occurs.
- */
-export async function getKycRecord(uid: string): Promise<KycRecord | null> {
-  try {
-    const app = getAdminApp()
-    const db = getFirestore(app)
-    const snap = await db.collection('kyc_records').doc(uid).get()
-    if (!snap.exists) return null
-    return snap.data() as KycRecord
-  } catch (err) {
-    console.error('[FirestoreAdmin] getKycRecord failed for uid:', uid, err)
-    return null
-  }
+export async function requestKycReview(uid: string): Promise<{ requestedAt: string; alreadyRequested: boolean }> {
+  const db = adminDb()
+  const now = new Date().toISOString()
+  const ref = db.collection('users').doc(uid)
+  const snap = await ref.get()
+  const alreadyRequested = Boolean((snap.data() ?? {}).kycRequestedAt)
+  await ref.set(
+    {
+      kycRequestedAt: now,
+      // A member who asks again after a rejection is asking for a fresh look: clear the verdict so
+      // the console shows "requested" rather than a stale "declined".
+      ...(alreadyRequested ? {} : { kycStatus: 'requested', updatedAt: now }),
+    },
+    { merge: true },
+  )
+  // Asking for identity review is a state change like any other, and the audit log is the only
+  // record of a member waiting. Without it a queue that nobody worked would look like nobody asked.
+  await createAuditEntry('KYC_REVIEW_REQUESTED', { uid, alreadyRequested })
+  return { requestedAt: now, alreadyRequested }
 }
 
 /**
@@ -2120,7 +2044,6 @@ export async function hardDeleteAccount(
       referralsAsReferrer,
       referralsAsReferred,
       sessions,
-      kycSnap,
       payoutOpenSnap,
       referralSelfSnap,
       referralCodeSelfSnap,
@@ -2140,7 +2063,6 @@ export async function hardDeleteAccount(
       db.collection('referrals').where('referrerUid', '==', uid).get(),
       db.collection('referrals').where('referredUid', '==', uid).get(),
       targetEmail ? db.collection('admin_sessions').where('email', '==', targetEmail).get() : Promise.resolve(null),
-      db.collection('kyc_records').doc(uid).get(),
       db.collection('payout_open').doc(uid).get(),
       db.collection('referrals').doc(uid).get(),
       profileReferralCode ? db.collection('referral_codes').doc(profileReferralCode).get() : Promise.resolve(null),
@@ -2210,7 +2132,6 @@ export async function hardDeleteAccount(
       ...referralsAsReferred.docs.map((d) => d.ref),
       ...(referralSelfSnap.exists ? [referralSelfSnap.ref] : []),
     ])
-    removed.kyc = await deleteRefsInChunks(db, kycSnap.exists ? [kycSnap.ref] : [])
     removed.payoutOpen = await deleteRefsInChunks(db, payoutOpenSnap.exists ? [payoutOpenSnap.ref] : [])
     // Release the phone claim only after the profile is about to go. Without this the number stays
     // owned by a uid that no longer exists and can never be registered again.
@@ -2463,6 +2384,8 @@ export async function verifyKycAdmin(
   // Manual KYC approval proves identity; it must not silently lift a suspension or ban that an
   // owner applied. Support can verify the document, but only an owner can restore the account.
   const restricted = currentState === 'suspended' || currentState === 'banned'
+  // Deciding on a review retires the request that produced it, so the console's queue empties.
+  const retire = { kycRequestedAt: null, updatedAt: now }
   await db.collection('users').doc(uid).set(
     approve
       ? {
@@ -2472,7 +2395,7 @@ export async function verifyKycAdmin(
           kycVerifiedAt: now,
           kycRejectionReason: null,
           kycProvider: 'admin-review',
-          updatedAt: now,
+          ...retire,
         }
       : {
           kycVerified: false,
@@ -2482,7 +2405,7 @@ export async function verifyKycAdmin(
           ...(restricted ? {} : { accountState: 'kyc_rejected' }),
           kycRejectedAt: now,
           kycRejectionReason: reason.slice(0, 300),
-          updatedAt: now,
+          ...retire,
         },
     { merge: true },
   )
@@ -2503,6 +2426,12 @@ export type PlatformStats = {
   totals: {
     users: number
     kycVerified: number
+    /**
+     * Members waiting for a review: they asked (kycRequestedAt is set) and nobody has decided yet.
+     * A decision clears the timestamp, so this is the live queue rather than a guess.
+     */
+    kycRequested: number
+    /** Everyone who is neither verified nor suspended — not the same thing as the queue above. */
     kycPending: number
     suspended: number
     activeLast7d: number
@@ -2549,6 +2478,7 @@ export async function getPlatformStats(): Promise<PlatformStats> {
       totals: {
         users: 0,
         kycVerified: 0,
+        kycRequested: 0,
         kycPending: 0,
         suspended: 0,
         activeLast7d: 0,
@@ -2577,6 +2507,7 @@ export async function getPlatformStats(): Promise<PlatformStats> {
   const [
     totalUsers,
     verified,
+    kycRequested,
     suspended,
     jobsOpen,
     jobsPaused,
@@ -2592,6 +2523,9 @@ export async function getPlatformStats(): Promise<PlatformStats> {
   ] = await Promise.all([
     safeCount(() => users),
     safeCount(() => users.where('kycVerified', '==', true)),
+    // The review queue. Approving or rejecting clears kycRequestedAt, so what is left is exactly
+    // the members who are waiting — a single-field inequality, so it needs no composite index.
+    safeCount(() => users.where('kycRequestedAt', '!=', null)),
     safeCount(() => users.where('accountState', 'in', ['suspended', 'banned'])),
     safeCount(() => jobsCol.where('status', '==', 'open')),
     safeCount(() => jobsCol.where('status', '==', 'paused')),
@@ -2667,6 +2601,7 @@ export async function getPlatformStats(): Promise<PlatformStats> {
     totals: {
       users: totalUsers,
       kycVerified: verified,
+      kycRequested,
       kycPending: Math.max(0, totalUsers - verified - suspended),
       suspended,
       // From Auth, because "active" means somebody signed in — a `users` document only proves they
@@ -3347,9 +3282,22 @@ export async function notifyUser(uid: string, input: NotificationInput): Promise
 
 // ─── Audit log reads ───────────────────────────────────────────────────────────
 
-export async function listAuditLogs(opts: { limit?: number; action?: string; search?: string } = {}): Promise<AdminAuditRow[]> {
+/**
+ * Reads the console's audit ledger, newest first.
+ *
+ * The filtered read (`action ==` + `orderBy timestamp desc`) needs the composite index declared in
+ * `firestore.indexes.json` (admin_logs: action ASC, timestamp DESC). An index that is declared but
+ * never deployed (`npm run deploy:indexes`) fails the whole query with FAILED_PRECONDITION, and the
+ * old fallback then read `limit` documents with **no ordering at all** — an arbitrary, usually the
+ * oldest, slice of the ledger, presented as if it were the log. An operator auditing an incident
+ * reads the wrong rows and trusts them. The fallback now scans a bounded window, sorts it here, and
+ * returns `degraded` so the console says the view is approximate instead of pretending it is not.
+ */
+export async function listAuditLogs(
+  opts: { limit?: number; action?: string; search?: string } = {},
+): Promise<{ rows: AdminAuditRow[]; degraded?: string }> {
   const db = dbOrNull()
-  if (!db) return []
+  if (!db) return { rows: [] }
   const size = Math.min(200, Math.max(10, opts.limit ?? 60))
   const search = normaliseSearch(opts.search)
   try {
@@ -3363,15 +3311,24 @@ export async function listAuditLogs(opts: { limit?: number; action?: string; sea
     if (search) {
       rows = rows.filter((row) => JSON.stringify(row).toLowerCase().includes(search)).slice(0, size)
     }
-    return rows
+    return { rows }
   } catch (err) {
-    console.warn('[FirestoreAdmin] listAuditLogs fell back to unordered read:', err)
-    const snap = await db.collection('admin_logs').limit(size).get()
-    const rows = snap.docs.map((d) => d.data() as AdminAuditRow)
+    console.warn('[FirestoreAdmin] listAuditLogs fell back to a bounded scan (composite index missing?):', err)
+    const scanLimit = Math.min(1_000, Math.max(ADMIN_SEARCH_SCAN_LIMIT, size * 5))
+    const snap = await db.collection('admin_logs').limit(scanLimit).get()
+    let rows = snap.docs.map((d) => d.data() as AdminAuditRow)
+    // Firestore cannot merge single-field indexes, so the ordering has to happen here — and a
+    // bounded scan can only see the window it read, which is why the caller is told it is
+    // approximate rather than being handed a confident, wrong answer.
     rows.sort((a, b) => String(b.timestamp).localeCompare(String(a.timestamp)))
-    return search
+    rows = search
       ? rows.filter((r) => JSON.stringify(r).toLowerCase().includes(search)).slice(0, size)
-      : rows
+      : rows.slice(0, size)
+    return {
+      rows,
+      degraded:
+        'This view is an approximate scan: the admin_logs composite index (action + timestamp) is not deployed on this project, so the newest entries may be missing. Deploy it with `npm run deploy:indexes`.',
+    }
   }
 }
 

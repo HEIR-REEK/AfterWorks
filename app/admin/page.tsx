@@ -188,11 +188,11 @@ export default function AdminOverviewPage() {
         <AdminCard title="Work queues" description="What needs a human decision today." icon={<Clock3 className="size-4" />}>
           <ul className="flex flex-col divide-y divide-border/60">
             <QueueRow
-              label="KYC awaiting decision"
-              value={stats?.totals.kycPending ?? 0}
-              href="/admin/users?state=kyc_on_hold"
-              tone={stats && stats.totals.kycPending > 10 ? 'warning' : 'neutral'}
-              hint="Verify or decline from Users & KYC."
+              label="Identity reviews waiting"
+              value={stats?.totals.kycRequested ?? 0}
+              href="/admin/users?state=kyc_pending"
+              tone={stats && stats.totals.kycRequested > 0 ? 'warning' : 'neutral'}
+              hint="Members who asked and are waiting. Approve or decline from Users."
             />
             <QueueRow label="Applications to triage" value={stats?.applications.underReview ?? 0} href="/admin/applications?status=under_review" tone="neutral" hint="Approve reserves a slot." />
             <QueueRow label="Submissions in QA" value={Math.max(0, (stats?.applications.active ?? 0) - (stats?.applications.underReview ?? 0))} href="/admin/applications" tone="neutral" hint="Approving pays the worker." />

@@ -5,7 +5,7 @@ where required, pass an assessment, apply, submit work, and get paid into a wall
 mobile money. An operations console handles KYC decisions, QA, the catalogue, payouts and maintenance
 windows.
 
-Next.js 14 (App Router) · Firestore · Firebase Auth · Paystack · Didit · Tailwind v4. There is no
+Next.js 14 (App Router) · Firestore · Firebase Auth · Paystack · Tailwind v4. There is no
 separate Express/Prisma backend — the API routes in `app/api/**` *are* the server.
 
 ## Run it

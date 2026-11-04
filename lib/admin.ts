@@ -411,7 +411,14 @@ export const adminApi = {
       timeoutMs: 60_000,
     }),
   auditLogs: (query: { limit?: number; action?: string; search?: string }) =>
-    apiFetch<{ ok: boolean; logs: Record<string, unknown>[]; actions: string[]; exportUrl: string }>('/api/admin/audit', { query }),
+    apiFetch<{
+      ok: boolean
+      logs: Record<string, unknown>[]
+      actions: string[]
+      exportUrl: string
+      /** Set when the admin_logs composite index is not deployed: the view is an approximate scan. */
+      degraded?: string | null
+    }>('/api/admin/audit', { query }),
   /** Who you are to the API right now — the authority the console runs on, with its real expiry. */
   sessionInfo: () =>
     apiFetch<{
@@ -442,36 +449,6 @@ export const adminApi = {
    * outage. The member must not see which one it was; the operator must. This reads the provider
    * live and reports configuration as booleans only.
    */
-  kycDiagnose: () =>
-    apiFetch<{
-      ok: boolean
-      healthy: boolean
-      config: {
-        host: string
-        apiUrl: string
-        usesRegistrationHost: boolean
-        hasApiKey: boolean
-        hasWorkflowId: boolean
-        hasWebhookSecret: boolean
-        missing: string[]
-      }
-      probe: {
-        reachable: boolean
-        status: number | null
-        detail: string
-        workflows: { id: string; label: string; status: string; version?: number }[]
-        workflowFound: boolean
-        hint: string | null
-      }
-      /** Where Didit sends the member after the flow — and whether their browser can reach it. */
-      callback: {
-        url: string
-        origin: string
-        source: 'env' | 'forwarded-host' | 'host-header' | 'request-origin'
-        isPublicHttps: boolean
-      }
-      hint: string | null
-    }>('/api/admin/kyc/diagnose', { timeoutMs: 20_000 }),
   /** Staff desk (owner only): list console accounts, add staff with an owner-chosen password, reset, disable, remove. */
   staff: () => apiFetch<{ ok: boolean; owners: string[]; staff: AdminStaffAccountRow[]; degraded?: string }>('/api/admin/staff'),
   staffAdd: (body: { email: string; passcode: string }) =>

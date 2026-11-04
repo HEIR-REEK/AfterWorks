@@ -150,7 +150,6 @@ test('the public status feed describes services, not configuration', async () =>
     'ADMIN_SESSION_SECRET',
     'FIREBASE_SERVICE_ACCOUNT_JSON',
     'PAYSTACK',
-    'DIDIT',
     'RESEND',
     'Firebase',
     'Firestore',

@@ -110,6 +110,8 @@ export type AdminUserSearchRecord = {
   payoutNumber?: string
   accountState?: string
   kycVerified?: boolean
+  /** Set while a member is waiting for a review; cleared when one is decided. */
+  kycRequestedAt?: string
   role?: string
   isAdmin?: boolean
 }
@@ -120,12 +122,10 @@ export function userMatchesState(row: AdminUserSearchRecord, state: UserStateFil
   const accountState = row.accountState || 'active'
   if (state === 'restricted') return accountState === 'suspended' || accountState === 'banned'
   if (state === 'kyc_pending') {
-    return (
-      row.kycVerified !== true &&
-      accountState !== 'kyc_rejected' &&
-      accountState !== 'suspended' &&
-      accountState !== 'banned'
-    )
+    // The review queue, not "everyone who is not verified yet". A member who never asked is not
+    // waiting, and a member who was already declined is not waiting either — they were answered.
+    // Without this the filter and the dashboard tile both counted the whole member base.
+    return Boolean(row.kycRequestedAt) && row.kycVerified !== true
   }
   return accountState === state
 }

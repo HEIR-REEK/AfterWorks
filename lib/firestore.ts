@@ -98,6 +98,11 @@ export type UserProfile = {
   kycLevel?: string
   kycStatus?: string
   kycRejectionReason?: string | null
+  /**
+   * When the member last asked an owner to review their identity. Server-written only (it is in
+   * firestore.rules' privilegedKeys) because the admin console's review queue orders by it.
+   */
+  kycRequestedAt?: string
   kycFailedChecks?: string[] | null
   createdAt?: unknown
   updatedAt?: unknown

@@ -61,15 +61,6 @@ function AdminSecurityPageInner() {
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [health, setHealth] = useState<Record<string, unknown> | null>(null)
-  /**
-   * The identity provider's own answer. "Identity verification could not be started" is the same
-   * sentence for a missing key, a wrong host, a revoked key, a workflow from another application,
-   * exhausted credits and a provider outage — the member must not be told which, so the operator
-   * tests it here and reads it here.
-   */
-  const [kyc, setKyc] = useState<Awaited<ReturnType<typeof adminApi.kycDiagnose>> | null>(null)
-  const [kycBusy, setKycBusy] = useState(false)
-  const [kycError, setKycError] = useState<string | null>(null)
   const [showRevoked, setShowRevoked] = useState(false)
   const [unlockTarget, setUnlockTarget] = useState<string | null>(null)
   const [revokeTarget, setRevokeTarget] = useState<ActiveAdminSession | null>(null)
@@ -107,18 +98,6 @@ function AdminSecurityPageInner() {
   useEffect(() => {
     if (session.status === 'authorized') void load()
   }, [session.status, load])
-
-  const runKycTest = useCallback(async () => {
-    setKycBusy(true)
-    setKycError(null)
-    try {
-      setKyc(await adminApi.kycDiagnose())
-    } catch (err) {
-      setKycError(err instanceof Error ? err.message : 'The connection test could not run.')
-    } finally {
-      setKycBusy(false)
-    }
-  }, [])
 
   const fails = posture.filter((c) => c.severity === 'fail')
   const warns = posture.filter((c) => c.severity === 'warn')
@@ -207,106 +186,33 @@ function AdminSecurityPageInner() {
         </AdminCard>
       </div>
 
-      {/* Identity verification — the one place the provider's refusal is readable */}
+      {/* Identity verification — how the manual review works, and where the queue is worked */}
       <AdminCard
-        title="Identity verification (Didit)"
-        description="Live connection test. Members only ever see “verification could not be started”; the reason is here."
+        title="Identity verification (admin review)"
+        description="There is no provider to connect to. Members ask for a review from their profile; the queue lives on the Users page."
         icon={<ShieldCheck className="size-4" />}
-        actions={
-          <Button variant="outline" size="sm" className="gap-1.5" onClick={() => void runKycTest()} disabled={kycBusy}>
-            {kycBusy ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
-            {kyc ? 'Test again' : 'Test connection'}
-          </Button>
-        }
       >
-        {kycError ? (
-          <p className="rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">{kycError}</p>
-        ) : !kyc ? (
-          <p className="text-xs text-muted-foreground">
-            Reads the provider’s workflow list — the cheapest call that proves the API host, key and workflow together,
-            without spending a verification credit or creating a session.
+        <div className="space-y-3 text-xs leading-relaxed text-muted-foreground">
+          <p>
+            Identity is decided by a person. A member presses <span className="font-semibold text-foreground">Request
+            verification</span> on their profile, which stamps a review request on their account. Open the member on the{' '}
+            <span className="font-semibold text-foreground">Users</span> page and use{' '}
+            <span className="font-semibold text-foreground">Approve KYC</span> or{' '}
+            <span className="font-semibold text-foreground">Revoke verification</span> — the same decision a provider webhook
+            used to make, recorded against your account in the audit log.
           </p>
-        ) : (
-          <div className="flex flex-col gap-3">
-            <dl className="grid grid-cols-2 gap-2 text-xs">
-              <Row
-                label="API host"
-                value={kyc.config.host || 'not set'}
-                mono
-                tone={kyc.config.usesRegistrationHost ? 'fail' : 'ok'}
-              />
-              <Row label="API key" value={kyc.config.hasApiKey ? 'Present' : 'Missing'} tone={kyc.config.hasApiKey ? 'ok' : 'fail'} />
-              <Row
-                label="Workflow"
-                value={kyc.config.hasWorkflowId ? (kyc.probe.workflowFound ? 'Found on this key' : 'Not on this key') : 'Missing'}
-                tone={kyc.probe.workflowFound ? 'ok' : 'fail'}
-              />
-              <Row
-                label="Webhook secret"
-                value={kyc.config.hasWebhookSecret ? 'Set' : 'Missing'}
-                tone={kyc.config.hasWebhookSecret ? 'ok' : 'warn'}
-              />
-              <Row
-                label="Provider reply"
-                value={kyc.probe.status === null ? 'No response' : `HTTP ${kyc.probe.status}`}
-                mono
-                tone={kyc.probe.status && kyc.probe.status < 300 ? 'ok' : 'fail'}
-              />
-              <Row
-                label="Callback URL"
-                value={kyc.callback?.origin ?? 'unknown'}
-                mono
-                tone={kyc.callback?.isPublicHttps ? 'ok' : 'warn'}
-              />
-              <Row label="Verdict" value={kyc.healthy ? 'Ready to verify' : 'Not usable'} tone={kyc.healthy ? 'ok' : 'fail'} />
-            </dl>
-
-            {kyc.callback && !kyc.callback.isPublicHttps ? (
-              <p className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] leading-relaxed text-amber-600 dark:text-amber-400">
-                Didit would send members back to {kyc.callback.url} — not a public https address (resolved from{' '}
-                {kyc.callback.source}). Sessions still start, then the member is stranded at the end of the flow. Set
-                NEXT_PUBLIC_APP_URL to the deployed site.
-              </p>
-            ) : null}
-
-            <p className={cn('text-xs leading-relaxed', kyc.healthy ? 'text-muted-foreground' : 'text-destructive')}>
-              {kyc.probe.detail}
-            </p>
-            {kyc.hint || kyc.probe.hint ? (
-              <p className="rounded-xl border border-border/70 bg-background/60 px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
-                <span className="font-semibold text-foreground">Fix: </span>
-                {kyc.hint ?? kyc.probe.hint}
-              </p>
-            ) : null}
-
-            {kyc.config.usesRegistrationHost ? (
-              <p className="rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-2 text-[11px] text-destructive">
-                DIDIT_API_URL is set to the registration host. /v3/session/ does not exist there, so every verification
-                attempt fails — unset it to use https://verification.didit.me.
-              </p>
-            ) : null}
-
-            {!kyc.probe.workflowFound && kyc.probe.workflows.length > 0 ? (
-              <div className="rounded-xl border border-border/70 bg-background/60 p-3">
-                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                  Workflows on this key
-                </p>
-                <ul className="mt-1.5 flex flex-col gap-1">
-                  {kyc.probe.workflows.slice(0, 8).map((workflow) => (
-                    <li key={workflow.id} className="flex flex-wrap items-center gap-x-2 text-[11px]">
-                      <span className="font-medium text-foreground">{workflow.label}</span>
-                      <span className="text-muted-foreground">{workflow.status}</span>
-                      <code className="font-mono text-[10px] text-muted-foreground">{workflow.id}</code>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
-          </div>
-        )}
+          <p>
+            Approving is what unlocks paid work, withdrawals and referral payouts. Revoking locks them again and tells the
+            member why, so the reason you type is the message they read.
+          </p>
+          <p className="rounded-xl border border-border/70 bg-background/60 px-3 py-2">
+            A member cannot write their own verification state. <code className="font-mono">kycVerified</code> and{' '}
+            <code className="font-mono">kycRequestedAt</code> are privileged keys in firestore.rules, and the member-facing
+            route can only stamp the request timestamp.
+          </p>
+        </div>
       </AdminCard>
 
-      {/* Active sessions — who is currently inside the console */}
       <AdminCard
         title="Active console sessions"
         description="Every signed, unexpired admin cookie issued on this deployment. Revoking one device kills only that token."

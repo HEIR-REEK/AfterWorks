@@ -181,6 +181,11 @@ export type AdminUserRowModel = {
   accountState: string
   kycVerified: boolean
   kycStatus?: string
+  /**
+   * When the member last asked for a review, or undefined if they never have. The console's
+   * verification queue is "unverified members with a kycRequestedAt", newest first.
+   */
+  kycRequestedAt?: string
   role: string
   qualityScore: number
   jobsCompleted: number
@@ -308,6 +313,7 @@ export function adminUserRowFromDoc(
     accountState: asText(doc.accountState).trim() || 'active',
     kycVerified: doc.kycVerified === true,
     kycStatus: asText(doc.kycStatus).trim() || undefined,
+    kycRequestedAt: coerceIsoTimestamp(doc.kycRequestedAt) ?? undefined,
     role: doc.isAdmin === true ? 'admin' : asText(doc.role).trim() || 'user',
     qualityScore: asCount(doc.qualityScore, 100),
     jobsCompleted: asCount(doc.jobsCompleted, 0),
@@ -447,6 +453,7 @@ export type AdminPlatformStats = {
   totals: {
     users: number
     kycVerified: number
+    kycRequested: number
     kycPending: number
     suspended: number
     activeLast7d: number
@@ -518,6 +525,7 @@ export function normalisePlatformStats(raw: unknown): AdminPlatformStats {
     totals: {
       users: asCount(totals.users, 0),
       kycVerified: asCount(totals.kycVerified, 0),
+      kycRequested: asCount(totals.kycRequested, 0),
       kycPending: asCount(totals.kycPending, 0),
       suspended: asCount(totals.suspended, 0),
       activeLast7d: asCount(totals.activeLast7d, 0),

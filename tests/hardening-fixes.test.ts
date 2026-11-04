@@ -46,17 +46,28 @@ test('completion pays through one transaction and a deterministic ledger create'
   assert.match(block, /You cannot approve and pay your own application/)
 })
 
-test('identity verification has no unsigned or demo approval path', () => {
-  const didit = read('lib/didit.ts')
-  const webhook = read('app/api/kyc/webhook/route.ts')
-  // A missing credential is a *configuration* failure (503 to the caller), not a provider outage —
-  // the two used to be the same "try again in a few minutes" and neither was true.
-  assert.match(didit, /export class DiditConfigError/)
-  assert.match(didit, /\.\.\.\(missingKey \? \['DIDIT_API_KEY'\] : \[\]\)/)
-  assert.match(didit, /\.\.\.\(missingWorkflow \? \['DIDIT_WORKFLOW_ID'\] : \[\]\)/)
-  assert.match(didit, /demo_session_/)
-  assert.match(webhook, /DIDIT_WEBHOOK_SECRET is not configured/)
-  assert.match(webhook, /does not belong to uid/)
+test('identity verification cannot be self-granted, and has no demo approval path', () => {
+  const rules = read('firestore.rules')
+  const requestRoute = read('app/api/kyc/request/route.ts')
+  const admin = read('lib/firestore-admin.ts')
+
+  // There is no provider and no webhook, so the only way `kycVerified` becomes true is a person in
+  // the admin console. That has to be structurally true, not a convention: the member-facing route
+  // must not be able to write the field, and the rules must refuse a browser that tries.
+  assert.match(rules, /'kycVerified'/, 'kycVerified must stay on the privileged list')
+  assert.match(rules, /'kycRequestedAt'/, 'the review timestamp is server-written too')
+  // The route may echo `kycVerified` back to the client as state, but the only server function it
+  // can reach is the one that stamps a request — it has no import through which it could write a
+  // verdict, and the rules would refuse it anyway.
+  assert.match(
+    requestRoute,
+    /import \{ requestKycReview, getUserProfile \} from '@\/lib\/firestore-admin'/,
+    'the member route reaches exactly two server helpers, neither of which can verify anyone',
+  )
+
+  // The one writer, and it is server-side only.
+  assert.match(admin, /export async function verifyKycAdmin/)
+  assert.doesNotMatch(admin, /demo_/, 'no demo identity may be approved')
 })
 
 test('password reset hides whether an address has an account', () => {
@@ -148,12 +159,11 @@ test('payout audit records the state the request actually moved from', () => {
   assert.match(route, /Only the main administrator can mark a payout as paid/)
 })
 
-test('Didit calls carry a hard timeout so a stuck provider cannot pin a worker', () => {
-  const didit = read('lib/didit.ts')
-  assert.match(didit, /AbortSignal\.timeout\(10_000\)/, 'session creation needs a hard timeout')
-  // Status reads go through one helper with a budget the caller can shorten (the webhook cannot
-  // spend ten seconds of Didit's five-second delivery window on a defence-in-depth check).
-  assert.match(didit, /const timeoutMs = options\.timeoutMs \?\? 10_000/)
-  const reads = didit.match(/AbortSignal\.timeout\(timeoutMs\)/g) ?? []
-  assert.ok(reads.length >= 1, 'the status read needs a timeout')
+test('a verification request is rate limited and cannot pin a worker', () => {
+  const route = read('app/api/kyc/request/route.ts')
+  // The provider round trips this route used to make are gone, but the write is still a remote
+  // call, and a member tapping the button repeatedly is still a flood. Both guards stay.
+  assert.match(route, /rateLimit\(req, 'kyc-request'/, 'a burst of requests must be shed at the edge')
+  assert.match(route, /consumeBucket\('kyc-request-write'/, 'the write itself needs its own per-member budget')
+  assert.match(route, /getUserProfile/, 'an already-verified member is told so instead of queueing a no-op review')
 })

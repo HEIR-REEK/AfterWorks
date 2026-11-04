@@ -111,8 +111,8 @@ const STEPS = [
   },
   {
     icon: Fingerprint,
-    title: 'Verify your identity',
-    body: 'A one-time government-ID and liveness check through our verification partner. We keep the result, not your document. You can pay a job card’s training fee before this check, but training and its assessment open only once it is approved.',
+    title: 'Request identity verification',
+    body: 'Ask for a review from your profile and our team checks it, usually the same day. Approval unlocks paid work, withdrawals and referral payouts. You can pay a job card’s training fee before this review, but training and its assessment open only once it is approved.',
   },
   {
     icon: Briefcase,
@@ -195,7 +195,7 @@ const TRUST = [
   {
     icon: Fingerprint,
     title: 'Identity, checked once',
-    body: 'A government ID and liveness check through our verification partner. The document is not stored on AfterWorks servers — the outcome is.',
+    body: 'A one-time identity review by our own team. Ask for it from your profile; once it is approved you are done, and it applies everywhere on the platform.',
   },
   {
     icon: CheckCircle2,
@@ -503,7 +503,7 @@ export default function LandingPage() {
                 {
                   icon: Fingerprint,
                   title: 'One account, one identity',
-                  body: 'Email confirmation and a government-ID check keep duplicate accounts off the board, so the person who did the work is the person who gets paid.',
+                  body: 'Email confirmation and a one-time identity review keep duplicate accounts off the board, so the person who did the work is the person who gets paid.',
                 },
                 {
                   icon: Wallet,

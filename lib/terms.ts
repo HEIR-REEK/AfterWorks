@@ -15,7 +15,7 @@
  * re-accepted; the current version is never presented as the one an older account accepted.
  *
  * These documents describe the platform that actually exists in this repository: Firebase Auth and
- * Firestore, Didit identity verification, Paystack training payments, Resend transactional email,
+ * Firestore, manual identity review, Paystack training payments, Resend transactional email,
  * a wallet with a clearing window and mobile-money/bank payouts. Keep that mapping when editing —
  * a clause that promises a process the code does not run is worse than no clause at all.
  */
@@ -67,9 +67,9 @@ export const TERMS_SECTIONS: readonly TermsSection[] = [
     id: 'eligibility',
     title: '3. Identity verification (KYC)',
     paragraphs: [
-      'Before you can start training, take an assessment, take paid work or receive a payout, you must complete identity verification. Verification is carried out by our identity-verification provider: you submit your government ID and liveness/selfie check directly to that provider, and the document itself is not stored on AfterWorks servers. We receive and keep the outcome, the provider reference, and any reason a check was declined or requires resubmission. You may pay a job card’s training fee before verification, but the training material and assessment for that card stay locked until the check is approved.',
+      'Before you can start training, take an assessment, take paid work or receive a payout, you must complete identity verification. Verification is carried out by our own review team: you request it from your profile, our team reviews the information you provide, and the decision is recorded against your account. We keep the outcome, the date it was decided, and any reason a check was declined or requires another look. You may pay a job card’s training fee before verification, but the training material and assessment for that card stay locked until the check is approved.',
       'We may also carry out checks required by sanctions, anti-money-laundering and counter-terrorism-financing rules. We may decline an application, delay a payout or ask for more information where a check is incomplete or inconsistent.',
-      'If verification is declined, placed on hold or later revoked, your account moves to the corresponding restricted state. Applications stop, withdrawals stop, and your referral code stops working. Where the provider allows a resubmission, you may correct the problem and try again. You may ask us to review a verification decision by contacting the address in section 17.',
+      'If verification is declined, placed on hold or later revoked, your account moves to the corresponding restricted state. Applications stop, withdrawals stop, and your referral code stops working. You may ask for another review once you have corrected the problem, and you may ask us to review a verification decision by contacting the address in section 17.',
     ],
   },
   {
@@ -193,7 +193,7 @@ export const TERMS_SECTIONS: readonly TermsSection[] = [
       'The Platform is provided on an “as is” and “as available” basis. We work to keep it accurate, available and secure, but we do not promise that it will be uninterrupted, error-free, or available during maintenance windows, provider outages or events outside our reasonable control. We do not guarantee any particular job, client, earnings or outcome.',
       'To the maximum extent permitted by law, AfterWorks is not liable for indirect or consequential loss, loss of profit, loss of opportunity, loss of goodwill, or loss of data arising from your use of the Platform. Our total aggregate liability to you in connection with the Platform is limited to the greater of (a) the total amount credited to your wallet for work in the three months before the event giving rise to the claim, or (b) US$100.',
       'Nothing in these Terms limits or excludes liability for fraud, wilful misconduct, death or personal injury caused by negligence, or any liability that cannot lawfully be limited. Nothing in these Terms affects mandatory consumer or worker protections available to you.',
-      'We are not responsible for the acts or omissions of third parties, including identity-verification providers, payment processors, mobile-money operators, banks and cloud hosts, although we choose them with reasonable care and will assist you in raising a problem with them.',
+      'We are not responsible for the acts or omissions of third parties, including payment processors, mobile-money operators, banks and cloud hosts, although we choose them with reasonable care and will assist you in raising a problem with them.',
       'You agree to indemnify AfterWorks against third-party claims, losses and reasonable costs arising from your breach of these Terms, your unlawful use of the Platform, the content you submit, or your infringement of another person’s rights.',
     ],
   },
@@ -243,7 +243,7 @@ export const PRIVACY_SECTIONS: readonly TermsSection[] = [
     bullets: [
       'Account data: your name, email address, mobile phone number, country and the phone number you use for payouts. Your password is handled by our authentication provider in hashed form; we do not see it in plain text.',
       'Profile and eligibility data: your location, professional summary, skills, languages, education and work history, and your payout-method preference.',
-      'Identity-verification outcome: whether verification was approved, declined, placed on hold or requires resubmission, the provider reference, and any reason supplied for a decision. Your identity document and selfie are submitted directly to our verification provider and are not stored on AfterWorks servers.',
+      'Identity-verification outcome: whether verification was approved, declined, placed on hold or requires another look, the date it was decided, and any reason supplied for a decision. We keep the outcome rather than the document itself.',
       'Work data: the jobs you view or apply for, your submissions and revisions, quality-review notes, your quality score, deadlines and in-app notifications.',
       'Wallet and payment data: your balances, ledger entries, withdrawal requests, payout destination, transaction references, and training-payment records. Card details for training payments are handled by our payment processor; we do not store your full card number.',
       'Referral data: your referral code, the accounts that signed up with it, whether a referral qualified, and any bonus credited or reversed.',
@@ -278,7 +278,7 @@ export const PRIVACY_SECTIONS: readonly TermsSection[] = [
     bullets: [
       'Google Firebase — authentication and the Firestore database, running on Google Cloud infrastructure.',
       'Render — hosts the application and keeps short-lived access logs used for security and troubleshooting.',
-      'Our identity-verification provider (Didit) — receives your document and liveness check directly and returns an outcome and reference to us.',
+      'Our own staff — when you ask for identity verification, a member of our review team reads the profile and any document you provide and records the decision. We do not send your identity documents to a third-party verification provider.',
       'Paystack — processes training-module payments and returns the transaction reference and status. Card details are handled by Paystack, not stored by us.',
       'Resend — delivers transactional email such as verification links and account notices.',
       'Mobile-money and banking partners — receive your name, payout destination and the amount when a withdrawal is processed.',

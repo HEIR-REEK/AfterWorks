@@ -78,7 +78,7 @@ export function WithdrawPanel() {
     : { ok: false as const, error: '' }
 
   const blockers: string[] = []
-  if (!payouts.kycVerified) blockers.push('Identity verification (KYC) must be complete.')
+  if (!payouts.kycVerified) blockers.push('Identity verification must be approved. Request it from your profile.')
   if (payouts.accountState && payouts.accountState !== 'active') blockers.push(`Your account is ${payouts.accountState.replace(/_/g, ' ')} — withdrawals are paused.`)
   if (!payouts.destination.ready) blockers.push(payouts.destination.problem || 'Add your payout details on the profile page.')
   if (openPayout) blockers.push('You already have a payout request in progress.')

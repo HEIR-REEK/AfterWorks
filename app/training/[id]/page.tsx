@@ -333,7 +333,7 @@ function PaystackCheckoutSection({
  * The gate between paying and learning.
  *
  * Payment and identity verification are deliberately separate steps: a worker can settle a job
- * card's training fee before KYC (useful when a slot is open and the Didit review is still
+ * card's training fee before KYC (useful when a slot is open and the identity review is still
  * pending), but the course material and the assessment stay locked until the check is approved.
  * Keeping this gate in one component means every training path — paid or fee-free — uses the same
  * rule instead of each block remembering it separately.
@@ -345,21 +345,21 @@ function VerificationGate({ paid }: { paid: boolean }) {
         <ShieldAlert className="size-6" />
       </div>
       <h2 className="text-xl font-bold tracking-tight text-foreground sm:text-2xl">
-        Verify your identity to continue
+        Request identity verification to continue
       </h2>
       <p className="mt-2 max-w-md text-sm leading-relaxed text-muted-foreground">
         {paid
           ? 'Your training payment for this job card is confirmed and your place is reserved. The training material and assessment stay locked until your identity check is approved.'
-          : 'Identity verification is required before the training course and assessment unlock. It is a one-time government-ID and liveness check.'}
+          : 'Identity verification is required before the training course and assessment unlock. Our team reviews it once you ask.'}
       </p>
       <Button render={<Link href="/profile" />} size="lg" className="mt-5 w-full gap-2 sm:w-auto">
         <ShieldAlert className="size-4" />
-        Verify identity in Profile
+        Request verification in Profile
       </Button>
       <p className="mt-3 text-xs text-muted-foreground">
         {paid
-          ? 'The training and assessment unlock once the check is approved; reload this page if you have just completed it. You will not be charged again.'
-          : 'The course and assessment unlock once the check is approved; reload this page if you have just completed it. There is no training fee for this job card.'}
+          ? 'The training and assessment unlock once your review is approved; reload this page if it has just been approved. You will not be charged again.'
+          : 'The course and assessment unlock once your review is approved; reload this page if it has just been approved. There is no training fee for this job card.'}
       </p>
     </div>
   )

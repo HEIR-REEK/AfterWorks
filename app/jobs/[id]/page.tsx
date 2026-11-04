@@ -79,8 +79,8 @@ export default function JobDetailPage({
     if (!worker.kycVerified && (!trainingRequired || isPaid)) {
       setError(
         trainingRequired
-          ? 'Your payment is confirmed. Verify your identity in Profile to unlock the training and assessment.'
-          : 'Identity verification (KYC) is required before taking the assessment.',
+          ? 'Your payment is confirmed. Request identity verification in Profile to unlock the training and assessment.'
+          : 'Identity verification is required before taking the assessment.',
       )
       return
     }
@@ -143,14 +143,14 @@ export default function JobDetailPage({
                   <>
                     <ShieldCheck className="mt-0.5 size-4 shrink-0 text-success" />
                     <div>
-                      <span>Identity Verification (KYC) — <strong className="text-success font-medium">Verified</strong></span>
+                      <span>Identity Verification — <strong className="text-success font-medium">Verified</strong></span>
                     </div>
                   </>
                 ) : (
                   <>
                     <ShieldAlert className="mt-0.5 size-4 shrink-0 text-warning" />
                     <div>
-                      <span>Identity Verification (KYC) — <strong className="text-warning font-medium">Action required</strong></span>
+                      <span>Identity Verification — <strong className="text-warning font-medium">Action required</strong></span>
                       {job.trainingRequired ? (
                         <p className="mt-1 text-xs text-muted-foreground">
                           You can pay this job card’s training fee first. The training material and assessment unlock after this check is approved.
@@ -164,12 +164,12 @@ export default function JobDetailPage({
                 <li className="flex items-start gap-2.5 text-muted-foreground">
                   <GraduationCap className="mt-0.5 size-4 shrink-0 text-primary" />
                   <div>
-                    <span>Step 1: Pay {trainingFee} → Step 2: Verify Identity → Step 3: Training → Step 4: Assessment → Apply for Job Card</span>
+                    <span>Step 1: Pay {trainingFee} → Step 2: Request verification → Step 3: Training → Step 4: Assessment → Apply for Job Card</span>
                     <p className="mt-1 text-xs text-muted-foreground">
                       {isPaid && worker.kycVerified ? (
                         <strong className="text-success font-medium">✓ Payment confirmed. Training &amp; assessment unlocked for this job card!</strong>
                       ) : isPaid ? (
-                        <strong className="text-warning font-medium">Payment confirmed. Verify your identity in Profile to unlock training &amp; assessment.</strong>
+                        <strong className="text-warning font-medium">Payment confirmed. Request identity verification in Profile to unlock training &amp; assessment.</strong>
                       ) : (
                         <span>Each job card requires its own separate {trainingFee} payment. You can pay before identity verification; training &amp; assessment open only after the check is approved for this job card.</span>
                       )}
@@ -180,7 +180,7 @@ export default function JobDetailPage({
                 <li className="flex items-start gap-2.5 text-muted-foreground">
                   <GraduationCap className="mt-0.5 size-4 shrink-0 text-primary" />
                   <div>
-                    <span>Step 1: Verify Identity → Step 2: Full Training Course → Step 3: Assessment → Apply for Job Card</span>
+                    <span>Step 1: Request verification → Step 2: Full Training Course → Step 3: Assessment → Apply for Job Card</span>
                     <p className="mt-1 text-xs text-muted-foreground">
                       There is no training fee for this card, but every lesson and the 20-question applied assessment (80% pass) are still required before you can apply.
                     </p>
@@ -236,7 +236,7 @@ export default function JobDetailPage({
                   {isPaid && worker.kycVerified
                     ? 'Payment detected! Training modules & assessment are unlocked.'
                     : isPaid
-                      ? 'Payment confirmed. Verify your identity in Profile to unlock training and assessment.'
+                      ? 'Payment confirmed. Request identity verification in Profile to unlock training and assessment.'
                       : `This job card requires a ${trainingFee} training payment. You can pay before identity verification; training and assessment open once the check is approved.`}
                 </span>
               </div>
@@ -278,10 +278,10 @@ export default function JobDetailPage({
                       className="w-full gap-1.5 border-warning/40 text-warning hover:bg-warning/10"
                     >
                       <ShieldAlert className="size-4" />
-                      Verify KYC in Profile
+                      Request verification in Profile
                     </Button>
                     <p className="text-center text-xs text-muted-foreground">
-                      You can pay the training fee first. Training and the assessment unlock after verification.
+                      You can pay the training fee first. Training and the assessment unlock once your identity review is approved.
                     </p>
                   </div>
                 ) : (
@@ -291,7 +291,7 @@ export default function JobDetailPage({
                     className="w-full gap-2 whitespace-normal px-3 text-center leading-snug"
                   >
                     <ShieldAlert className="size-4" />
-                    {job.trainingRequired ? 'Verify KYC to Start Training' : 'Verify KYC to Take the Assessment'}
+                    {job.trainingRequired ? 'Request verification to Start Training' : 'Request verification to Take the Assessment'}
                   </Button>
                 )
               ) : (

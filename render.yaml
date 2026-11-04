@@ -118,14 +118,9 @@ services:
         value: "24"
 
       # ── Identity verification ──────────────────────────────────────────────
-      - key: DIDIT_API_URL
-        value: "https://apx.didit.me"
-      - key: DIDIT_API_KEY
-        sync: false
-      - key: DIDIT_WORKFLOW_ID
-        sync: false
-      - key: DIDIT_WEBHOOK_SECRET
-        sync: false
+      # No provider credentials: identity is decided by an owner in the admin console. A member
+      # asks for a review from their profile; the console shows the queue and the owner approves or
+      # rejects. If DIDIT_* variables are still set on the service they are inert — delete them.
 
       # ── External jobs (Adzuna) ────────────────────────────────────────────
       # Optional: the /work/external feed stays off until both credentials are set. Adzuna has no

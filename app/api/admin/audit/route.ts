@@ -28,7 +28,10 @@ export async function GET(req: NextRequest) {
       return fail(503, 'Audit ledger unavailable (storage not configured).', { code: 'storage_unavailable' })
     }
 
-    const logs = await firestore.listAuditLogs({ limit, action, search })
+    // `degraded` is set when the admin_logs composite index is not deployed on this project: the
+    // rows are then a bounded, client-sorted scan, which can miss the newest entries. The console
+    // must show that instead of presenting the slice as the complete ledger.
+    const { rows: logs, degraded } = await firestore.listAuditLogs({ limit, action, search })
 
     if (format === 'csv') {
       const header = 'timestamp,action,actor,details'
@@ -41,14 +44,18 @@ export async function GET(req: NextRequest) {
         ].join(','),
       )
       const csv = [header, ...rows].join('\n')
+      // A header rather than a CSV comment: the export is parsed by spreadsheet tooling, and a
+      // leading comment line corrupts the first row.
+      const headers: Record<string, string> = {
+        'Content-Type': 'text/csv; charset=utf-8',
+        'Content-Disposition': `attachment; filename="afterworks-audit-${new Date().toISOString().slice(0, 10)}.csv"`,
+        'Cache-Control': 'no-store',
+        'X-Audit-Rows': String(logs.length),
+      }
+      if (degraded) headers['X-Audit-Degraded'] = degraded
       return new Response(csv, {
         status: 200,
-        headers: {
-          'Content-Type': 'text/csv; charset=utf-8',
-          'Content-Disposition': `attachment; filename="afterworks-audit-${new Date().toISOString().slice(0, 10)}.csv"`,
-          'Cache-Control': 'no-store',
-          'X-Audit-Rows': String(logs.length),
-        },
+        headers,
       })
     }
 
@@ -56,6 +63,7 @@ export async function GET(req: NextRequest) {
       ok: true,
       logs,
       count: logs.length,
+      degraded: degraded ?? null,
       actions: Array.from(new Set(logs.map((l) => l.action).filter(Boolean))).sort(),
       exportUrl: `/api/admin/audit?format=csv&limit=${limit}${action !== 'all' ? `&action=${encodeURIComponent(action)}` : ''}`,
     })

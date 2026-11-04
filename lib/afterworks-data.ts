@@ -378,15 +378,6 @@ export function paystackSubunitsFor(jobFeeUsd?: number | string | null): number 
 }
 
 /**
- * Both-currency label for one job card's training fee: the USD price as set, plus the KES amount
- * Paystack actually charges. Card buttons quote USD while the checkout charges KES — showing both
- * here keeps the amount on a card's button and the amount on the opened checkout page reconciled.
- */
-export function formatTrainingFeeLabel(jobFeeUsd?: number | string | null): string {
-  return `${formatUsd(trainingFeeUsdFor(jobFeeUsd))} (≈ ${formatKesValue(trainingFeeKesFor(jobFeeUsd))})`
-}
-
-/**
  * How many questions each built-in category bank carries. Kept in a client-safe module so the
  * admin console can show the real number without ever importing the answer key. The training
  * curriculum test checks this against `builtInQuestions()`.

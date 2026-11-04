@@ -217,7 +217,7 @@ function PaystackCheckoutSection({
         </div>
 
         <p className="text-xs text-muted-foreground leading-relaxed border-t border-border/50 pt-2.5">
-          Payment is charged in <strong>Kenyan Shillings (KES {amountKes.toLocaleString()})</strong>. Supports <strong>M-Pesa / Mobile Money</strong>, <strong>Bank Transfers</strong>, and <strong>Cards</strong>.
+          Payment is processed securely through our payment provider.
         </p>
       </div>
 
@@ -236,7 +236,7 @@ function PaystackCheckoutSection({
             <Loader2 className="mt-0.5 size-4 shrink-0 animate-spin text-primary" />
             <span>
               {popupCheckout
-                ? 'Waiting for Paystack to confirm the charge… Complete the payment in the window that just opened (or on your phone with M-Pesa). You can close that window once it shows a receipt — this page unlocks itself automatically.'
+                ? 'Waiting for Paystack to confirm the charge… Complete the payment in the window that just opened. You can close that window once it shows a receipt — this page unlocks itself automatically.'
                 : 'Waiting for Paystack to confirm the charge…'}
             </span>
           </span>
@@ -280,7 +280,7 @@ function PaystackCheckoutSection({
       </Button>
 
       <p className="text-center text-xs text-muted-foreground">
-        M-Pesa, Mobile Money, Bank Transfer &amp; Card are supported. Training unlocks after payment and identity verification are both complete.
+        Training unlocks after payment and identity verification are both complete.
       </p>
 
       {/* Last resort for a charge that settled while the redirect never made it home: let the
@@ -614,45 +614,6 @@ function TrainingPageInner({ params }: { params: Promise<{ id: string }> }) {
         <h1 className="mt-4 text-xl font-semibold tracking-tight sm:text-2xl">
           {hasTraining ? `${job.category} Training & Assessment` : `${job.category} Assessment & Application`}
         </h1>
-        
-        {/* Step Progression Bar */}
-        <div className="mt-6 grid grid-cols-2 gap-2 rounded-xl border border-border bg-muted/40 p-2.5 text-xs font-medium sm:grid-cols-4 sm:p-3">
-          <div className={`flex flex-col items-center gap-1 text-center p-2 rounded-lg ${
-            isPaid ? 'bg-success/15 text-success font-semibold' : 'bg-primary/10 text-primary font-bold ring-1 ring-primary/30'
-          }`}>
-            <span className="flex size-5 items-center justify-center rounded-full bg-background text-[10px] shadow-xs">1</span>
-            <span>{hasTraining ? '1. Complete Payment' : '1. No Training Fee'}</span>
-          </div>
-
-          <div className={`flex flex-col items-center gap-1 text-center p-2 rounded-lg ${
-            hasTraining
-              ? trainingComplete && kycVerified
-                ? 'bg-success/15 text-success font-semibold'
-                : isPaid && kycVerified
-                  ? 'bg-primary/10 text-primary font-bold ring-1 ring-primary/30'
-                  : 'text-muted-foreground opacity-60'
-              : kycVerified
-                ? 'bg-success/15 text-success font-semibold'
-                : 'bg-primary/10 text-primary font-bold ring-1 ring-primary/30'
-          }`}>
-            <span className="flex size-5 items-center justify-center rounded-full bg-background text-[10px] shadow-xs">2</span>
-            <span>{hasTraining ? '2. Get Trained' : '2. Verify Identity'}</span>
-          </div>
-
-          <div className={`flex flex-col items-center gap-1 text-center p-2 rounded-lg ${
-            kycVerified && (!hasTraining || trainingComplete)
-              ? 'bg-primary/10 text-primary font-bold ring-1 ring-primary/30'
-              : 'text-muted-foreground opacity-60'
-          }`}>
-            <span className="flex size-5 items-center justify-center rounded-full bg-background text-[10px] shadow-xs">3</span>
-            <span>3. Assessment</span>
-          </div>
-
-          <div className="flex flex-col items-center gap-1 text-center p-2 rounded-lg text-muted-foreground opacity-60">
-            <span className="flex size-5 items-center justify-center rounded-full bg-background text-[10px] shadow-xs">4</span>
-            <span>4. Apply Job Card</span>
-          </div>
-        </div>
         
         <p className="mt-4 text-sm leading-relaxed text-muted-foreground">
           {hasTraining

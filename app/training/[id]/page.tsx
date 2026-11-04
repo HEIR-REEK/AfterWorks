@@ -25,18 +25,23 @@ import { authedFetch, describeError } from '@/lib/client-api'
 // can re-verify at any time, so it does not belong in localStorage where it would outlive the session.
 const LS_REF_KEY = 'aw_training_paystack_ref'
 
-function rememberReference(value: string | null) {
+/** A reference is scoped to its job card, so card B can never poll card A's charge. */
+function referenceKey(jobId: string): string {
+  return `${LS_REF_KEY}:${jobId}`
+}
+
+function rememberReference(jobId: string, value: string | null) {
   try {
-    if (value) window.sessionStorage.setItem(LS_REF_KEY, value)
-    else window.sessionStorage.removeItem(LS_REF_KEY)
+    if (value) window.sessionStorage.setItem(referenceKey(jobId), value)
+    else window.sessionStorage.removeItem(referenceKey(jobId))
   } catch {
     /* private mode — the URL parameter still carries the reference home */
   }
 }
 
-function recalledReference(): string | null {
+function recalledReference(jobId: string): string | null {
   try {
-    return window.sessionStorage.getItem(LS_REF_KEY)
+    return window.sessionStorage.getItem(referenceKey(jobId))
   } catch {
     return null
   }
@@ -115,7 +120,7 @@ function PaystackCheckoutSection({
         '/api/paystack/initialize',
         { method: 'POST', body: { jobId }, timeoutMs: 20_000 },
       )
-      rememberReference(data.reference)
+      rememberReference(jobId, data.reference)
       setPayState('awaiting_payment')
       if (data.popupMode === true) {
         // No noopener here on purpose: the handle is how we detect a blocked popup and how we
@@ -123,7 +128,7 @@ function PaystackCheckoutSection({
         // only page that ever gets this handle, and it cannot read this tab's session storage.
         const popup = window.open(data.authorizationUrl, '_blank', 'width=480,height=720')
         if (!popup) {
-          rememberReference(null)
+          rememberReference(jobId, null)
           setPopupCheckout(false)
           setPayState('error')
           setErrorMsg('The secure payment window could not open. Please allow pop-ups for this site, then try again.')
@@ -141,7 +146,7 @@ function PaystackCheckoutSection({
   }
 
   async function handleCheckNow() {
-    const ref = recalledReference()
+    const ref = recalledReference(jobId)
     if (!ref) {
       setErrorMsg('No pending payment was found in this tab. Reload the page if you have just paid.')
       return
@@ -165,7 +170,7 @@ function PaystackCheckoutSection({
       const popup = popupRef.current
       if (popup && popup.closed) {
         popupRef.current = null
-        const ref = recalledReference()
+        const ref = recalledReference(jobId)
         if (ref) void onVerifySuccess(ref)
       }
     }, 800)
@@ -228,7 +233,7 @@ function PaystackCheckoutSection({
             <Button type="button" size="sm" variant="outline" className="h-7 text-xs" onClick={() => void handleCheckNow()}>
               Check payment now
             </Button>
-            <Button type="button" size="sm" variant="ghost" className="h-7 text-xs" onClick={() => { rememberReference(null); setPayState('idle'); setPopupCheckout(false) }}>
+            <Button type="button" size="sm" variant="ghost" className="h-7 text-xs" onClick={() => { rememberReference(jobId, null); setPayState('idle'); setPopupCheckout(false) }}>
               Start over
             </Button>
           </span>
@@ -282,7 +287,8 @@ function PaystackCheckoutSection({
             <p className="text-xs leading-relaxed text-muted-foreground">
               Enter the <strong className="font-mono text-foreground">aw_tr_…</strong> reference from
               your Paystack receipt or the link you were sent after paying. We will re-check it
-              against Paystack and unlock this job card if the charge went through.
+              against Paystack and unlock this job card if the charge went through. A reference
+              belongs to the one job card it was paid for — it cannot unlock a different card.
             </p>
             <div className="flex gap-2">
               <input
@@ -404,19 +410,26 @@ function TrainingPageInner({ params }: { params: Promise<{ id: string }> }) {
   const verifyReference = useCallback(async (ref: string): Promise<boolean> => {
     setPayState('verifying')
     const result = await verifyTrainingPayment(id, ref)
-    if (result.ok && result.paid) {
-      rememberReference(null)
+    if (result.ok && result.paid && result.jobId === id) {
+      rememberReference(id, null)
       setPayState('paid')
       return true
     }
+    if (result.ok && result.paid && result.jobId !== id) {
+      // Fail closed if an older server ever reports "paid" without binding it to this card.
+      rememberReference(id, null)
+      setPayState('error')
+      setErrorMsg('That payment was for a different job card. Each job card needs its own payment.')
+      return false
+    }
     if (result.ok && !result.paid) {
       // "Still pending on Paystack's side" keeps polling instead of failing the worker; a
-      // terminal status (no such charge / abandoned / failed / underpaid) stops and explains.
+      // terminal status (no such charge / abandoned / failed / underpaid / wrong card) stops.
       const terminal =
         typeof result.status === 'string' &&
-        ['not_found', 'failed', 'abandoned', 'reversed', 'underpaid'].includes(result.status)
+        ['not_found', 'failed', 'abandoned', 'reversed', 'underpaid', 'job_mismatch'].includes(result.status)
       if (terminal) {
-        rememberReference(null)
+        rememberReference(id, null)
         setPayState('error')
         setErrorMsg(
           result.message ??
@@ -426,7 +439,7 @@ function TrainingPageInner({ params }: { params: Promise<{ id: string }> }) {
         )
         return false
       }
-      rememberReference(ref)
+      rememberReference(id, ref)
       setPayState('awaiting_payment')
       return false
     }
@@ -451,7 +464,7 @@ function TrainingPageInner({ params }: { params: Promise<{ id: string }> }) {
       window.history.replaceState({}, '', clean.toString())
 
       // Remember it so the poller below can keep checking while the charge is still pending.
-      rememberReference(urlRef)
+      rememberReference(id, urlRef)
       void verifyReference(urlRef)
     }
   }, [id, searchParams, isJobPaid, verifyReference])
@@ -489,7 +502,7 @@ function TrainingPageInner({ params }: { params: Promise<{ id: string }> }) {
   // ── Poll for payment while awaiting ─────────────────────────────────────
   useEffect(() => {
     if (payState === 'awaiting_payment') {
-      const ref = recalledReference()
+      const ref = recalledReference(id)
       if (!ref) return
 
       pollingRef.current = setInterval(() => verifyReference(ref), 4000)

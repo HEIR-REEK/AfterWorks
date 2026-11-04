@@ -101,7 +101,7 @@ function UsersPageInner() {
   const [error, setError] = useState<string | null>(null)
   const [degraded, setDegraded] = useState<string | undefined>()
 
-  const [searchInput, setSearchInput] = useState('')
+  const [searchInput, setSearchInput] = useState(searchParams.get('q') ?? '')
   const [search, setSearch] = useState(searchParams.get('q') ?? '')
   const [state, setState] = useState(searchParams.get('state') ?? 'all')
   const [selected, setSelected] = useState<UserDetail | null>(null)

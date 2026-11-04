@@ -204,7 +204,7 @@ export default function AdminPayoutsPage() {
 
       <AdminCard
         title="Queue"
-        description="Filtered server-side; the search box narrows the page you are looking at (email, name, uid or account number)."
+        description="Filtered server-side across the queue; search covers email, name, uid, account number or reference."
         icon={<Search className="size-4" />}
       >
         <div className="flex flex-col gap-3">
@@ -237,7 +237,10 @@ export default function AdminPayoutsPage() {
             <Search className="absolute left-3 top-2.5 size-3.5 text-muted-foreground" />
             <input
               value={searchInput}
-              onChange={(event) => setSearchInput(event.target.value)}
+              onChange={(event) => {
+                setSearchInput(event.target.value)
+                setCursors([null])
+              }}
               placeholder="email, name, uid, account number or reference"
               className={cn(inputClass, 'pl-9')}
               aria-label="Search payout requests"

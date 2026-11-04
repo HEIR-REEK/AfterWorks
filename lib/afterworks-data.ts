@@ -995,6 +995,18 @@ export function seedJobs(): Job[] {
       slotsRemaining: 11,
       trainingRequired: true,
       trainingFeeUsd: 24,
+      trainingNotes: [
+        {
+          title: 'Build the speaker map before the first line',
+          content:
+            'Groups are not interviews. Participants talk over each other, agree with a murmur, and switch between English and Swahili mid-sentence. Read the participant list and listen to the first two minutes before typing, then assign one label per voice and keep it for the whole session.\n\nWhen two people speak at once, keep both audible contributions and mark the overlap with the client convention, for example [crosstalk 00:12:04]. Do not award the line to the louder voice. If a contribution is truly unintelligible, tag it and log the timestamp instead of inventing words.',
+        },
+        {
+          title: 'The mixed-language rule',
+          content:
+            'Transcribe each language as spoken. Do not translate Swahili into English and do not anglicise a name or a phrase because the rest of the sentence is English. The analyst needs the participant’s actual words.\n\nKeep the supplied glossary open for recurring programme terms. If a term is not in the glossary and you are unsure of the spelling, use [phonetic: ...] and add it to the uncertainty log. A clean uncertainty log is part of the deliverable, not an apology.',
+        },
+      ],
       requiresVerified: true,
       status: 'open',
       closesAt: daysFromNow(12),
@@ -1019,6 +1031,18 @@ export function seedJobs(): Job[] {
       slotsRemaining: 46,
       trainingRequired: true,
       trainingFeeUsd: 14,
+      trainingNotes: [
+        {
+          title: 'Label what is visible, not what you expect',
+          content:
+            'A tight box follows the visible edge of the helmet, vest, ladder or open edge. If a worker is partly behind a stack of blocks, box the visible part and apply the occluded-object rule in the gallery; never extend a box into the hidden area. A high-visibility vest counts as one instance even when the straps and reflective bands are separate.\n\nSmall or distant objects still get a box when they meet the minimum pixel size. If they do not, skip them and note why. The calibration batch is the authority for edge cases, not a guess from a similar image.',
+        },
+        {
+          title: 'When an image is a safety signal',
+          content:
+            'Some frames show an obvious hazard: a worker on an unguarded edge, a ladder at the wrong angle, or someone welding without a shield. Your job is to label the objects, not to certify the site. Record the hazard with the approved hazard tag and put the frame in the review queue.\n\nDo not crop, enhance or annotate in a way that hides the scene. Do not copy a site image outside the task. The client uses these frames for model training and safety review, and an edited image destroys both uses.',
+        },
+      ],
       requiresVerified: true,
       status: 'open',
       closesAt: daysFromNow(8),
@@ -1145,6 +1169,18 @@ export function seedJobs(): Job[] {
       slotsRemaining: 23,
       trainingRequired: true,
       trainingFeeUsd: 15,
+      trainingNotes: [
+        {
+          title: 'Severity before wording',
+          content:
+            'The report reason is a starting point, not the decision. Read the comment in its thread, then apply the severity matrix: credible threat or self-harm risk goes to escalation immediately; targeted abuse gets removal and the appropriate policy code; ordinary disagreement stays up even when it is rude.\n\nDo not let a polite sentence hide a threat, and do not treat a rude word as a violation by itself. When two rules could apply, record the more specific one so the policy team can audit the call.',
+        },
+        {
+          title: 'Write the note a reviewer can defend',
+          content:
+            'Every removal or escalation needs a short note that names the rule and the evidence: which words, which image, which part of the thread. “Offensive” is not a reason code. “Targeted harassment — repeated personal insults after the user asked them to stop” is.\n\nKeep the note factual and free of personal opinion. If you are unsure, send the case to review rather than guessing at removal; a second look is cheaper than an unfair enforcement decision.',
+        },
+      ],
       requiresVerified: true,
       status: 'open',
       closesAt: daysFromNow(10),
@@ -1249,6 +1285,18 @@ export function seedJobs(): Job[] {
       slotsRemaining: 26,
       trainingRequired: true,
       trainingFeeUsd: 12,
+      trainingNotes: [
+        {
+          title: 'Official sources, in order',
+          content:
+            'Start with the funder’s own programme page, then its published guidelines or annual report, then a regulator or government notice. An aggregator, newsletter or social post is a lead that tells you where to look — never the evidence you record.\n\nCopy the exact page URL you checked and the date you checked it. If the page has moved, follow the official redirect and record the final URL. A dead link or a PDF that cannot be opened is an unverifiable row, not a deadline to guess.',
+        },
+        {
+          title: 'A deadline is a timezone fact',
+          content:
+            'Record the deadline exactly as published, including the time and timezone. “30 November” without a timezone is incomplete when the funder closes at 23:59 EST. Keep the funder’s wording beside your normalised date so an NGO can check it.\n\nMark rolling, invite-only, suspended and closed programmes explicitly. If an aggregator and the funder disagree, the funder wins and you note the conflict. Do not add an opportunity you cannot trace to an official page.',
+        },
+      ],
       requiresVerified: true,
       status: 'open',
       closesAt: daysFromNow(9),

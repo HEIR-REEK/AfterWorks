@@ -243,7 +243,10 @@ function AdminLedgerPageInner() {
             <Search className="absolute left-3 top-2.5 size-3.5 text-muted-foreground" />
             <input
               value={searchInput}
-              onChange={(event) => setSearchInput(event.target.value)}
+              onChange={(event) => {
+                setSearchInput(event.target.value)
+                setCursors([null])
+              }}
               placeholder="email, uid, reference or job title"
               className={cn(inputClass, 'pl-9')}
               aria-label="Search the ledger"

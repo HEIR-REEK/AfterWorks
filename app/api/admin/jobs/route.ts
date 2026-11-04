@@ -25,6 +25,7 @@ export async function GET(req: NextRequest) {
     const jobs = await firestore.listJobsServer({
       status: req.nextUrl.searchParams.get('status') ?? 'all',
       pageSize: Number(req.nextUrl.searchParams.get('pageSize') ?? 100),
+      search: req.nextUrl.searchParams.get('search') ?? '',
     })
     const visible =
       guard.value.role === 'owner'
@@ -189,5 +190,57 @@ export async function DELETE(req: NextRequest) {
     const message = err instanceof Error ? err.message : ''
     if (/active applications/i.test(message)) return fail(409, message, { code: 'job_busy' })
     return routeError('admin/jobs:DELETE', err)
+  }
+}
+
+/**
+ * Publish the 2026 catalogue expansion into `jobs/`.
+ *
+ * The sample cards are not live listings; an operator with the service account had to run a
+ * script to make them real. This is the same operation behind one owner-only console button, so a
+ * live deployment can be brought up without shell access. The import is idempotent (existing ids
+ * are skipped unless `overwrite` is explicit) and only accepts the expansion batch.
+ */
+export async function POST(req: NextRequest) {
+  const guard = await requireOwner(req)
+  if (!guard.ok) return guard.response
+
+  const bucket = consumeBucket('admin-jobs-import', 5, 60_000, String(guard.value.jti).slice(0, 12))
+  if (!bucket.ok) {
+    return fail(429, 'Catalogue imports are limited to five per minute.', {
+      headers: { 'Retry-After': String(bucket.retryAfterSec) },
+    })
+  }
+
+  let body: Record<string, unknown> = {}
+  try {
+    const raw = await req.text()
+    if (raw.length > 16_000) return fail(413, 'Payload is too large.', { code: 'payload_too_large' })
+    body = JSON.parse(raw || '{}') as Record<string, unknown>
+  } catch {
+    return fail(400, 'Expected a JSON body.', { code: 'bad_request' })
+  }
+
+  const ids = Array.isArray(body.ids) ? body.ids.map((id) => String(id)) : undefined
+  const overwrite = body.overwrite === true
+
+  try {
+    const { importStarterJobs } = await import('@/lib/job-seed')
+    const result = await importStarterJobs({ ids, overwrite, actorEmail: guard.value.email })
+    await audit({
+      action: 'JOB_CATALOGUE_IMPORTED',
+      actorEmail: guard.value.email,
+      details: { created: result.created, updated: result.updated, skipped: result.skipped, ids: result.ids },
+      req,
+    })
+    const { clearPublicJobsCache } = await import('@/lib/public-jobs-server')
+    clearPublicJobsCache()
+    return json({ ok: true, ...result })
+  } catch (err) {
+    if (err instanceof Error && err.name === 'StarterImportError') {
+      const code = (err as Error & { code?: string }).code ?? 'import_failed'
+      return fail(code === 'storage_unavailable' ? 503 : 400, err.message, { code })
+    }
+    return routeError('admin/jobs:POST', err)
   }
 }

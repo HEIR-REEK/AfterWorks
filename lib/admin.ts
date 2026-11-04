@@ -372,8 +372,10 @@ export const adminApi = {
     apiFetch<{ ok: boolean; rows: AdminApplicationRow[]; nextCursor: string | null; hasMore: boolean; degraded?: string }>('/api/admin/applications', { query }),
   applicationAction: (body: Record<string, unknown>) => apiFetch<{ ok: boolean; message?: string; status?: string }>('/api/admin/applications', { method: 'PATCH', body }),
   bulkApplicationAction: (body: Record<string, unknown>) => apiFetch<{ ok: boolean; applied: number; results: { id: string; ok: boolean; error?: string }[] }>('/api/admin/applications', { method: 'POST', body }),
-  jobs: (query?: { status?: string }) => apiFetch<{ ok: boolean; jobs: AdminJobRow[] }>('/api/admin/jobs', { query }),
+  jobs: (query?: { status?: string; search?: string }) => apiFetch<{ ok: boolean; jobs: AdminJobRow[] }>('/api/admin/jobs', { query }),
   saveJob: (body: Record<string, unknown>) => apiFetch<{ ok: boolean; id: string }>('/api/admin/jobs', { method: 'PUT', body }),
+  importStarterJobs: (body?: { ids?: string[]; overwrite?: boolean }) =>
+    apiFetch<{ ok: boolean; created: number; updated: number; skipped: number; ids: string[] }>('/api/admin/jobs', { method: 'POST', body }),
   setJobStatus: (body: { jobId: string; status: string }) => apiFetch<{ ok: boolean }>('/api/admin/jobs', { method: 'PATCH', body }),
   deleteJob: (jobId: string) => apiFetch<{ ok: boolean }>('/api/admin/jobs', { method: 'DELETE', query: { jobId } }),
   auditLogs: (query: { limit?: number; action?: string; search?: string }) =>

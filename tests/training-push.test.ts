@@ -31,5 +31,5 @@ test('the dashboard surfaces the training banner with live board numbers', () =>
 test('the training CTA lands on a board that can actually filter for training jobs', () => {
   assert.match(component, /\/jobs\?training=1/)
   assert.match(jobs, /searchParams\.get\('training'\) === '1'/)
-  assert.match(jobs, /trainingOnly && !job\.trainingRequired/)
+  assert.match(jobs, /filterJobs\(jobs, \{ category, trainingOnly, hideFull, search: query \}\)/)
 })

@@ -118,6 +118,27 @@ The script only accepts IDs in `EXPANDED_CATALOGUE_JOB_IDS`, so it cannot rewrit
 operator-created cards by accident. It needs `FIREBASE_SERVICE_ACCOUNT_JSON` or
 `FIREBASE_SERVICE_ACCOUNT_PATH`, and records writes as actor `catalogue-2026`.
 
+The same import is available without shell access: an owner opens `/admin/jobs` and chooses
+**Import 2026 cards**. It calls the same `importStarterJobs()` function, writes through
+`upsertJob()`, skips cards that already exist and never touches older or hand-authored cards. Each
+imported card carries its training briefing and a per-card training price where training is gated;
+an empty authored-assessment list means the full built-in category bank is used, so no imported card
+can arrive without an assessment.
+
+### Search and filters
+
+The console's free-text searches are server-side and inspect a bounded window of the collection
+(1,000 documents per table), then page the *filtered* result with an offset cursor tied to the
+query. Changing the search or a status filter starts at the first page; the cursor cannot be reused
+against a different result set. A window that fills its bound says so in the table's notice rather
+than reading as "no such member."
+
+Member search covers name, email, uid, phone and payout handle, and the state filter treats
+**KYC pending**, **Restricted** and **Admins** as the labels they are (not as literal
+`accountState` values). The worker's `/jobs` board uses the same query semantics for title,
+category, description and responsibilities, and its availability filter also drops cards whose
+close date has passed.
+
 The training price is priced server-side from the same document (`/api/paystack/initialize` →
 `jobTrainingGate`), and the worker's card is normalised by `normaliseJobRecord()` — the document id
 wins over any `id` field stored inside the document, and a missing/zero fee falls back to the global

@@ -4,12 +4,13 @@ import { Suspense, useEffect, useMemo, useState } from 'react'
 import { useAfterWorks } from '@/components/afterworks-provider'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
-import { AlertCircle, ChevronRight, GraduationCap, RefreshCw } from 'lucide-react'
+import { AlertCircle, ChevronRight, GraduationCap, RefreshCw, Search } from 'lucide-react'
 import { JobCard } from '@/components/job-card'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import type { JobCategory } from '@/lib/afterworks-data'
 import { formatTimestamp } from '@/lib/datetime'
+import { filterJobs } from '@/lib/admin-search'
 
 const categories: (JobCategory | 'All')[] = [
   'All',
@@ -40,6 +41,7 @@ function JobsPageInner() {
     setTrainingOnly(trainingParam)
   }, [trainingParam])
   const [category, setCategory] = useState<(typeof categories)[number]>('All')
+  const [query, setQuery] = useState('')
   const [hideFull, setHideFull] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
 
@@ -59,14 +61,10 @@ function JobsPageInner() {
     }
   }
 
-  const filtered = useMemo(() => {
-    return jobs.filter((job) => {
-      if (category !== 'All' && job.category !== category) return false
-      if (trainingOnly && !job.trainingRequired) return false
-      if (hideFull && (job.status !== 'open' || job.slotsRemaining <= 0)) return false
-      return true
-    })
-  }, [jobs, category, hideFull, trainingOnly])
+  const filtered = useMemo(
+    () => filterJobs(jobs, { category, trainingOnly, hideFull, search: query }),
+    [jobs, category, hideFull, trainingOnly, query],
+  )
 
   return (
     <div className="flex flex-col gap-6">
@@ -166,15 +164,28 @@ function JobsPageInner() {
           </button>
         </div>
 
-        <label className="flex w-fit cursor-pointer items-center gap-2 text-sm text-muted-foreground">
-          <input
-            type="checkbox"
-            checked={hideFull}
-            onChange={(e) => setHideFull(e.target.checked)}
-            className="size-4 rounded border-border accent-primary"
-          />
-          Hide full & closed jobs
-        </label>
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="relative min-w-0 flex-1 sm:max-w-xs">
+            <Search className="absolute left-3 top-2.5 size-4 text-muted-foreground" aria-hidden />
+            <input
+              type="search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search title, category or skill…"
+              aria-label="Search jobs"
+              className="h-9 w-full rounded-lg border border-border bg-card pl-9 pr-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none"
+            />
+          </div>
+          <label className="flex w-fit cursor-pointer items-center gap-2 text-sm text-muted-foreground">
+            <input
+              type="checkbox"
+              checked={hideFull}
+              onChange={(e) => setHideFull(e.target.checked)}
+              className="size-4 rounded border-border accent-primary"
+            />
+            Hide full &amp; closed jobs
+          </label>
+        </div>
       </div>
 
       {filtered.length === 0 ? (

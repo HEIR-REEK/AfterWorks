@@ -4,8 +4,8 @@
  * The sample catalogue in `lib/afterworks-data.ts` is what a new deployment shows before an
  * operator creates cards. A live deployment already has a Firestore catalogue, and an authoritative
  * read never mixes sample cards into it — so adding a card to the sample list does not put it on the
- * live board. This script copies the new batch, and only that batch, through the same
- * `upsertJob()` path the admin console uses (sanitised, bounded, audited).
+ * live board. This script and the owner-only "Import 2026 cards" button in `/admin/jobs` call the
+ * same `importStarterJobs()` function.
  *
  * It is idempotent and conservative:
  *   • only IDs in `EXPANDED_CATALOGUE_JOB_IDS` are considered;
@@ -16,9 +16,6 @@
  *   set -a && . ./.env.local && set +a && npx tsx scripts/seed-jobs.ts --dry-run
  *   set -a && . ./.env.local && set +a && npx tsx scripts/seed-jobs.ts
  *   npx tsx scripts/seed-jobs.ts --ids job-a,job-b --overwrite
- *
- * The actor recorded in the audit log is `catalogue-2026`, so these writes are distinguishable from
- * console edits.
  */
 
 import * as fs from 'node:fs'
@@ -27,8 +24,7 @@ import {
   EXPANDED_CATALOGUE_JOB_IDS,
   seedJobs,
 } from '../lib/afterworks-data'
-
-const ACTOR = 'catalogue-2026'
+import { importStarterJobs, starterJobInput, STARTER_IMPORT_ACTOR } from '../lib/job-seed'
 
 function loadEnvFile(): void {
   const file = path.resolve(process.cwd(), '.env.local')
@@ -81,59 +77,23 @@ async function main() {
 
   if (dryRun) {
     for (const job of cards) {
-      console.log(`  ${job.id} · ${job.title} · $${job.payAmountUsd} · ${job.category}${job.trainingRequired ? ' · training' : ''}`)
+      const payload = starterJobInput(job)
+      console.log(
+        `  ${job.id} · ${job.title} · $${job.payAmountUsd} · ${job.category}${payload.trainingRequired ? ` · training $${payload.trainingFeeUsd}` : ' · assessment only'}`,
+      )
     }
     console.log('Dry run: no writes were made.')
     return
   }
 
-  const { adminDb, isFirebaseAdminUsable, upsertJob } = await import('../lib/firestore-admin')
-  if (!isFirebaseAdminUsable()) {
-    console.error('Firebase Admin is not configured. Set FIREBASE_SERVICE_ACCOUNT_JSON or _PATH.')
-    process.exitCode = 1
-    return
-  }
-
-  const db = adminDb()
-  let created = 0
-  let updated = 0
-  let skipped = 0
-
-  for (const job of cards) {
-    const ref = db.collection('jobs').doc(job.id)
-    const exists = (await ref.get()).exists
-    if (exists && !overwrite) {
-      skipped += 1
-      console.log(`  skip  ${job.id} (already exists)`)
-      continue
-    }
-
-    await upsertJob(
-      {
-        id: job.id,
-        title: job.title,
-        category: job.category,
-        description: job.description,
-        responsibilities: job.responsibilities,
-        payAmountUsd: job.payAmountUsd,
-        estimatedMinutes: job.estimatedMinutes,
-        capacity: job.capacity,
-        slotsRemaining: job.slotsRemaining,
-        trainingRequired: job.trainingRequired,
-        trainingFeeUsd: job.trainingFeeUsd,
-        trainingNotes: job.trainingNotes,
-        requiresVerified: job.requiresVerified,
-        status: job.status,
-        closesAt: job.closesAt,
-      },
-      ACTOR,
-    )
-    if (exists) updated += 1
-    else created += 1
-    console.log(`  ${exists ? 'update' : 'create'} ${job.id}`)
-  }
-
-  console.log(`Done: ${created} created, ${updated} updated, ${skipped} skipped.`)
+  const result = await importStarterJobs({
+    ids,
+    overwrite,
+    actorEmail: STARTER_IMPORT_ACTOR,
+  })
+  console.log(
+    `Done: ${result.created} created, ${result.updated} updated, ${result.skipped} skipped.`,
+  )
 }
 
 main()

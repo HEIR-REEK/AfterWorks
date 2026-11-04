@@ -3,8 +3,15 @@ import test from 'node:test'
 import {
   EXPANDED_CATALOGUE_JOB_IDS,
   JOB_CATEGORY_LIST,
+  assessmentPassMark,
+  paystackSubunitsFor,
   seedJobs,
+  trainingFeeKesFor,
+  trainingFeeUsdFor,
 } from '@/lib/afterworks-data'
+import { builtInQuestions, publicAssessmentQuestions } from '@/lib/assessment-bank'
+import { getJobTrainingCourse, trainingCourseMinutes } from '@/lib/training-curriculum'
+import { toPublicJob } from '@/lib/public-jobs-server'
 
 test('the sample catalogue has a deep bench in every work category', () => {
   const jobs = seedJobs()
@@ -82,4 +89,45 @@ test('the 2026 expansion adds two cards per category and carries real training d
 
   const withBriefing = expanded.filter((job) => (job.trainingNotes?.length ?? 0) >= 2)
   assert.ok(withBriefing.length >= 3, 'the batch should include job-specific briefings where the client rules matter')
+})
+
+test('every expanded card resolves a complete course, assessment, public card and checkout', () => {
+  const expanded = seedJobs().filter((job) =>
+    (EXPANDED_CATALOGUE_JOB_IDS as readonly string[]).includes(job.id),
+  )
+
+  for (const job of expanded) {
+    // The module a worker studies: authored briefings are prepended to the category coursebook,
+    // so a card can never fall back to two paragraphs and an empty assessment.
+    const course = getJobTrainingCourse(job)
+    assert.ok(course.modules.length >= 12, `${job.id} renders only ${course.modules.length} lessons`)
+    assert.ok(trainingCourseMinutes(course) >= 90, `${job.id} course is too short to be a real briefing`)
+
+    // The assessment behind the application gate: 25 category questions, pass mark, answer key
+    // stripped from the public projection.
+    const bank = builtInQuestions(job.category)
+    assert.equal(bank.length, 25, `${job.id} / ${job.category} needs the full built-in bank`)
+    const passMark = assessmentPassMark(bank.length)
+    assert.ok(passMark > 0 && passMark <= bank.length)
+    const publicQuestions = publicAssessmentQuestions(bank)
+    assert.equal(publicQuestions.length, bank.length)
+    assert.equal('correctIndex' in publicQuestions[0]!, false, 'the browser must not receive the key')
+
+    // Payments: a gated card carries a positive per-card USD fee, a KES amount and matching
+    // Paystack subunits. An assessment-only card carries no fee, so no checkout can be opened.
+    if (job.trainingRequired) {
+      assert.ok((job.trainingNotes?.length ?? 0) >= 2, `${job.id} gates on training without a specific brief`)
+      assert.ok(typeof job.trainingFeeUsd === 'number' && job.trainingFeeUsd > 0)
+      const usd = trainingFeeUsdFor(job.trainingFeeUsd)
+      assert.equal(usd, job.trainingFeeUsd, `${job.id} fee changes on the way to checkout`)
+      const kes = trainingFeeKesFor(job.trainingFeeUsd)
+      assert.ok(kes > 0, `${job.id} has no KES price`)
+      assert.equal(paystackSubunitsFor(job.trainingFeeUsd), kes * 100)
+    } else {
+      assert.equal(job.trainingFeeUsd, undefined, `${job.id} is free but carries a training price`)
+    }
+
+    // The card the public `/work` page would publish.
+    assert.ok(toPublicJob(job.id, job, Date.now()), `${job.id} would be dropped from the public board`)
+  }
 })

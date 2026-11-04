@@ -120,22 +120,20 @@ export type Job = {
   capacity: number
   slotsRemaining: number
   /**
-   * Whether a training fee is charged. This is *derived* from the card's content, not chosen: a
-   * card with training sections is paid, a card without them is assessment-only. It is stored so
-   * older documents and the catalogue can read it without recomputing, but `jobHasTraining()` is
-   * the authority — see `jobRequiresTrainingFee()`.
+   * Which kind of card this is. `true` → a training card: modules and a training fee. `false` → an
+   * assessment-only card: no modules, no fee. The admin sets it when publishing, and it is the one
+   * thing the fee hangs on.
    */
   trainingRequired: boolean
   /**
-   * Per-job training price in USD, decided by the admin when publishing the card. Only meaningful
-   * when the card has training; falls back to the globally configured fee when absent.
+   * Per-job training price in USD, set by the admin. Only meaningful on a training card; falls back
+   * to the globally configured fee when absent.
    */
   trainingFeeUsd?: number
   /**
-   * Admin-authored training sections. This is what makes a card a *training* card: non-empty →
-   * the card has training and therefore a training fee. Empty/absent → the card is assessment-only
-   * and free. There is deliberately no built-in coursebook fallback, because "has training" is the
-   * very thing the fee hangs on.
+   * Admin-authored training sections — the modules of a training card. Empty/absent is fine: the
+   * built-in category coursebook is used instead, so a training card always has modules to work
+   * through. Ignored entirely on an assessment-only card.
    */
   trainingNotes?: TrainingSection[]
   /** Admin-authored assessment questions. Empty/absent → the built-in category bank is used. */
@@ -317,28 +315,40 @@ export function getTrainingFeeCents(overrideAmount?: number | string | null): nu
 }
 
 /**
- * Whether a card has training at all — and therefore whether it charges for it.
+ * Whether this is a *training* card or an *assessment-only* card.
  *
- * The rule is deliberately one-directional: *training implies a fee*. A card with no authored
- * sections is an assessment-only card: free, and the worker goes straight to the assessment once
- * their identity is verified. There is no "free training" state, because that is the combination
- * that made the fee look arbitrary — a card could deliver a full course for nothing while an
- * identical-looking card charged for one.
+ * The board is made of two kinds of card, and the admin says which one a card is:
  *
- * Blank sections don't count: an admin who adds a heading and then clears it has not authored
- * training.
+ *   • a training card has modules and a training fee. The modules are the admin's authored sections
+ *     when there are any, and the built-in category coursebook when there are not — so a training
+ *     card always has something to work through. The worker pays, then trains, then is assessed.
+ *   • an assessment-only card has neither. No modules, no fee: a verified worker goes straight to
+ *     the assessment and then applies.
+ *
+ * This flag *is* that choice, and it is also what the fee hangs on — a training card charges
+ * because it is a training card. The two cannot drift apart, because there is only one question
+ * being asked.
  */
-export function jobHasTraining(job: { trainingNotes?: TrainingSection[] } | null | undefined): boolean {
-  if (!job) return false
-  return (job.trainingNotes ?? []).some((section) => section.title.trim() !== '' || section.content.trim() !== '')
+export function jobHasTraining(job: { trainingRequired?: boolean } | null | undefined): boolean {
+  return job?.trainingRequired === true
 }
 
 /**
- * Whether a worker must pay a training fee for this card. Same as `jobHasTraining()` — the fee
- * exists because the training does — but named for the call sites that are asking about money.
+ * Whether a worker must pay a training fee for this card. Same question as `jobHasTraining()`, named
+ * for the call sites that are asking about money rather than about content.
  */
-export function jobRequiresTrainingFee(job: { trainingNotes?: TrainingSection[] } | null | undefined): boolean {
+export function jobRequiresTrainingFee(job: { trainingRequired?: boolean } | null | undefined): boolean {
   return jobHasTraining(job)
+}
+
+/**
+ * The modules a training card actually shows. Authored sections when the admin wrote them, the
+ * built-in category coursebook otherwise — which is what makes "training card" mean "has modules"
+ * rather than "the admin remembered to write some".
+ */
+export function jobTrainingModuleCount(job: { trainingRequired?: boolean; trainingNotes?: TrainingSection[] } | null | undefined): number {
+  if (!job || !jobHasTraining(job)) return 0
+  return (job.trainingNotes ?? []).filter((section) => section.title.trim() !== '' || section.content.trim() !== '').length
 }
 
 /**

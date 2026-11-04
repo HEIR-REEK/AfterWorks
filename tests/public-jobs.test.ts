@@ -50,20 +50,16 @@ test('paused, closed, expired and full jobs are never published', () => {
   assert.equal(toPublicJob('job/1', raw(), NOW), null)
 })
 
-test('a fee is omitted when the card has no training, whatever the stored flag says', () => {
-  // No sections → assessment-only → free, even though the raw document claims otherwise.
-  const free = toPublicJob('job-1', raw({ trainingRequired: true, trainingFeeUsd: 25, trainingNotes: [] }), NOW)
+test('a fee is published only on a training card, whatever the body tried to send', () => {
+  // Assessment-only → free, and the fee must not ride along with it.
+  const free = toPublicJob('job-1', raw({ trainingRequired: false, trainingFeeUsd: 25 }), NOW)
   assert.ok(free)
   assert.equal(free.trainingRequired, false)
   assert.equal(free.trainingFeeUsd, undefined)
-
-  // Sections present → the card charges, and the fee is published with it.
   assert.ok(!('trainingNotes' in (free as object)), 'the public card must not carry training sections')
-  const paid = toPublicJob(
-    'job-2',
-    raw({ trainingRequired: false, trainingFeeUsd: 25, trainingNotes: [{ title: 'Unit 1', content: 'Label speakers.' }] }),
-    NOW,
-  )
+
+  // Training card → the fee is published with it, authored modules or not.
+  const paid = toPublicJob('job-2', raw({ trainingRequired: true, trainingFeeUsd: 25 }), NOW)
   assert.ok(paid)
   assert.equal(paid.trainingRequired, true)
   assert.equal(paid.trainingFeeUsd, 25)

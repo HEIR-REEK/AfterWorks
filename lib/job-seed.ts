@@ -49,9 +49,8 @@ export function starterJobInput(job: Job): AdminJobInput {
     estimatedMinutes: job.estimatedMinutes,
     capacity: job.capacity,
     slotsRemaining: job.slotsRemaining,
-    // Derived from the sections, so a seeded card can never claim "free" while carrying a course.
-    trainingRequired: jobHasTraining(job),
-    trainingFeeUsd: jobHasTraining(job) ? job.trainingFeeUsd : undefined,
+    trainingRequired: job.trainingRequired,
+    trainingFeeUsd: job.trainingRequired ? job.trainingFeeUsd : undefined,
     trainingNotes: job.trainingNotes ?? [],
     // Empty means the built-in category bank is used. Keeping it explicit makes the document
     // shape identical to one saved from the console, where an empty list is also meaningful.

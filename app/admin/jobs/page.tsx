@@ -174,12 +174,14 @@ export default function AdminJobsPage() {
   const [searchInput, setSearchInput] = useState('')
   const [search, setSearch] = useState('')
   const [editing, setEditing] = useState<Draft | null>(null)
-  // Training is what carries the fee. These two read the draft's sections directly so the editor
-  // cannot show "free" on a card that has a course, or a fee on one that does not.
+  // Which kind of card this is, as chosen in the editor. A training card has modules and a fee; an
+  // assessment-only card has neither. The modules of a training card are the authored sections when
+  // there are any and the built-in coursebook when there are not, so "training card" means "has
+  // modules" rather than "the admin remembered to write some".
+  const editingHasTraining = editing?.trainingRequired === true
   const editingTrainingCount = (editing?.trainingNotes ?? []).filter(
     (section) => section.title.trim() !== '' || section.content.trim() !== '',
   ).length
-  const editingHasTraining = editingTrainingCount > 0
   const [saving, setSaving] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState<AdminJobRow | null>(null)
   const [confirmImport, setConfirmImport] = useState(false)
@@ -439,8 +441,8 @@ export default function AdminJobsPage() {
         estimatedMinutes: Number(editing.estimatedMinutes),
         capacity: Number(editing.capacity),
         slotsRemaining: Number(editing.slotsRemaining),
-        trainingRequired: editingHasTraining,
-        trainingFeeUsd: editingHasTraining ? fee : 0,
+        trainingRequired: editing.trainingRequired === true,
+        trainingFeeUsd: editing.trainingRequired === true ? fee : 0,
         trainingNotes: cleanedNotes,
         assessmentQuestions: cleanedQuestions,
         requiresVerified: editing.requiresVerified,
@@ -739,30 +741,58 @@ export default function AdminJobsPage() {
                   </div>
                 </header>
 
-                {/* The fee is derived from the content, not chosen. A card with training sections is
-                    paid; strip them all and it becomes assessment-only and free. There is no way to
-                    set the two apart, which is what let a full course ship for nothing. */}
-                <div className="flex flex-col gap-2 rounded-xl border border-border bg-muted/30 p-3">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span
-                      className={cn(
-                        'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold',
-                        editingHasTraining ? 'bg-warning/15 text-warning' : 'bg-success/15 text-success',
-                      )}
-                    >
-                      {editingHasTraining ? <GraduationCap className="size-3.5" /> : <HelpCircle className="size-3.5" />}
-                      {editingHasTraining ? 'Training card — workers pay a fee' : 'Assessment-only card — no fee'}
+                {/* The board is two kinds of card, and this is the choice between them. A training
+                    card has modules and charges for them; an assessment-only card has neither. */}
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditing({ ...editing, trainingRequired: true })}
+                    className={cn(
+                      'flex flex-col gap-1 rounded-xl border p-3 text-left transition-colors',
+                      editing.trainingRequired ? 'border-primary bg-primary/10 ring-1 ring-primary/30' : 'border-border bg-background hover:border-primary/40',
+                    )}
+                  >
+                    <span className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
+                      <GraduationCap className="size-3.5 text-primary" />
+                      Training + assessment
                     </span>
-                    <span className="text-xs text-muted-foreground">
-                      {editingTrainingCount} authored training section{editingTrainingCount === 1 ? '' : 's'}
+                    <span className="text-[11px] leading-snug text-muted-foreground">
+                      Workers pay the training fee, work through the modules, then pass the assessment.
                     </span>
-                  </div>
-                  <p className="text-[11px] leading-relaxed text-muted-foreground">
-                    {editingHasTraining
-                      ? 'Workers pay the fee below, then work through these sections, then pass the assessment. Remove every section to make this an assessment-only card with no fee.'
-                      : 'No training on this card, so there is nothing to charge. Add a section below and it becomes a paid training card. Verified members go straight to the assessment.'}
-                  </p>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditing({ ...editing, trainingRequired: false, trainingFeeUsd: 0 })}
+                    className={cn(
+                      'flex flex-col gap-1 rounded-xl border p-3 text-left transition-colors',
+                      !editing.trainingRequired ? 'border-primary bg-primary/10 ring-1 ring-primary/30' : 'border-border bg-background hover:border-primary/40',
+                    )}
+                  >
+                    <span className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
+                      <HelpCircle className="size-3.5 text-primary" />
+                      Assessment only
+                    </span>
+                    <span className="text-[11px] leading-snug text-muted-foreground">
+                      No training and no fee. Verified workers go straight to the assessment, then apply.
+                    </span>
+                  </button>
                 </div>
+
+                {editingHasTraining && (
+                  <p className="rounded-xl border border-border bg-muted/30 p-3 text-[11px] leading-relaxed text-muted-foreground">
+                    {editingTrainingCount > 0
+                      ? `Workers will work through your ${editingTrainingCount} authored module${editingTrainingCount === 1 ? '' : 's'}.`
+                      : 'No authored modules yet — workers will work through the built-in coursebook for this category. Load it below to edit it, or leave it as is.'}
+                  </p>
+                )}
+
+                {!editingHasTraining && editingTrainingCount > 0 && (
+                  <p className="rounded-xl border border-warning/40 bg-warning/10 p-3 text-[11px] leading-relaxed text-warning">
+                    This card is assessment-only, so its {editingTrainingCount} authored module
+                    {editingTrainingCount === 1 ? '' : 's'} will not be shown to workers. Switch it to
+                    a training card above to use them.
+                  </p>
+                )}
 
                 {editingHasTraining && (
                   <Field

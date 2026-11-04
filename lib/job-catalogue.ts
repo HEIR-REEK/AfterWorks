@@ -172,10 +172,11 @@ export function normaliseJobRecord(docId: string, raw: unknown, now: number = Da
     estimatedMinutes: Math.max(5, Math.round(number(data.estimatedMinutes, 60))),
     capacity,
     slotsRemaining: clamp(Number.isFinite(slotsRaw) ? slotsRaw : capacity, 0, capacity),
-    trainingRequired: trainingSections.some(
-      (section) => section.title.trim() !== '' || section.content.trim() !== '',
-    ),
-    ...(fee > 0 ? { trainingFeeUsd: Math.round(fee * 10_000) / 10_000 } : {}),
+    // Which kind of card this is, as the admin set it. A training card's modules come from these
+    // sections when there are any and from the built-in coursebook when there are not, so the flag
+    // is the card type rather than a guess about the content.
+    trainingRequired: data.trainingRequired === true,
+    ...(data.trainingRequired === true && fee > 0 ? { trainingFeeUsd: Math.round(fee * 10_000) / 10_000 } : {}),
     trainingNotes: trainingSections,
     // The answer key is server-only. The browser asks /api/assessments for questions without
     // `correctIndex`/`explanation` and receives the review only after the server scores it.

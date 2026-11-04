@@ -90,6 +90,13 @@ export function trainingCourseMinutes(course: TrainingCourse): number {
  * duration and are sanitised through the same image allow-list as the reader.
  */
 export function getJobTrainingCourse(job: Job): TrainingCourse {
+  // An assessment-only card has no training, so it has no course — not even the category one. The
+  // built-in coursebook is what a *training* card falls back to when the admin wrote no sections,
+  // which is what makes "training card" mean "has modules" rather than "the admin wrote some".
+  if (job.trainingRequired !== true) {
+    return { level: '', summary: '', objectives: [], modules: [] }
+  }
+
   const authored = Array.isArray(job.trainingNotes) ? job.trainingNotes : []
   const builtIn = getBuiltInTrainingCourse(job.category)
   if (authored.length === 0) return builtIn

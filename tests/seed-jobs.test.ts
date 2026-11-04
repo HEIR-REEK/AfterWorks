@@ -99,11 +99,16 @@ test('every card resolves a complete course, assessment, public card and checkou
   const jobs = seedJobs()
 
   for (const job of jobs) {
-    // The module a worker studies: authored briefings are prepended to the category coursebook,
-    // so a card can never fall back to two paragraphs and an empty assessment.
+    // The module a worker studies. A training card resolves the authored sections, or the category
+    // coursebook when there are none, so it can never fall back to two paragraphs and an empty
+    // assessment. An assessment-only card has no training at all, so it resolves nothing.
     const course = getJobTrainingCourse(job)
-    assert.ok(course.modules.length >= 12, `${job.id} renders only ${course.modules.length} lessons`)
-    assert.ok(trainingCourseMinutes(course) >= 90, `${job.id} course is too short to be a real briefing`)
+    if (job.trainingRequired) {
+      assert.ok(course.modules.length >= 12, `${job.id} is a training card and renders only ${course.modules.length} lessons`)
+      assert.ok(trainingCourseMinutes(course) >= 90, `${job.id} course is too short to be a real briefing`)
+    } else {
+      assert.equal(course.modules.length, 0, `${job.id} is assessment-only and must resolve no modules`)
+    }
 
     // The assessment behind the application gate: the full 20-question applied category bank, an 80% pass
     // mark and an answer key stripped from the public projection. This holds for free cards too —

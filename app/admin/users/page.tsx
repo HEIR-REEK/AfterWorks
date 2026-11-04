@@ -354,6 +354,7 @@ function UsersPageInner() {
                 <th className="py-2 pr-2 font-semibold">Member</th>
                 <th className="px-2 py-2 font-semibold">State</th>
                 <th className="px-2 py-2 font-semibold">KYC</th>
+                <th className="px-2 py-2 font-semibold">Profile</th>
                 <th className="px-2 py-2 font-semibold">Quality</th>
                 <th className="px-2 py-2 font-semibold">Completed</th>
                 <th className="px-2 py-2 font-semibold">Wallet</th>
@@ -408,8 +409,23 @@ function UsersPageInner() {
                         <StatusBadge tone="success"><BadgeCheck className="size-3" />Verified</StatusBadge>
                       ) : row.kycRequestedAt ? (
                         <StatusBadge tone="warning">Requested</StatusBadge>
+                      ) : row.kycRequestHeldAt ? (
+                        <StatusBadge tone="warning" title={`Request held on ${new Date(row.kycRequestHeldAt).toLocaleString()} — profile incomplete: ${(row.kycHoldMissing ?? []).join(', ') || 'missing fields'}`}>
+                          Held
+                        </StatusBadge>
                       ) : (
                         <StatusBadge tone={row.kycStatus === 'declined' ? 'danger' : 'warning'}>{row.kycStatus ?? 'not started'}</StatusBadge>
+                      )}
+                    </td>
+                    <td className="px-2 py-2.5">
+                      {row.profileComplete ? (
+                        <StatusBadge tone="success" title="All required profile fields are answered — a verification request from this member can be accepted.">
+                          <BadgeCheck className="size-3" />Complete
+                        </StatusBadge>
+                      ) : (
+                        <StatusBadge tone="warning" title={`Profile ${row.profilePercent}% — missing: ${row.profileMissing.join(', ') || 'required fields'}`}>
+                          {row.profilePercent}%
+                        </StatusBadge>
                       )}
                     </td>
                     <td className="px-2 py-2.5 font-mono tabular">{row.qualityScore}</td>
@@ -469,8 +485,13 @@ function UsersPageInner() {
               <Fact label="State" value={STATE_LABELS[selected.accountState as AdminMutableState] ?? selected.accountState} />
               <Fact
                 label="Identity"
-                value={selected.kycVerified ? 'Verified' : selected.kycRequestedAt ? 'Review requested' : selected.kycStatus ?? 'Not started'}
-                tone={selected.kycVerified ? 'success' : selected.kycRequestedAt ? 'warning' : undefined}
+                value={selected.kycVerified ? 'Verified' : selected.kycRequestedAt ? 'Review requested' : selected.kycRequestHeldAt ? 'Held — profile incomplete' : selected.kycStatus ?? 'Not started'}
+                tone={selected.kycVerified ? 'success' : selected.kycRequestedAt ? 'warning' : selected.kycRequestHeldAt ? 'warning' : undefined}
+              />
+              <Fact
+                label="Profile"
+                value={selected.profileComplete ? 'Complete' : `${selected.profilePercent}% complete`}
+                tone={selected.profileComplete ? 'success' : 'warning'}
               />
               <Fact label="Quality" value={String(selected.qualityScore)} />
               <Fact label="Completed jobs" value={String(selected.jobsCompleted)} />
@@ -530,12 +551,28 @@ function UsersPageInner() {
                 <strong className="font-semibold text-foreground">Wallet note:</strong> {selected.walletNote}
               </p>
             )}
+            {!selected.kycVerified && selected.kycRequestHeldAt && (
+              <p className="rounded-xl border border-warning/40 bg-warning/10 px-3 py-2 text-[11px] leading-relaxed text-warning-foreground">
+                <strong className="font-semibold">Verification request held</strong> on{' '}
+                {new Date(selected.kycRequestHeldAt).toLocaleString()} — the profile was incomplete
+                ({selected.profilePercent}%), so the request never entered the review queue. Missing:{' '}
+                {(selected.kycHoldMissing ?? selected.profileMissing).join(', ') || 'required fields'}. The member
+                was emailed these fields; approve only once the profile shows Complete.
+              </p>
+            )}
+            {!selected.kycVerified && !selected.kycRequestHeldAt && !selected.profileComplete && (
+              <p className="rounded-xl border border-warning/40 bg-warning/10 px-3 py-2 text-[11px] leading-relaxed text-warning-foreground">
+                <strong className="font-semibold">Profile incomplete</strong> ({selected.profilePercent}%) — missing:{' '}
+                {selected.profileMissing.join(', ') || 'required fields'}. Verification requests from this member are
+                held until the profile is complete.
+              </p>
+            )}
 
             <div className="mt-auto flex flex-col gap-2 border-t border-border pt-3">
               <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Actions</p>
               <div className="grid grid-cols-2 gap-2">
                 {!selected.kycVerified && (
-                  <Button size="sm" className="gap-1.5" disabled={busy} onClick={() => setConfirm({ action: 'kyc-approve', title: 'Approve identity', description: 'Marks this worker verified for job applications, withdrawals and referral payouts. Use only after checking the document they provided.', confirmLabel: 'Approve KYC', tone: 'default' })}>
+                  <Button size="sm" className="gap-1.5" disabled={busy} onClick={() => setConfirm({ action: 'kyc-approve', title: 'Approve identity', description: selected.profileComplete ? 'Marks this worker verified for job applications, withdrawals and referral payouts. Profile is complete. Use only after checking the document they provided.' : `Marks this worker verified for job applications, withdrawals and referral payouts. WARNING: profile is INCOMPLETE (${selected.profilePercent}%) — missing: ${selected.profileMissing.join(', ') || 'required fields'}. Only approve if you have manually confirmed those details.`, confirmLabel: 'Approve KYC', tone: 'default' })}>
                     <UserCheck className="size-3.5" />
                     Approve KYC
                   </Button>

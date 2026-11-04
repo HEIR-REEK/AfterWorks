@@ -727,6 +727,116 @@ export function kycRequestReceivedEmailHtml(copy: KycRequestReceivedCopy): strin
 </html>`
 }
 
+export type KycRequestHeldCopy = {
+  name: string
+  email: string
+  /** Labels of the required profile fields that are still empty. */
+  missingLabels: string[]
+}
+
+export function kycRequestHeldEmailSubject(): string {
+  return 'Your verification request is on hold — finish your profile first'
+}
+
+export function kycRequestHeldEmailText(copy: KycRequestHeldCopy): string {
+  const first = firstName(copy.name, copy.email)
+  const missing = copy.missingLabels.length > 0 ? copy.missingLabels : ['some profile fields']
+  return [
+    `Hi ${first},`,
+    '',
+    'We received your identity verification request, but it is ON HOLD until your profile is complete.',
+    '',
+    'Still missing from your profile:',
+    ...missing.map((label) => `  - ${label}`),
+    '',
+    'What to do:',
+    `  1. Open your profile and fill in every field above: ${site.url}/profile`,
+    '  2. Save the profile — it is scored as complete only when every required field is answered.',
+    '  3. Request verification again from the same profile page.',
+    '',
+    'Once your profile is complete and we accept the request, a member of the AfterWorks team reviews it and you hear back within',
+    `${KYC_REVIEW_SLA_HOURS} hours.`,
+    '',
+    `Questions? Reply to this email or write to ${site.supportEmail}.`,
+    '',
+    `— ${site.name}`,
+  ].join('\n')
+}
+
+export function kycRequestHeldEmailHtml(copy: KycRequestHeldCopy): string {
+  const first = escapeHtml(firstName(copy.name, copy.email))
+  const missing = copy.missingLabels.length > 0 ? copy.missingLabels : ['some profile fields']
+  const profileUrl = escapeHtml(`${site.url}/profile`)
+  const support = escapeHtml(site.supportEmail)
+  const missingItems = missing
+    .map((label) => `<li style="margin:0 0 4px;font-size:14px;line-height:1.6;color:#3C4257;">${escapeHtml(label)}</li>`)
+    .join('')
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Verification request on hold</title>
+</head>
+<body style="margin:0;padding:0;background:#F4F6FB;font-family:Inter,Segoe UI,Helvetica,Arial,sans-serif;color:#1A1F36;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F4F6FB;padding:32px 12px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;">
+          <tr>
+            <td align="center" style="padding:8px 8px 20px;">
+              ${EMAIL_BRAND_LOGO_HTML}
+            </td>
+          </tr>
+          <tr>
+            <td style="background:#ffffff;border:1px solid #E4E7F1;border-radius:16px;padding:36px 32px;">
+              <p style="margin:0 0 8px;font-size:13px;font-weight:600;color:#B45309;">Identity verification</p>
+              <h1 style="margin:0 0 16px;font-size:24px;line-height:1.3;font-weight:700;color:#1A1F36;">Your request is on hold until your profile is complete</h1>
+              <p style="margin:0 0 20px;font-size:15px;line-height:1.6;color:#3C4257;">
+                Hi ${first}, we received your identity verification request, but it is <strong>on hold</strong> because your profile is not complete yet. Our team cannot start the review until every required field is answered.
+              </p>
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 24px;background:#FEF6E7;border:1px solid #F5D9A8;border-radius:12px;">
+                <tr>
+                  <td style="padding:16px 18px;">
+                    <p style="margin:0 0 4px;font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#B45309;">Still missing from your profile</p>
+                    <ul style="margin:8px 0 0;padding-left:18px;">${missingItems}</ul>
+                  </td>
+                </tr>
+              </table>
+              <p style="margin:0 0 10px;font-size:15px;line-height:1.6;color:#3C4257;font-weight:600;">What to do</p>
+              <ol style="margin:0 0 24px;padding-left:20px;font-size:14px;line-height:1.7;color:#3C4257;">
+                <li>Open your profile and fill in every field above.</li>
+                <li>Save — the profile only counts as complete when every required field is answered.</li>
+                <li>Request verification again from the profile page.</li>
+              </ol>
+              <table role="presentation" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td style="border-radius:10px;background:#2F5FE0;">
+                    <a href="${profileUrl}" style="display:inline-block;padding:14px 22px;font-size:15px;font-weight:600;color:#ffffff;text-decoration:none;">
+                      Complete your profile
+                    </a>
+                  </td>
+                </tr>
+              </table>
+              <p style="margin:20px 0 0;font-size:13px;line-height:1.6;color:#667085;">
+                Once your profile is complete and we accept the request, a reviewer looks at it and you hear back within <strong>${KYC_REVIEW_SLA_HOURS} hours</strong>.
+              </p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:20px 8px 0;font-size:12px;line-height:1.55;color:#667085;">
+              Questions? Reply to this email or write to ${support}.
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`
+}
+
 export type KycApprovedCopy = {
   name: string
   email: string

@@ -335,6 +335,10 @@ export async function requestKycReview(uid: string): Promise<{ requestedAt: stri
   await ref.set(
     {
       kycRequestedAt: now,
+      // A completed profile is what allowed this request through; any earlier hold is spent.
+      kycRequestHeldAt: null,
+      kycHoldReason: null,
+      kycHoldMissing: null,
       // A member who asks again after a rejection is asking for a fresh look: clear the verdict so
       // the console shows "requested" rather than a stale "declined".
       ...(alreadyRequested ? {} : { kycStatus: 'requested', updatedAt: now }),
@@ -345,6 +349,30 @@ export async function requestKycReview(uid: string): Promise<{ requestedAt: stri
   // record of a member waiting. Without it a queue that nobody worked would look like nobody asked.
   await createAuditEntry('KYC_REVIEW_REQUESTED', { uid, alreadyRequested })
   return { requestedAt: now, alreadyRequested }
+}
+
+/**
+ * Records that a verification request was HELD because the profile is incomplete. Deliberately
+ * does NOT set `kycRequestedAt`: a held request must not enter the review queue — there is nothing
+ * for a reviewer to approve until the member finishes their profile. The marker (plus the missing
+ * field labels) is what the admin console shows as "held", and it is cleared by
+ * `requestKycReview` once a request is actually accepted.
+ */
+export async function holdKycRequest(uid: string, missingLabels: string[]): Promise<{ heldAt: string }> {
+  const db = adminDb()
+  const now = new Date().toISOString()
+  const missing = missingLabels.slice(0, 12)
+  await db.collection('users').doc(uid).set(
+    {
+      kycRequestHeldAt: now,
+      kycHoldReason: 'profile_incomplete',
+      kycHoldMissing: missing,
+      updatedAt: now,
+    },
+    { merge: true },
+  )
+  await createAuditEntry('KYC_REVIEW_HELD', { uid, reason: 'profile_incomplete', missing })
+  return { heldAt: now }
 }
 
 /**

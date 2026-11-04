@@ -168,7 +168,19 @@ function PaystackCheckoutSection({
     if (payState !== 'awaiting_payment') return
     const id = window.setInterval(() => {
       const popup = popupRef.current
-      if (popup && popup.closed) {
+      if (!popup) return
+      let closed: boolean
+      try {
+        closed = popup.closed
+      } catch {
+        // Our COOP header (same-origin-allow-popups) severs the opener handle once the popup
+        // navigates to Paystack's cross-origin checkout, so reading .closed throws a SecurityError.
+        // The window is no longer observable from here — drop the handle and let the 4-second
+        // verify poll below confirm the charge instead.
+        popupRef.current = null
+        return
+      }
+      if (closed) {
         popupRef.current = null
         const ref = recalledReference(jobId)
         if (ref) void onVerifySuccess(ref)

@@ -139,6 +139,16 @@ function fnv(input: string): string {
 // ─── CSP ─────────────────────────────────────────────────────────────────────
 
 const FIREBASE_HOSTS = 'https://*.firebaseapp.com https://*.firebaseio.com https://*.googleapis.com'
+/**
+ * Firestore's realtime listener runs over WebChannel, whose WebSocket endpoint is
+ * `wss://firestore.googleapis.com/google.firestore.v1.Firestore/Listen/channel?...&TYPE=websocket`.
+ * The https wildcard above does not match a `wss:` URL, and `wss://*.firebaseio.com` is the
+ * Realtime Database host, not Firestore — so the socket was refused and the SDK quietly fell back
+ * to the XHR long-poll transport (`TYPE=xmlhttp`). Realtime updates still arrived, one held
+ * connection per listener, with reconnect latency and far more requests than a socket needs.
+ * The https wildcard is already allowed for the same hosts, so this widens nothing.
+ */
+const FIREBASE_WSS_HOSTS = 'wss://*.googleapis.com'
 const PAYSTACK_HOSTS = 'https://checkout.paystack.com https://api.paystack.co https://js.paystack.co'
 const DIDIT_HOSTS = 'https://*.didit.me https://apx.didit.me'
 
@@ -157,7 +167,7 @@ function buildCsp(production: boolean): string {
     `img-src 'self' data: blob: https:`,
     // No blanket `https: wss:`. A successful script injection could otherwise exfiltrate the
     // member's data to any host; the app only talks to Firebase, Paystack and Didit.
-    `connect-src 'self' ${production ? '' : 'ws: '}${FIREBASE_HOSTS} ${PAYSTACK_HOSTS} ${DIDIT_HOSTS} wss://*.firebaseio.com wss://*.firebaseapp.com`,
+    `connect-src 'self' ${production ? '' : 'ws: '}${FIREBASE_HOSTS} ${FIREBASE_WSS_HOSTS} ${PAYSTACK_HOSTS} ${DIDIT_HOSTS} wss://*.firebaseio.com wss://*.firebaseapp.com`,
     `frame-src 'self' ${FIREBASE_HOSTS} ${PAYSTACK_HOSTS} ${DIDIT_HOSTS} https://apis.google.com`,
     `worker-src 'self' blob:`,
     `manifest-src 'self'`,

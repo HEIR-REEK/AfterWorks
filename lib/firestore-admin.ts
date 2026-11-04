@@ -1584,6 +1584,9 @@ export async function attachAuthAccountState(rows: AdminUserRow[]): Promise<void
             exists: true,
             disabled: rec.disabled === true,
             emailVerified: rec.emailVerified === true,
+            // Auth holds the address even when the profile document never got one, so a stub
+            // profile still shows an email in the console instead of a blank cell.
+            ...(rec.email ? { email: rec.email } : {}),
             createdAt: rec.metadata?.creationTime ?? null,
             lastSignInAt: rec.metadata?.lastSignInTime ?? null,
             providers: (rec.providerData ?? []).map((p: UserInfo) => p.providerId),

@@ -496,6 +496,13 @@ export type AdminUserRow = AdminUserRowModel & {
     exists: boolean
     disabled: boolean
     emailVerified: boolean
+    /**
+     * The address Firebase Auth holds for this account. Carried so the console can still show an
+     * email for a profile document that never received one — which is what a Google sign-up
+     * produced whenever the client-side bootstrap was refused or interrupted. Auth is the
+     * authority on the address; the profile copy is a convenience that can be missing.
+     */
+    email?: string
     createdAt: string | null
     lastSignInAt: string | null
     providers: string[]

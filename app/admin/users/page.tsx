@@ -387,7 +387,7 @@ function UsersPageInner() {
                             {row.name || row.email || 'No profile details'}
                           </p>
                           <p className="truncate text-[11px] text-muted-foreground">
-                            {row.email || (row.profileIncomplete ? 'no name or email on file' : '—')}
+                            {row.email || row.auth?.email || (row.profileIncomplete ? 'no name or email on file' : '—')}
                           </p>
                         </div>
                         {row.role === 'admin' && <StatusBadge tone="info"><ShieldCheck className="size-3" />Staff</StatusBadge>}
@@ -452,7 +452,12 @@ function UsersPageInner() {
                   {selected.role === 'admin' && <StatusBadge tone="info">Staff</StatusBadge>}
                   {selected.profileIncomplete && <StatusBadge tone="warning">Incomplete record</StatusBadge>}
                 </div>
-                <p className="truncate text-xs text-muted-foreground">{selected.email || 'No email on file'}</p>
+                <p className="truncate text-xs text-muted-foreground">
+                  {selected.email || selected.auth?.email || 'No email on file'}
+                  {!selected.email && selected.auth?.email ? (
+                    <span className="ml-1.5 text-[10px] text-warning">(from sign-in, not saved to the profile)</span>
+                  ) : null}
+                </p>
                 <p className="mt-1 font-mono text-[10px] text-muted-foreground/80">uid {selected.uid.slice(0, 24)}</p>
               </div>
               <button type="button" onClick={() => setSelected(null)} className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" aria-label="Close">

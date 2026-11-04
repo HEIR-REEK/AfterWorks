@@ -464,7 +464,7 @@ export async function reconcileCompletedReferral(referredUid: string): Promise<b
  *
  * The usual release is atomic with the referred member's profile save. This is the other order:
  * the referred profile was already complete when the referrer's KYC was approved, so nothing would
- * revisit those rows. Called from every path that can mark a referrer verified — the Didit webhook,
+ * revisit those rows. Called from every path that can mark a referrer verified — the admin review
  * the status self-heal and the admin approval — and safe to call repeatedly because
  * `stageReferralBonusForCompletedProfile` returns no writes once a row is qualified.
  */

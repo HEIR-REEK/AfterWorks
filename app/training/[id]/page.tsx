@@ -333,7 +333,7 @@ function PaystackCheckoutSection({
  * The gate between paying and learning.
  *
  * Payment and identity verification are deliberately separate steps: a worker can settle a job
- * card's training fee before KYC (useful when a slot is open and the Didit review is still
+ * card's training fee before KYC (useful when a slot is open and the identity review is still
  * pending), but the course material and the assessment stay locked until the check is approved.
  * Keeping this gate in one component means every training path — paid or fee-free — uses the same
  * rule instead of each block remembering it separately.

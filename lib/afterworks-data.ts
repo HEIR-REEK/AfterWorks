@@ -212,6 +212,8 @@ export type WorkerProfile = {
   kycProvider?: string
   kycLevel?: string
   kycStatus?: string
+  /** When the member asked for a manual review, if they have. Server-written; drives the UI state. */
+  kycRequestedAt?: string
   /** Human-readable reason if KYC was declined or flagged. */
   kycRejectionReason?: string | null
   /** Names of sub-checks that failed, e.g. ['liveness', 'document']. */

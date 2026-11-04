@@ -382,8 +382,10 @@ function UsersPageInner() {
                     <td className="px-2 py-2.5">
                       {row.kycVerified ? (
                         <StatusBadge tone="success"><BadgeCheck className="size-3" />Verified</StatusBadge>
+                      ) : row.kycRequestedAt ? (
+                        <StatusBadge tone="warning">Requested</StatusBadge>
                       ) : (
-                        <StatusBadge tone={row.kycStatus === 'rejected' ? 'danger' : 'warning'}>{row.kycStatus ?? 'not started'}</StatusBadge>
+                        <StatusBadge tone={row.kycStatus === 'declined' ? 'danger' : 'warning'}>{row.kycStatus ?? 'not started'}</StatusBadge>
                       )}
                     </td>
                     <td className="px-2 py-2.5 font-mono tabular">{row.qualityScore}</td>
@@ -436,7 +438,11 @@ function UsersPageInner() {
 
             <div className="grid grid-cols-2 gap-2.5">
               <Fact label="State" value={STATE_LABELS[selected.accountState as AdminMutableState] ?? selected.accountState} />
-              <Fact label="KYC" value={selected.kycVerified ? 'Verified' : selected.kycStatus ?? 'Not started'} tone={selected.kycVerified ? 'success' : 'warning'} />
+              <Fact
+                label="Identity"
+                value={selected.kycVerified ? 'Verified' : selected.kycRequestedAt ? 'Review requested' : selected.kycStatus ?? 'Not started'}
+                tone={selected.kycVerified ? 'success' : selected.kycRequestedAt ? 'warning' : undefined}
+              />
               <Fact label="Quality" value={String(selected.qualityScore)} />
               <Fact label="Completed jobs" value={String(selected.jobsCompleted)} />
               <Fact label="Available" value={formatUsd(selected.wallet.availableUsd)} />
@@ -444,7 +450,6 @@ function UsersPageInner() {
               <Fact label="Payout handle" value={selected.wallet.payoutNumberMasked || selected.payoutNumberMasked || '—'} />
               <Fact label="Paid trainings" value={String(selected.paidTrainingsCount)} />
               <Fact label="Joined" value={selected.createdAt ? new Date(selected.createdAt).toLocaleDateString() : '—'} />
-              <Fact label="Provider" value={selected.kycProvider || '—'} />
             </div>
 
             {/* Auth is the credential; the profile is only our description of it. Show both, and show
@@ -501,7 +506,7 @@ function UsersPageInner() {
               <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Actions</p>
               <div className="grid grid-cols-2 gap-2">
                 {!selected.kycVerified && (
-                  <Button size="sm" className="gap-1.5" disabled={busy} onClick={() => setConfirm({ action: 'kyc-approve', title: 'Approve identity', description: 'Marks this worker verified for job applications requiring KYC. Use only after checking the provider report.', confirmLabel: 'Approve KYC', tone: 'default' })}>
+                  <Button size="sm" className="gap-1.5" disabled={busy} onClick={() => setConfirm({ action: 'kyc-approve', title: 'Approve identity', description: 'Marks this worker verified for job applications, withdrawals and referral payouts. Use only after checking the document they provided.', confirmLabel: 'Approve KYC', tone: 'default' })}>
                     <UserCheck className="size-3.5" />
                     Approve KYC
                   </Button>

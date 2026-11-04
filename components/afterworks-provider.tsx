@@ -962,6 +962,7 @@ async function mapUserDoc(
     kycProvider: doc.kycProvider,
     kycLevel: doc.kycLevel,
     kycStatus: doc.kycStatus,
+    kycRequestedAt: doc.kycRequestedAt,
     kycRejectionReason: doc.kycRejectionReason ?? null,
     kycFailedChecks: doc.kycFailedChecks ?? null,
     qualityScore: typeof doc.qualityScore === 'number' ? doc.qualityScore : 100,

@@ -3,7 +3,6 @@
 import { useState, useEffect, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
-import { KycQrModal } from '@/components/kyc-qr-modal'
 import { useAfterWorks } from '@/components/afterworks-provider'
 import { useAuth } from '@/components/firebase-auth-provider'
 import { Button } from '@/components/ui/button'
@@ -62,14 +61,9 @@ function ProfilePageContent() {
   const [saving, setSaving] = useState(false)
   const [showToast, setShowToast] = useState(false)
   const [toastMessage, setToastMessage] = useState('Profile updated successfully!')
-  const [startingKyc, setStartingKyc] = useState(false)
+  const [requestingKyc, setRequestingKyc] = useState(false)
   const [kycError, setKycError] = useState<string | null>(null)
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
-  const [activeVerificationUrl, setActiveVerificationUrl] = useState<string | null>(null)
-  const [isQrModalOpen, setIsQrModalOpen] = useState(false)
-  const [kycFailureReason, setKycFailureReason] = useState<string | null>(null)
-  /** What Didit said about the decline — the reason and the checks that failed, if it said anything. */
-  const [kycFailureDetail, setKycFailureDetail] = useState<{ reason: string | null; checks: string[] } | null>(null)
+  const [kycRequested, setKycRequested] = useState(false)
   /**
    * Client-side phone feedback, so a mistyped number is caught before the round trip. The server
    * re-checks the same rule — including "this number already belongs to another account", which
@@ -85,110 +79,46 @@ function ProfilePageContent() {
     }
   }, [searchParams])
 
-  // 2. Handle return from KYC callback — verify server-side before trusting
-  useEffect(() => {
-    if (searchParams.get('kyc') !== 'success') return
-    const sessionId = searchParams.get('sid')
-    if (!sessionId || !user?.uid) return
+  // 2. There is no provider redirect to come back from any more. A member asks for a review and an
+  //    owner decides in the admin console, so the only client-side action is the request itself.
 
-    async function verifyOnReturn() {
-      try {
-        const { getAuth } = await import('firebase/auth')
-        const auth = getAuth()
-        const idToken = await auth.currentUser?.getIdToken()
-        if (!idToken) return
-
-        const res = await fetch(
-          `/api/kyc/status?sessionId=${encodeURIComponent(sessionId!)}&t=${Date.now()}`,
-          { headers: { Authorization: `Bearer ${idToken}` } }
-        )
-        const data = await res.json()
-        if (data.isApproved || data.diditApproved) {
-          // The verdict is written by the KYC route/webhook; the client only refreshes, so a browser
-          // can never mark itself verified.
-          await refreshWallet()
-          setToastMessage('Identity verification complete! Your profile is verified.')
-          setShowToast(true)
-          setTimeout(() => setShowToast(false), 5000)
-        }
-      } catch (err) {
-        console.error('KYC return verification error:', err)
-      }
-    }
-
-    verifyOnReturn()
-  }, [searchParams, user, refreshWallet])
-
-  // 2. Cross-device KYC polling is handled by KycQrModal — no duplicate polling here
-
-  const handleStartKyc = async () => {
+  const handleRequestVerification = async () => {
     if (!user) {
-      setKycError('You must be signed in to verify your identity.')
+      setKycError('You must be signed in to request verification.')
       return
     }
     if (!user.emailVerified) {
-      setKycError('Verify your email before starting identity verification.')
+      setKycError('Verify your email before requesting identity verification.')
       return
     }
-    setStartingKyc(true)
+    setRequestingKyc(true)
     setKycError(null)
-    setKycFailureReason(null)
-    setKycFailureDetail(null)
     try {
-      // iPadOS in desktop mode sends a "Macintosh" user agent, so the UA test alone sends a tablet
-      // down the desktop QR branch. A touch-capable Mac is a tablet in disguise.
-      const isMobile =
-        typeof window !== 'undefined' &&
-        (/Mobi|Android|iPhone|iPad|iPod|Tablet/i.test(navigator.userAgent) ||
-          (navigator.maxTouchPoints > 1 && /Macintosh/i.test(navigator.userAgent)))
-
       const { getAuth } = await import('firebase/auth')
-      const auth = getAuth()
-      const idToken = await auth.currentUser?.getIdToken()
-      if (!idToken) {
-        throw new Error('Unable to get authentication token. Please sign in again.')
-      }
+      const idToken = await getAuth().currentUser?.getIdToken()
+      if (!idToken) throw new Error('Unable to get authentication token. Please sign in again.')
 
-      const res = await fetch('/api/kyc/submit', {
+      const res = await fetch('/api/kyc/request', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${idToken}`,
-        },
-        body: JSON.stringify({ isMobile }),
+        headers: { Authorization: `Bearer ${idToken}` },
       })
-
       const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Your request could not be recorded.')
 
-      if (!res.ok) {
-        throw new Error(data.error || 'Failed to start KYC session.')
+      if (data.alreadyVerified) {
+        setKycError(null)
+        await refreshWallet()
+        return
       }
-
-      if (data.sessionId && data.verificationUrl) {
-        if (isMobile) {
-          window.location.href = data.verificationUrl
-        } else {
-          setActiveSessionId(data.sessionId)
-          setActiveVerificationUrl(data.verificationUrl)
-          setIsQrModalOpen(true)
-        }
-      } else {
-        throw new Error('Could not start a verification session. Please try again.')
-      }
+      setKycRequested(true)
+      setToastMessage('Verification requested. Our team will review your profile and confirm shortly.')
+      setShowToast(true)
+      setTimeout(() => setShowToast(false), 6000)
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Unknown error'
-      console.error('[KYC]', msg)
-      setKycError(msg)
+      console.error('[KYC]', err instanceof Error ? err.message : err)
+      setKycError(err instanceof Error ? err.message : 'Your request could not be recorded.')
     } finally {
-      setStartingKyc(false)
-    }
-  }
-
-  const handleKycFailed = (failure?: { reason?: string | null; checks?: string[] | null }) => {
-    setIsQrModalOpen(false)
-    setKycFailureReason('KYC verification was unsuccessful. Please try again.')
-    if (failure && (failure.reason || (failure.checks && failure.checks.length > 0))) {
-      setKycFailureDetail({ reason: failure.reason ?? null, checks: failure.checks ?? [] })
+      setRequestingKyc(false)
     }
   }
 
@@ -599,7 +529,7 @@ function ProfilePageContent() {
         </p>
       </section>
 
-      {/* Two Column Layout: Skills & Languages / Didit KYC */}
+      {/* Two Column Layout: Skills & Languages / Identity verification */}
       <div className="grid grid-cols-1 gap-4 sm:gap-6 md:grid-cols-2">
         {/* Skills & Badges */}
         <section className="flex flex-col justify-between overflow-hidden rounded-2xl border border-border bg-card p-6 shadow-sm">
@@ -659,7 +589,7 @@ function ProfilePageContent() {
           </div>
         </section>
 
-        {/* Didit KYC Verification Card */}
+        {/* Identity verification — a human review, requested from here and decided in the console */}
         <section className="flex flex-col justify-between overflow-hidden rounded-2xl border border-border bg-card p-6 shadow-sm">
           <div>
             <div className="flex items-center justify-between">
@@ -674,10 +604,10 @@ function ProfilePageContent() {
                 </div>
                 <div>
                   <h3 className="text-base font-semibold">
-                    {worker.kycVerified ? '✓ Identity Verified' : 'Identity Verification'}
+                    {worker.kycVerified ? '\u2713 Identity Verified' : 'Identity Verification'}
                   </h3>
                   <p className="text-xs text-muted-foreground">
-                    {worker.kycVerified ? 'Biometric verification complete' : 'Required to access premium tasks'}
+                    {worker.kycVerified ? 'Review complete' : 'Required for paid work and withdrawals'}
                   </p>
                 </div>
               </div>
@@ -685,20 +615,24 @@ function ProfilePageContent() {
 
             <div className="mt-4 rounded-xl border border-border bg-muted/40 p-4 text-xs space-y-2">
               <div className="flex justify-between">
-                <span className="text-muted-foreground">Provider:</span>
-                <span className="font-semibold text-foreground">{worker.kycProvider || 'Didit'}</span>
-              </div>
-              <div className="flex justify-between">
                 <span className="text-muted-foreground">Status:</span>
                 <span className={cn('font-semibold', worker.kycVerified ? 'text-success' : 'text-warning')}>
-                  {worker.kycVerified ? 'Verified' : 'Not Verified'}
+                  {worker.kycVerified
+                    ? 'Verified'
+                    : kycRequested || worker.kycRequestedAt
+                      ? 'Review requested'
+                      : worker.kycRejectionReason
+                        ? 'Needs another look'
+                        : 'Not started'}
                 </span>
               </div>
               {worker.kycVerified && (
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">Verified On:</span>
+                  <span className="text-muted-foreground">Verified on:</span>
                   <span className="font-semibold text-foreground">
-                    {worker.kycVerifiedAt ? formatTimestamp(worker.kycVerifiedAt, { day: '2-digit', month: 'short', year: 'numeric' }) : 'N/A'}
+                    {worker.kycVerifiedAt
+                      ? formatTimestamp(worker.kycVerifiedAt, { day: '2-digit', month: 'short', year: 'numeric' })
+                      : 'N/A'}
                   </span>
                 </div>
               )}
@@ -706,45 +640,12 @@ function ProfilePageContent() {
           </div>
 
           <div className="mt-6 flex flex-col gap-3 pt-2">
-            {/* Didit's verdict is stored on the profile, so a member who comes back tomorrow still
-                sees *why* the last attempt failed instead of a fresh "Verify Now" button. */}
-            {!worker.kycVerified && (worker.kycRejectionReason || (worker.kycFailedChecks?.length ?? 0) > 0) && (
+            {/* The reviewer's reason is stored on the profile, so a member who comes back tomorrow
+                still sees why the last attempt failed instead of a fresh button with no history. */}
+            {!worker.kycVerified && worker.kycRejectionReason && (
               <div className="rounded-xl border border-border bg-muted/40 px-4 py-3 text-xs">
-                <p className="font-semibold text-foreground">Last attempt</p>
-                {worker.kycRejectionReason ? (
-                  <p className="mt-0.5 text-muted-foreground">{worker.kycRejectionReason}</p>
-                ) : null}
-                {worker.kycFailedChecks && worker.kycFailedChecks.length > 0 ? (
-                  <ul className="mt-1.5 space-y-1 text-muted-foreground">
-                    {worker.kycFailedChecks.map((check) => (
-                      <li key={check} className="flex items-start gap-1.5">
-                        <span className="mt-1 size-1 shrink-0 rounded-full bg-muted-foreground/60" aria-hidden />
-                        <span>{check}</span>
-                      </li>
-                    ))}
-                  </ul>
-                ) : null}
-              </div>
-            )}
-            {kycFailureReason && (
-              <div className="flex items-start gap-2.5 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-                <AlertCircle className="size-4 shrink-0 mt-0.5" />
-                <div className="min-w-0">
-                  <p className="font-semibold">Verification Unsuccessful</p>
-                  <p className="mt-0.5 text-xs text-destructive/80">
-                    {kycFailureDetail?.reason ?? 'Your KYC check did not pass. Please try again below.'}
-                  </p>
-                  {kycFailureDetail && kycFailureDetail.checks.length > 0 ? (
-                    <ul className="mt-2 space-y-1 text-xs text-destructive/80">
-                      {kycFailureDetail.checks.map((check) => (
-                        <li key={check} className="flex items-start gap-1.5">
-                          <span className="mt-1 size-1 shrink-0 rounded-full bg-destructive/70" aria-hidden />
-                          <span>{check}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  ) : null}
-                </div>
+                <p className="font-semibold text-foreground">Last review</p>
+                <p className="mt-0.5 text-muted-foreground">{worker.kycRejectionReason}</p>
               </div>
             )}
             {kycError && (
@@ -753,35 +654,23 @@ function ProfilePageContent() {
                 <p>{kycError}</p>
               </div>
             )}
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-3">
               <p className="text-xs text-muted-foreground">
                 {worker.kycVerified
-                  ? 'Your identity is fully verified on the Didit network.'
-                  : 'Complete verification to unlock premium high-paying tasks.'}
+                  ? 'Your identity has been reviewed and approved.'
+                  : kycRequested || worker.kycRequestedAt
+                    ? 'Your request is with our review team. You will be notified once it is decided.'
+                    : 'Ask our team to review your profile. Approval unlocks paid work, withdrawals and referral payouts.'}
               </p>
-              {!worker.kycVerified ? (
+              {!worker.kycVerified && (
                 <Button
-                  onClick={handleStartKyc}
-                  disabled={startingKyc}
+                  onClick={handleRequestVerification}
+                  disabled={requestingKyc || kycRequested}
                   size="sm"
                   className="shrink-0 gap-1.5"
                 >
                   <ShieldCheck className="size-4" />
-                  {startingKyc ? 'Starting...' : kycFailureReason ? 'Try Again' : 'Verify Now'}
-                </Button>
-              ) : (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    setToastMessage('Didit Biometric KYC Certificate: Verified & Active')
-                    setShowToast(true)
-                    setTimeout(() => setShowToast(false), 4000)
-                  }}
-                  className="gap-1.5"
-                >
-                  <ShieldCheck className="size-3.5 text-success" />
-                  View Status
+                  {requestingKyc ? 'Requesting...' : kycRequested ? 'Requested' : 'Request verification'}
                 </Button>
               )}
             </div>
@@ -1006,14 +895,21 @@ function ProfilePageContent() {
                   <div className="flex flex-col gap-1">
                     <label className="text-sm font-semibold flex items-center gap-2">
                       <ShieldCheck className="size-4 text-primary" />
-                      Didit KYC Verification
+                      Identity Verification
                     </label>
                     <span className="text-xs text-muted-foreground">Required to receive payments.</span>
                   </div>
                   {!worker.kycVerified ? (
-                    <Button type="button" disabled={startingKyc} onClick={handleStartKyc} size="sm" variant="default" className="h-8 gap-1.5">
+                    <Button
+                      type="button"
+                      disabled={requestingKyc || kycRequested}
+                      onClick={handleRequestVerification}
+                      size="sm"
+                      variant="default"
+                      className="h-8 gap-1.5"
+                    >
                       <ShieldCheck className="size-3.5" />
-                      {startingKyc ? 'Starting...' : 'Verify Now'}
+                      {requestingKyc ? 'Requesting...' : kycRequested ? 'Requested' : 'Request verification'}
                     </Button>
                   ) : (
                     <span className="inline-flex items-center gap-1 rounded-full bg-success/15 px-2.5 py-1 text-xs font-semibold text-success">
@@ -1127,20 +1023,6 @@ function ProfilePageContent() {
           </div>
         </div>
       )}
-      {/* QR Code Modal for cross-device scan */}
-      <KycQrModal
-        isOpen={isQrModalOpen}
-        onClose={() => setIsQrModalOpen(false)}
-        sessionId={activeSessionId}
-        verificationUrl={activeVerificationUrl}
-        userId={user?.uid}
-        onVerified={() => {
-          setToastMessage('Identity verification complete! Your profile is now verified.')
-          setShowToast(true)
-          setTimeout(() => setShowToast(false), 6000)
-        }}
-        onFailed={handleKycFailed}
-      />
     </div>
   )
 }

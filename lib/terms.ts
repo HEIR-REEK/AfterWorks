@@ -15,7 +15,7 @@
  * re-accepted; the current version is never presented as the one an older account accepted.
  *
  * These documents describe the platform that actually exists in this repository: Firebase Auth and
- * Firestore, Didit identity verification, Paystack training payments, Resend transactional email,
+ * Firestore, manual identity review, Paystack training payments, Resend transactional email,
  * a wallet with a clearing window and mobile-money/bank payouts. Keep that mapping when editing —
  * a clause that promises a process the code does not run is worse than no clause at all.
  */
@@ -278,7 +278,7 @@ export const PRIVACY_SECTIONS: readonly TermsSection[] = [
     bullets: [
       'Google Firebase — authentication and the Firestore database, running on Google Cloud infrastructure.',
       'Render — hosts the application and keeps short-lived access logs used for security and troubleshooting.',
-      'Our identity-verification provider (Didit) — receives your document and liveness check directly and returns an outcome and reference to us.',
+      'Our own staff — when you ask for identity verification, a member of our review team reads the profile and any document you provide and records the decision. We do not send your identity documents to a third-party verification provider.',
       'Paystack — processes training-module payments and returns the transaction reference and status. Card details are handled by Paystack, not stored by us.',
       'Resend — delivers transactional email such as verification links and account notices.',
       'Mobile-money and banking partners — receive your name, payout destination and the amount when a withdrawal is processed.',

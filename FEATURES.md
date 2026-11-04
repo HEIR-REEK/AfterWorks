@@ -13,7 +13,7 @@ What is actually implemented, and where to look instead:
 | --- | --- |
 | `POST /auth/session`, Prisma models | Firebase Auth ID tokens verified per request in `lib/guards.ts`; profiles in `users/{uid}` |
 | Twilio OTP phone verification | not implemented; profile keeps a `phone` field only |
-| Accura Scan ABIS | not used; identity verification is Didit (`lib/didit.ts`, `app/api/kyc/**`) |
+| Accura Scan ABIS | not used; identity verification is a manual admin review (`app/api/kyc/request`, admin console → Users) |
 | Server-side job/payment admin "endpoints" | `app/api/admin/**` route handlers, guarded by `requireAdmin` |
 | Maintenance mode | `lib/maintenance-shared.ts` + `middleware.ts` (edge 503 + `Retry-After`), console at `/admin/maintenance` |
 | Audit trail | `admin_logs`, written only by the server, redacted, exposed at `/admin/audit-log` |

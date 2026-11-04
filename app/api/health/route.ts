@@ -27,26 +27,17 @@ type Check = { id: string; label: string; status: 'operational' | 'degraded' | '
 /**
  * Identity verification, described in member language.
  *
- * The public feed may not name the provider or its variables, but it must not claim the service
- * works when the deployment is pointing at the wrong host either — a base URL aimed at the
- * registration domain makes every session fail while all the keys look present.
+ * There is no provider to fall over any more: identity is decided by a person in the admin console,
+ * so the honest public statement is that the review queue is open. Reporting a queue depth here
+ * would need a datastore read on a public, cacheable feed for a number nobody outside acts on —
+ * the console already shows the queue to the people who work it.
  */
 function identityCheck(): Check {
-  const configured = Boolean(env('DIDIT_API_KEY') && env('DIDIT_WORKFLOW_ID') && env('DIDIT_WEBHOOK_SECRET'))
-  const wrongHost = /apx\.didit\.me/i.test(env('DIDIT_API_URL') ?? '')
-  if (configured && !wrongHost) {
-    return {
-      id: 'identity',
-      label: 'ID verification',
-      status: 'operational',
-      detail: 'Identity verification is available.',
-    }
-  }
   return {
     id: 'identity',
     label: 'ID verification',
-    status: 'degraded',
-    detail: 'Identity verification is limited right now. You can complete it later — your account stays open.',
+    status: 'operational',
+    detail: 'Identity verification is available. Our team reviews each request.',
   }
 }
 

@@ -228,7 +228,7 @@ const PRIVATE_HOSTNAME =
 /**
  * True only for an absolute HTTPS URL on a hostname the public internet can reach.
  *
- * Third-party providers (Didit included) send the member back to whatever callback URL they are
+ * Third-party providers send the member back to whatever callback URL they are
  * handed. A callback of `http://localhost:3000/kyc/callback` is accepted as a string and then
  * fails silently at the end of the flow — the member is stranded, and the only symptom on our side
  * is a session that never completes. Classifying the URL up front turns that into a visible state.

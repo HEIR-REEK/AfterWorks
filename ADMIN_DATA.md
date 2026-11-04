@@ -20,7 +20,7 @@ payout ran.
 | Platform liability (`pendingUsd + availableUsd`) | Firestore `users.*.wallet` | `getPlatformStats` | Projected read of up to 1 000 wallets per pass; the console shows the window it scanned. |
 | Failed sign-ins, lockouts, role changes | Firestore `admin_logs` + in-memory buckets | `listAuditLogs`, `/api/admin/security` | Audit entries are redacted on write (`lib/security.ts`) and capped at 6 KB. |
 | Maintenance window | Firestore `system/maintenance`, or `MAINTENANCE_FORCE*` | `lib/maintenance-shared.ts` | Env override wins everywhere, and the console reports `forced: true` instead of pretending to control it. |
-| Deployment posture (secrets, keys, rules) | process environment | `/api/health` checks | Each check reflects a variable the app really reads — `DIDIT_API_KEY`, `PAYSTACK_SECRET_KEY`, `ADMIN_SESSION_SECRET`, service account. |
+| Deployment posture (secrets, keys, rules) | process environment | `/api/health` checks | Each check reflects a variable the app really reads — `PAYSTACK_SECRET_KEY`, `ADMIN_SESSION_SECRET`, service account. |
 | External adverts (Adzuna) | Firestore **`external_jobs`** + Adzuna API | `syncAdzunaFeed`, `listExternalJobs` → `/admin/jobs/external` | A separate feed, never mixed into `jobs/`: no assessment, training or payout applies. It appears in a distinct company-hiring section on the member `/jobs` board and at `/work/external`; the console shows the real last import and an empty state until an owner imports. |
 
 ## Deliberate limits, stated in the UI

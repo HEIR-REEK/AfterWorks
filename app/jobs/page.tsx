@@ -118,7 +118,7 @@ function JobsPageInner() {
             <div className="flex flex-col gap-1">
               <h3 className="text-sm font-semibold text-warning-foreground">Action Required: Update your profile</h3>
               <p className="text-xs text-muted-foreground leading-relaxed">
-                Complete your profile and Didit KYC verification to start training, take assessments and receive payments. You can pay a job card’s training fee before verification; the training and assessment stay locked until the check is approved.
+                Complete your profile and identity verification to start training, take assessments and receive payments. You can pay a job card’s training fee before verification; the training and assessment stay locked until the check is approved.
               </p>
             </div>
           </div>

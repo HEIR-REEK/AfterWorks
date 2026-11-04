@@ -50,6 +50,9 @@ service cloud.firestore {
     function privilegedKeys() {
       return ['role', 'isAdmin', 'kycVerified', 'kycStatus', 'kycVerifiedAt', 'kycRejectedAt',
               'kycOnHoldAt', 'kycProvider', 'kycLevel', 'kycRejectionReason', 'kycFailedChecks',
+              // A member may ask for a review but may not date their own request: the console
+              // queue orders by this, so a client-writable value would let a member jump it.
+              'kycRequestedAt',
               'accountState', 'qualityScore', 'jobsCompleted', 'wallet', 'paidTrainings', 'assessmentPasses',
               'moderationReason', 'deletedAt', 'lastModifiedBy', 'phoneVerified', 'identityHash',
               'emailVerified', 'emailVerifiedAt', 'phoneKey', 'referralCode', 'referralCodeCreatedAt',
@@ -140,12 +143,6 @@ service cloud.firestore {
                                 && request.resource.data.email.lower() == request.auth.token.email.lower()
                                 && changesOnlyEmail()));
       allow delete: if false;
-    }
-
-    // ── KYC (server-written; readable by its subject; staff read via Admin SDK) ──
-    match /kyc_records/{userId} {
-      allow read: if isSelf(userId);
-      allow write: if false;
     }
 
     // ── Public maintenance notice ────────────────────────────────────────────

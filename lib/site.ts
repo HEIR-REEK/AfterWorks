@@ -76,7 +76,7 @@ export const site = {
   services: [
     { id: 'jobs', label: 'Jobs & applications', description: 'Browsing, applying and the review queue.' },
     { id: 'wallet', label: 'Wallet & payouts', description: 'Balances, clearing and payout requests.' },
-    { id: 'kyc', label: 'ID verification', description: 'Didit-powered identity checks and callbacks.' },
+    { id: 'kyc', label: 'ID verification', description: 'Manual review of member identity, requested from the profile.' },
     { id: 'training', label: 'Training & payments', description: 'Paid training modules and Paystack checkout.' },
   ] satisfies SiteService[],
 } as const

@@ -35,7 +35,6 @@ test('a hard delete clears every member-owned collection, not only the original 
     'payout_requests',
     'payout_open',
     'transactions',
-    'kyc_records',
     'referral_codes',
     'referrals',
     'email_verifications',

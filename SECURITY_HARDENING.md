@@ -14,7 +14,7 @@ admin email addresses, and the old build exposed `NEXT_PUBLIC_ADMIN_PASSWORD` in
 2. **Revoke live sessions**: `/admin/security` → *Revoke all console sessions*. Old tokens stop
    working immediately even if they were copied somewhere.
 3. If Firebase Auth is used, **invalidate refresh tokens** for the affected staff accounts.
-4. Rotate the Paystack secret key, the Didit API key and the Firebase service-account JSON too — an
+4. Rotate the Paystack secret key and the Firebase service-account JSON too — an
    exposed environment file is usually not exposed alone.
 
 `lib/security.ts` runs a posture check on every metrics read and the console shows it on
@@ -240,7 +240,7 @@ member has exhausted their guesses and the window has not lapsed.
 
 Two further money controls sit on top of the role table:
 
-* A KYC approval, rejection or Didit callback never lifts a `suspended`/`banned` state. Only the
+* A KYC approval or rejection never lifts a `suspended`/`banned` state. Only the
   owner's `moderate` action restores an account; staff cannot “verify” a banned member back in.
 * Raw wallet edits and the owner's welcome-reward grant require the owner's **passcode again** in
   the same request (`confirmPasscode`), even though the console session is already authenticated. A

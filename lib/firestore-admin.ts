@@ -15,7 +15,6 @@ import {
 import { getAuth, type DecodedIdToken, type Auth, type UserInfo } from 'firebase-admin/auth'
 import * as fs from 'fs'
 import * as path from 'path'
-import type { DiditSessionStatus } from '@/lib/didit'
 import { isEmailLike, normalizeEmail, sanitizeLine } from '@/lib/security-core'
 import {
   PHONE_CLAIMS_COLLECTION,
@@ -315,112 +314,47 @@ export async function getUserProfile(uid: string): Promise<Record<string, unknow
   }
 }
 
-// ─── KYC Records ─────────────────────────────────────────────────────────────
+// ─── Identity verification requests ─────────────────────────────────────────
 
 /**
- * Shape of a KYC record stored in the `kyc_records` collection.
+ * Marks a member as waiting for a manual identity review.
  *
- * One document per user (uid = doc ID). Tracks the full lifecycle of the most
- * recent KYC attempt plus a running counter of all-time attempts.
+ * There is no verification provider any more: an owner reviews the member in the admin console and
+ * calls `verifyKycAdmin` to approve or reject. This function is the member's half of that exchange,
+ * so it only stamps the request — it must never write `kycVerified` or any other privileged field,
+ * and the timestamp is what the console's queue is built on.
+ *
+ * `updateUserProfile` refuses privileged keys, so the write goes through the Admin SDK directly.
  */
-export type KycRecord = {
-  userId: string
-  sessionId: string
-  sessionToken: string
-  /** Canonical DiditSessionStatus string. */
-  status: DiditSessionStatus
-  /** Raw status string from Didit (for debugging / auditing). */
-  rawStatus?: string
-  /** Human-readable reason if declined, on-hold, or resubmission needed. */
-  rejectionReason?: string
-  /** Which verification sub-checks failed, e.g. ['liveness', 'document']. */
-  failedChecks?: string[]
-  /** Total number of KYC attempts made by this user. */
-  attemptCount?: number
-  /** Timestamp of the very first attempt (ISO 8601). */
-  firstAttemptAt?: string
-  /** Timestamp of the most recent status update (ISO 8601). Set server-side. */
-  updatedAt?: FieldValue
+export async function requestKycReview(uid: string): Promise<{ requestedAt: string; alreadyRequested: boolean }> {
+  const db = adminDb()
+  const now = new Date().toISOString()
+  const ref = db.collection('users').doc(uid)
+  const snap = await ref.get()
+  const alreadyRequested = Boolean((snap.data() ?? {}).kycRequestedAt)
+  await ref.set(
+    {
+      kycRequestedAt: now,
+      // A member who asks again after a rejection is asking for a fresh look: clear the verdict so
+      // the console shows "requested" rather than a stale "declined".
+      ...(alreadyRequested ? {} : { kycStatus: 'requested', updatedAt: now }),
+    },
+    { merge: true },
+  )
+  return { requestedAt: now, alreadyRequested }
 }
 
 /**
- * Creates or updates the KYC record for a user with the latest session details.
+ * Clears a pending review request once an owner has decided.
  *
- * The document is keyed by uid so there is at most one record per user.
- * `attemptCount` increments atomically only when a brand-new session ID is written.
+ * Called alongside `verifyKycAdmin` so the console's queue does not keep showing a member who has
+ * already been approved or rejected.
  */
-export async function saveKycRecord(
-  uid: string,
-  sessionId: string,
-  sessionToken: string,
-  status: DiditSessionStatus,
-  extras?: {
-    rawStatus?: string
-    rejectionReason?: string
-    failedChecks?: string[]
-  },
-): Promise<void> {
-  try {
-    const app = getAdminApp()
-    const db = getFirestore(app)
-    const recordRef = db.collection('kyc_records').doc(uid)
-
-    // Atomically increment attemptCount when a new session begins
-    await db.runTransaction(async (tx) => {
-      const snap = await tx.get(recordRef)
-      const existing = snap.data() as Partial<KycRecord> | undefined
-
-      // Only bump the attempt counter when the session ID changes
-      const isNewSession = !existing?.sessionId || existing.sessionId !== sessionId
-      const currentCount = typeof existing?.attemptCount === 'number' ? existing.attemptCount : 0
-      const newCount = isNewSession ? currentCount + 1 : currentCount
-
-      const update: Partial<KycRecord> & { updatedAt: FieldValue; attemptCount: number } = {
-        userId: uid,
-        sessionId,
-        sessionToken,
-        status,
-        rawStatus: extras?.rawStatus ?? status,
-        attemptCount: newCount,
-        updatedAt: FieldValue.serverTimestamp(),
-      }
-
-      if (extras?.rejectionReason) update.rejectionReason = extras.rejectionReason
-      if (extras?.failedChecks?.length) update.failedChecks = extras.failedChecks
-
-      // Preserve firstAttemptAt across updates
-      if (!existing?.firstAttemptAt) {
-        (update as Record<string, unknown>).firstAttemptAt = new Date().toISOString()
-      }
-
-      // Strip undefined — Firestore doesn't accept it
-      const clean = Object.fromEntries(
-        Object.entries(update).filter(([, v]) => v !== undefined),
-      )
-      tx.set(recordRef, clean, { merge: true })
-    })
-
-    console.log(`[FirestoreAdmin] KYC record saved for uid=${uid}:`, { sessionId, status })
-  } catch (err) {
-    console.error('[FirestoreAdmin] saveKycRecord failed for uid:', uid, err)
-  }
-}
-
-/**
- * Retrieves the KYC record for a user.
- * Returns null if no record exists or an error occurs.
- */
-export async function getKycRecord(uid: string): Promise<KycRecord | null> {
-  try {
-    const app = getAdminApp()
-    const db = getFirestore(app)
-    const snap = await db.collection('kyc_records').doc(uid).get()
-    if (!snap.exists) return null
-    return snap.data() as KycRecord
-  } catch (err) {
-    console.error('[FirestoreAdmin] getKycRecord failed for uid:', uid, err)
-    return null
-  }
+export async function clearKycReviewRequest(uid: string): Promise<void> {
+  await adminDb().collection('users').doc(uid).set(
+    { kycRequestedAt: null, updatedAt: new Date().toISOString() },
+    { merge: true },
+  )
 }
 
 /**
@@ -2120,7 +2054,6 @@ export async function hardDeleteAccount(
       referralsAsReferrer,
       referralsAsReferred,
       sessions,
-      kycSnap,
       payoutOpenSnap,
       referralSelfSnap,
       referralCodeSelfSnap,
@@ -2140,7 +2073,6 @@ export async function hardDeleteAccount(
       db.collection('referrals').where('referrerUid', '==', uid).get(),
       db.collection('referrals').where('referredUid', '==', uid).get(),
       targetEmail ? db.collection('admin_sessions').where('email', '==', targetEmail).get() : Promise.resolve(null),
-      db.collection('kyc_records').doc(uid).get(),
       db.collection('payout_open').doc(uid).get(),
       db.collection('referrals').doc(uid).get(),
       profileReferralCode ? db.collection('referral_codes').doc(profileReferralCode).get() : Promise.resolve(null),
@@ -2210,7 +2142,6 @@ export async function hardDeleteAccount(
       ...referralsAsReferred.docs.map((d) => d.ref),
       ...(referralSelfSnap.exists ? [referralSelfSnap.ref] : []),
     ])
-    removed.kyc = await deleteRefsInChunks(db, kycSnap.exists ? [kycSnap.ref] : [])
     removed.payoutOpen = await deleteRefsInChunks(db, payoutOpenSnap.exists ? [payoutOpenSnap.ref] : [])
     // Release the phone claim only after the profile is about to go. Without this the number stays
     // owned by a uid that no longer exists and can never be registered again.
@@ -2463,6 +2394,8 @@ export async function verifyKycAdmin(
   // Manual KYC approval proves identity; it must not silently lift a suspension or ban that an
   // owner applied. Support can verify the document, but only an owner can restore the account.
   const restricted = currentState === 'suspended' || currentState === 'banned'
+  // Deciding on a review retires the request that produced it, so the console's queue empties.
+  const retire = { kycRequestedAt: null, updatedAt: now }
   await db.collection('users').doc(uid).set(
     approve
       ? {
@@ -2472,7 +2405,7 @@ export async function verifyKycAdmin(
           kycVerifiedAt: now,
           kycRejectionReason: null,
           kycProvider: 'admin-review',
-          updatedAt: now,
+          ...retire,
         }
       : {
           kycVerified: false,
@@ -2482,7 +2415,7 @@ export async function verifyKycAdmin(
           ...(restricted ? {} : { accountState: 'kyc_rejected' }),
           kycRejectedAt: now,
           kycRejectionReason: reason.slice(0, 300),
-          updatedAt: now,
+          ...retire,
         },
     { merge: true },
   )

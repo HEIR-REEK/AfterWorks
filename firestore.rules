@@ -286,6 +286,18 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // ── External job feed (server-only) ──────────────────────────────────────
+    // Adzuna adverts are imported by the owner through /api/admin/external-jobs and read through
+    // the public server route. The browser never reads this collection directly: the projection
+    // drops upstream ids and links and re-checks the Adzuna redirect before rendering.
+    match /external_jobs/{jobId} {
+      allow read, write: if false;
+    }
+
+    match /system/external_jobs_feed {
+      allow read, write: if false;
+    }
+
     // ── Deny by default ──────────────────────────────────────────────────────
     match /{document=**} {
       allow read, write: if false;

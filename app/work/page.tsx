@@ -1,6 +1,6 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
-import { ArrowRight, Briefcase, Clock3, ShieldCheck } from 'lucide-react'
+import { ArrowRight, Briefcase, Clock3, Globe2, ShieldCheck } from 'lucide-react'
 import { PublicJobCard } from '@/components/public-job-card'
 import { PublicPage } from '@/components/public-shell'
 import { listPublicJobs } from '@/lib/public-jobs-server'
@@ -95,6 +95,29 @@ export default async function WorkPage() {
             </p>
           </div>
         )}
+      </section>
+
+      <section aria-labelledby="external-work" className="border-t border-border bg-card">
+        <div className="mx-auto flex w-full max-w-6xl flex-col gap-4 px-4 py-8 sm:px-6 md:flex-row md:items-center md:justify-between">
+          <div className="flex items-start gap-3">
+            <span className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+              <Globe2 className="size-4" />
+            </span>
+            <div>
+              <h2 id="external-work" className="text-base font-semibold tracking-tight">Looking further afield?</h2>
+              <p className="mt-1 max-w-2xl text-sm leading-relaxed text-muted-foreground">
+                We also show selected third-party adverts from Adzuna. They are clearly labelled,
+                you apply on Adzuna, and they are separate from AfterWorks work and payouts.
+              </p>
+            </div>
+          </div>
+          <Link
+            href="/work/external"
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-border bg-background px-4 py-2.5 text-xs font-semibold hover:border-primary/40"
+          >
+            Browse external roles <ArrowRight className="size-3.5" />
+          </Link>
+        </div>
       </section>
 
       <section aria-labelledby="categories" className="border-t border-border bg-secondary/20">

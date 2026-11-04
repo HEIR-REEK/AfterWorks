@@ -127,6 +127,19 @@ services:
       - key: DIDIT_WEBHOOK_SECRET
         sync: false
 
+      # ── External jobs (Adzuna) ────────────────────────────────────────────
+      # Optional: the /work/external feed stays off until both credentials are set. Adzuna has no
+      # Kenya market; ADZUNA_COUNTRY must be one of its supported codes. Commercial use needs a
+      # licence agreement with Adzuna — see .env.example.
+      - key: ADZUNA_APP_ID
+        sync: false
+      - key: ADZUNA_APP_KEY
+        sync: false
+      - key: ADZUNA_COUNTRY
+        value: "gb"
+      - key: ADZUNA_MAX_DAYS_OLD
+        value: "30"
+
       # ── Signup email verification (Resend) ────────────────────────────────
       - key: RESEND_API_KEY
         sync: false

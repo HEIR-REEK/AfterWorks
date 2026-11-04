@@ -8,6 +8,7 @@ import {
   ArrowUpRight,
   Banknote,
   Briefcase,
+  Globe2,
   Landmark,
   LayoutDashboard,
   ListChecks,
@@ -34,7 +35,8 @@ import AdminLoginPage from './login/page'
 const adminNavItems = [
   { href: '/admin', label: 'Overview', icon: LayoutDashboard, exact: true },
   { href: '/admin/users', label: 'Users & KYC', icon: Users },
-  { href: '/admin/jobs', label: 'Jobs Catalogue', icon: Briefcase },
+  { href: '/admin/jobs', label: 'Jobs Catalogue', icon: Briefcase, exact: true },
+  { href: '/admin/jobs/external', label: 'External Jobs', icon: Globe2 },
   { href: '/admin/applications', label: 'Applications & QA', icon: ListChecks },
   { href: '/admin/staff', label: 'Staff', icon: UserCog, ownerOnly: true },
   { href: '/admin/payouts', label: 'Withdrawals', icon: Banknote },

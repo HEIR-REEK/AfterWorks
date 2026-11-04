@@ -144,4 +144,7 @@ means:
 - Do not index private workspaces “for SEO”.
 - Do not add a `noindex` to the homepage while trying to rank.
 - Do not use hidden text, cloaking, doorway pages or purchased links.
+- Do not index third-party listing feeds. `/work/external` re-publishes Adzuna snippets that already
+  exist on Adzuna, so it is `noindex, follow` and absent from `app/sitemap.ts`; indexing it would add
+  duplicate inventory, not an AfterWorks page.
 - Do not rely on the `keywords` meta tag; Google ignores it. It is harmless, not a ranking lever.

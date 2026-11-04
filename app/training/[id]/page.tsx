@@ -612,7 +612,7 @@ function TrainingPageInner({ params }: { params: Promise<{ id: string }> }) {
         </div>
         
         <h1 className="mt-4 text-xl font-semibold tracking-tight sm:text-2xl">
-          {job.category} Training &amp; Assessment
+          {hasTraining ? `${job.category} Training & Assessment` : `${job.category} Assessment & Application`}
         </h1>
         
         {/* Step Progression Bar */}
@@ -625,18 +625,22 @@ function TrainingPageInner({ params }: { params: Promise<{ id: string }> }) {
           </div>
 
           <div className={`flex flex-col items-center gap-1 text-center p-2 rounded-lg ${
-            trainingComplete && kycVerified
-              ? 'bg-success/15 text-success font-semibold'
-              : isPaid && kycVerified
-                ? 'bg-primary/10 text-primary font-bold ring-1 ring-primary/30'
-                : 'text-muted-foreground opacity-60'
+            hasTraining
+              ? trainingComplete && kycVerified
+                ? 'bg-success/15 text-success font-semibold'
+                : isPaid && kycVerified
+                  ? 'bg-primary/10 text-primary font-bold ring-1 ring-primary/30'
+                  : 'text-muted-foreground opacity-60'
+              : kycVerified
+                ? 'bg-success/15 text-success font-semibold'
+                : 'bg-primary/10 text-primary font-bold ring-1 ring-primary/30'
           }`}>
             <span className="flex size-5 items-center justify-center rounded-full bg-background text-[10px] shadow-xs">2</span>
-            <span>{hasTraining ? '2. Get Trained' : '2. Assessment'}</span>
+            <span>{hasTraining ? '2. Get Trained' : '2. Verify Identity'}</span>
           </div>
 
           <div className={`flex flex-col items-center gap-1 text-center p-2 rounded-lg ${
-            kycVerified && trainingComplete
+            kycVerified && (!hasTraining || trainingComplete)
               ? 'bg-primary/10 text-primary font-bold ring-1 ring-primary/30'
               : 'text-muted-foreground opacity-60'
           }`}>

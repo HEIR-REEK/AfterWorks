@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server'
-import { consumeBucket, audit, fail, json, maintenanceBlockForApi, requireVerifiedUser, routeError } from '@/lib/guards'
+import { consumeBucket, audit, fail, json, maintenanceBlockForApi, requireUser, routeError } from '@/lib/guards'
 import { env, envInt, isHostAllowed, readJsonBody, sanitizeLine } from '@/lib/security-core'
 import { paystackSubunitsFor, trainingFeeKesFor, trainingFeeUsdFor } from '@/lib/afterworks-data'
 import { randomId } from '@/lib/session-token'
@@ -70,7 +70,11 @@ export async function POST(req: NextRequest) {
   const maintenance = await maintenanceBlockForApi(req)
   if (maintenance) return maintenance
 
-  const guard = await requireVerifiedUser(req)
+  // Deliberately `requireUser`, not `requireVerifiedUser`. A member may pay a training fee before
+  // their identity is checked — the checkout is what funds the card, and verification gates the
+  // training material and the assessment afterwards. Requiring verification here refused the very
+  // payment the training page invites, and the UI told members the opposite.
+  const guard = await requireUser(req)
   if (!guard.ok) return guard.response
   const { uid, email } = guard.value
 
@@ -182,9 +186,16 @@ async function jobTrainingGate(jobId: string): Promise<{ missing: boolean; requi
     const data = snap.data() as Record<string, unknown> | undefined
     // The admin-set per-job fee; absent/invalid → undefined so the global configured fee applies.
     const fee = Number(data?.trainingFeeUsd)
+    // Derived, not read: a card charges because it *has* training. A stored `trainingRequired`
+    // that disagrees with the sections is exactly the inconsistency this rule removes.
+    const { jobHasTraining } = await import('@/lib/afterworks-data')
+    const sections = Array.isArray(data?.trainingNotes) ? (data!.trainingNotes as { title?: unknown; content?: unknown }[]) : []
+    const authored = sections.filter(
+      (section) => String(section?.title ?? '').trim() !== '' || String(section?.content ?? '').trim() !== '',
+    )
     return {
       missing: false,
-      requiresTraining: data?.trainingRequired !== false,
+      requiresTraining: authored.length > 0 || (data?.trainingRequired === true && sections.length > 0),
       feeUsd: Number.isFinite(fee) && fee > 0 ? fee : undefined,
     }
   } catch {

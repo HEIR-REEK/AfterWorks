@@ -24,7 +24,7 @@ import { JobCard } from '@/components/job-card'
 import { TrainingPushBanner } from '@/components/training-push'
 import { StatusBadge } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
-import {
+import { jobHasTraining,
   APPLICATION_LABELS,
   APPLICATION_TONE,
   formatKes,
@@ -68,7 +68,7 @@ export default function DashboardPage() {
   const activeApps = applications.filter(
     (a) => !['completed', 'rejected', 'failed_qa'].includes(a.status),
   )
-  const trainingJobs = openJobs.filter((job) => job.trainingRequired)
+  const trainingJobs = openJobs.filter((job) => jobHasTraining(job))
   const topTrainingPay = trainingJobs.reduce((highest, job) => Math.max(highest, job.payAmountUsd), 0)
 
   // The server sums available + pending. Held money is already inside available (a payout request

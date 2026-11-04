@@ -148,11 +148,11 @@ export default async function PublicJobPage({ params }: Props) {
                 <li className="flex gap-3">
                   <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">3</span>
                   <div>
-                    <p className="font-medium">Complete the full training course for this card</p>
+                    <p className="font-medium">{job.trainingRequired ? 'Complete the full training course for this card' : 'Pass the assessment for this card'}</p>
                     <p className="mt-1 text-muted-foreground">
                       {job.trainingRequired
                         ? `The one-off training fee is ${trainingFee}. The course and assessment unlock after the required identity check is approved.`
-                        : 'This card has no training fee, but the full course is compulsory. It unlocks after the required identity check is approved.'}
+                        : 'This card has no training, so there is nothing to pay. The assessment unlocks once your identity check is approved.'}
                     </p>
                   </div>
                 </li>

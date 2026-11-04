@@ -21,7 +21,7 @@ export default function AppLoading() {
           <div key={i} className="h-20 animate-pulse rounded-xl border border-border/80 bg-card" />
         ))}
       </div>
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {[0, 1, 2].map((i) => (
           <div key={i} className="h-44 animate-pulse rounded-2xl border border-border bg-card" />
         ))}

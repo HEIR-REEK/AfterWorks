@@ -167,9 +167,19 @@
     @apply border-border outline-ring/50;
     -webkit-tap-highlight-color: transparent;
   }
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
   body {
     @apply bg-background text-foreground;
     overscroll-behavior-y: none;
+    overflow-wrap: break-word;
+  }
+  button,
+  a,
+  summary {
+    touch-action: manipulation;
   }
   /* Smooth scrolling for all scroll containers */
   * {
@@ -250,5 +260,26 @@
   }
   .animate-blink {
     animation: aw-blink 1.4s ease-in-out infinite;
+  }
+}
+
+
+/* iOS Safari zooms the whole page when a focused form control is smaller than 16px. The app's
+   dense console styling uses 12–14px controls, so on phones we raise the control text to 16px
+   without changing the surrounding labels. Kept unlayered so it wins over utility font sizes. */
+@media (max-width: 767px) {
+  input:not([type='checkbox']):not([type='radio']),
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
+
+/* Thumb-sized targets. The console is designed at desktop density (24–36px buttons), which is
+   fine with a pointer but cramped with a thumb. On phones every button grows to a 40px touch
+   target without changing its width, and the console's stacked section links match it. */
+@media (max-width: 767px) {
+  [data-slot='button'] {
+    min-height: 2.5rem;
   }
 }

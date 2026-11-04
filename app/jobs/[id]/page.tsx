@@ -99,10 +99,10 @@ export default function JobDetailPage({
         Back to jobs
       </Link>
 
-      <div className="grid gap-6 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         {/* Main */}
-        <div className="flex flex-col gap-6 lg:col-span-2">
-          <div className="rounded-2xl border border-border bg-card p-6">
+        <div className="min-w-0 flex flex-col gap-6 lg:col-span-2">
+          <div className="min-w-0 rounded-2xl border border-border bg-card p-5 sm:p-6">
             <div className="flex flex-wrap items-center gap-2">
               <StatusBadge tone="neutral">{job.category}</StatusBadge>
               {isClosed ? (
@@ -135,7 +135,7 @@ export default function JobDetailPage({
             </ul>
           </div>
 
-          <div className="rounded-2xl border border-border bg-card p-6">
+          <div className="min-w-0 rounded-2xl border border-border bg-card p-5 sm:p-6">
             <h2 className="text-sm font-semibold">Requirements & Flow</h2>
             <ul className="mt-3 flex flex-col gap-3 text-sm">
               <li className="flex items-start gap-2.5 text-muted-foreground">
@@ -192,8 +192,8 @@ export default function JobDetailPage({
         </div>
 
         {/* Sidebar */}
-        <aside className="flex flex-col gap-4 lg:sticky lg:top-24 lg:h-fit">
-          <div className="rounded-2xl border border-border bg-card p-6">
+        <aside className="min-w-0 flex flex-col gap-4 lg:sticky lg:top-24 lg:h-fit">
+          <div className="min-w-0 rounded-2xl border border-border bg-card p-5 sm:p-6">
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
               Payment on completion
             </p>
@@ -266,7 +266,7 @@ export default function JobDetailPage({
                       onClick={handleApply}
                       disabled={isClosed || isApplying}
                       size="lg"
-                      className="w-full gap-2"
+                      className="w-full gap-2 whitespace-normal px-3 text-center leading-snug"
                     >
                       {isApplying && <Loader2 className="size-4 animate-spin" />}
                       {isApplying ? 'Redirecting...' : isClosed ? 'Slots full' : `Pay ${trainingFee} to Start Training`}
@@ -288,7 +288,7 @@ export default function JobDetailPage({
                   <Button
                     render={<Link href="/profile" />}
                     size="lg"
-                    className="w-full gap-2"
+                    className="w-full gap-2 whitespace-normal px-3 text-center leading-snug"
                   >
                     <ShieldAlert className="size-4" />
                     {job.trainingRequired ? 'Verify KYC to Start Training' : 'Verify KYC to Take the Assessment'}
@@ -299,7 +299,7 @@ export default function JobDetailPage({
                   onClick={handleApply}
                   disabled={isClosed || isApplying}
                   size="lg"
-                  className="w-full gap-2"
+                  className="w-full gap-2 whitespace-normal px-3 text-center leading-snug"
                 >
                   {isApplying && <Loader2 className="size-4 animate-spin" />}
                   {isApplying

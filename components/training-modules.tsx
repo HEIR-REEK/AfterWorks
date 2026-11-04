@@ -469,7 +469,7 @@ function CourseHeader({
             <Target className="size-3.5 text-primary" />
             What you'll learn
           </p>
-          <ul className="mt-2 grid gap-1.5 sm:grid-cols-2">
+          <ul className="mt-2 grid grid-cols-1 gap-1.5 sm:grid-cols-2">
             {course.objectives.map((objective) => (
               <li key={objective} className="flex items-start gap-2 text-xs leading-relaxed text-foreground/80">
                 <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-success" />
@@ -798,7 +798,7 @@ export function TrainingModules({
             </span>
             <span className="text-[10px] font-medium text-muted-foreground">Reference</span>
           </summary>
-          <dl className="mt-3 grid gap-2 sm:grid-cols-2">
+          <dl className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
             {course.glossary.map((entry) => (
               <div key={entry.term} className="rounded-lg border border-border/70 bg-muted/20 p-2.5">
                 <dt className="text-[11px] font-semibold text-foreground">{entry.term}</dt>

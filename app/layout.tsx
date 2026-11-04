@@ -113,7 +113,10 @@ export const viewport: Viewport = {
   themeColor: '#2f5fe0',
   width: 'device-width',
   initialScale: 1,
-  maximumScale: 5, // was 1/userScalable:false — that is a WCAG 1.4.4 failure for low-vision workers
+  // maximumScale was 1/userScalable:false — that is a WCAG 1.4.4 failure for low-vision workers.
+  maximumScale: 5,
+  // Paint edge-to-edge on phones with a notch or rounded corners when installed.
+  viewportFit: 'cover',
   interactiveWidget: 'resizes-content',
 }
 

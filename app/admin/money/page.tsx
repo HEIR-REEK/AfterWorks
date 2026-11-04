@@ -183,7 +183,7 @@ function AdminLedgerPageInner() {
         </div>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <AdminStat label="Ledger entries" value={totals?.entries ?? '—'} sub="Earnings + withdrawals + payments" icon={<Landmark className="size-4" />} />
         <AdminStat label="Credited (this page)" value={totals ? formatUsd(totals.paidOutUsd) : '—'} sub="Cleared earnings" icon={<ArrowDownLeft className="size-4" />} />
         <AdminStat

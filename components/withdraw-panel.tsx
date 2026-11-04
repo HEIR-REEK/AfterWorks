@@ -141,24 +141,24 @@ export function WithdrawPanel() {
         </div>
       </header>
 
-      <div className="grid gap-4 p-4 sm:p-5 lg:grid-cols-[1.1fr_1fr]">
+      <div className="grid grid-cols-1 gap-4 p-4 sm:p-5 lg:grid-cols-[1.1fr_1fr]">
         {/* ── Form ─────────────────────────────────────────────────────────── */}
         <form onSubmit={submit} className="flex flex-col gap-3">
-          <div className="grid grid-cols-3 gap-2 text-center">
+          <div className="grid grid-cols-3 gap-1.5 text-center sm:gap-2">
             <div className="rounded-xl border border-border bg-muted/25 p-2.5">
-              <p className="flex items-center justify-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+              <p className="flex items-center justify-center gap-1 text-[9px] font-semibold uppercase leading-tight tracking-wide sm:text-[10px] sm:tracking-wider text-muted-foreground">
                 <Hourglass className="size-3" /> Pending
               </p>
               <p className="mt-1 font-mono text-sm font-semibold tabular-nums">{formatUsd(wallet.pendingUsd)}</p>
             </div>
             <div className="rounded-xl border border-border bg-muted/25 p-2.5">
-              <p className="flex items-center justify-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+              <p className="flex items-center justify-center gap-1 text-[9px] font-semibold uppercase leading-tight tracking-wide sm:text-[10px] sm:tracking-wider text-muted-foreground">
                 <Clock className="size-3" /> Held
               </p>
               <p className="mt-1 font-mono text-sm font-semibold tabular-nums">{formatUsd(quote.heldUsd)}</p>
             </div>
             <div className="rounded-xl border border-primary/30 bg-primary/[0.06] p-2.5">
-              <p className="flex items-center justify-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-primary">
+              <p className="flex items-center justify-center gap-1 text-[9px] font-semibold uppercase leading-tight tracking-wide sm:text-[10px] sm:tracking-wider text-primary">
                 <CheckCircle2 className="size-3" /> Available
               </p>
               <p className="mt-1 font-mono text-sm font-semibold tabular-nums">{formatUsd(quote.withdrawableUsd)}</p>

@@ -65,7 +65,11 @@ export function AdminCard({
               {description && <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{description}</p>}
             </div>
           </div>
-          {actions && <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>}
+          {actions && (
+            <div className="flex w-full min-w-0 flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
+              {actions}
+            </div>
+          )}
         </header>
       )}
       <div className={cn('min-w-0', bodyClassName)}>{children}</div>

@@ -251,7 +251,7 @@ function PaystackCheckoutSection({
       <Button
         onClick={handlePay}
         size="lg"
-        className="w-full font-semibold gap-2 py-6 text-base"
+        className="w-full gap-2 whitespace-normal px-3 py-5 text-center text-base font-semibold leading-snug sm:py-6"
         disabled={isLoading}
       >
         {isLoading ? (
@@ -582,7 +582,7 @@ function TrainingPageInner({ params }: { params: Promise<{ id: string }> }) {
   const isPaid = !job.trainingRequired || payState === 'paid' || isJobPaid(job.id)
 
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-6">
+    <div className="mx-auto flex min-w-0 w-full max-w-3xl flex-col gap-6">
       <Link
         href={`/jobs/${job.id}`}
         className="inline-flex w-fit items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground"
@@ -591,17 +591,17 @@ function TrainingPageInner({ params }: { params: Promise<{ id: string }> }) {
         Back to job
       </Link>
 
-      <div className="rounded-2xl border border-border bg-card p-6 shadow-sm">
+      <div className="min-w-0 rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6">
         <div className="flex size-11 items-center justify-center rounded-xl bg-accent text-accent-foreground">
           <GraduationCap className="size-5" />
         </div>
         
-        <h1 className="mt-4 text-2xl font-semibold tracking-tight">
+        <h1 className="mt-4 text-xl font-semibold tracking-tight sm:text-2xl">
           {job.category} Training &amp; Assessment
         </h1>
         
         {/* Step Progression Bar */}
-        <div className="mt-6 grid grid-cols-4 gap-2 rounded-xl bg-muted/40 p-3 text-xs font-medium border border-border">
+        <div className="mt-6 grid grid-cols-2 gap-2 rounded-xl border border-border bg-muted/40 p-2.5 text-xs font-medium sm:grid-cols-4 sm:p-3">
           <div className={`flex flex-col items-center gap-1 text-center p-2 rounded-lg ${
             isPaid ? 'bg-success/15 text-success font-semibold' : 'bg-primary/10 text-primary font-bold ring-1 ring-primary/30'
           }`}>

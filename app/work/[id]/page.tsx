@@ -103,7 +103,7 @@ export default async function PublicJobPage({ params }: Props) {
           <span className="truncate text-foreground">{job.title}</span>
         </nav>
 
-        <div className="mt-5 grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
+        <div className="mt-5 grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
           <article className="flex flex-col gap-5">
             <header className="rounded-2xl border border-border bg-card p-5 sm:p-7">
               <div className="flex flex-wrap items-center gap-2">

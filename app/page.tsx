@@ -264,7 +264,7 @@ export default function LandingPage() {
             <div className="absolute inset-0 bg-grid-pattern opacity-[0.45] [mask-image:radial-gradient(ellipse_at_center,black,transparent_72%)]" />
           </div>
 
-          <div className="mx-auto grid w-full max-w-6xl gap-12 px-4 pb-16 pt-12 sm:px-6 sm:pb-24 sm:pt-20 lg:grid-cols-[1.05fr_0.95fr] lg:items-center lg:gap-12">
+          <div className="mx-auto grid grid-cols-1 w-full max-w-6xl gap-12 px-4 pb-16 pt-12 sm:px-6 sm:pb-24 sm:pt-20 lg:grid-cols-[1.05fr_0.95fr] lg:items-center lg:gap-12">
             <div>
               <h1 className="text-pretty text-4xl font-semibold leading-[1.06] tracking-tight sm:text-5xl lg:text-[3.4rem]">
                 Do real work.
@@ -473,7 +473,7 @@ export default function LandingPage() {
 
         {/* ── What it is ───────────────────────────────────────────────────── */}
         <section id="what" className="scroll-mt-24 border-b border-border py-16 sm:py-24">
-          <div className="mx-auto grid w-full max-w-6xl gap-10 px-4 sm:px-6 lg:grid-cols-[0.9fr_1.1fr] lg:gap-16">
+          <div className="mx-auto grid grid-cols-1 w-full max-w-6xl gap-10 px-4 sm:px-6 lg:grid-cols-[0.9fr_1.1fr] lg:gap-16">
             <div className="lg:sticky lg:top-24 lg:self-start">
               <Eyebrow>What AfterWorks is</Eyebrow>
               <h2 className="mt-4 text-pretty text-3xl font-semibold tracking-tight sm:text-4xl">
@@ -533,7 +533,7 @@ export default function LandingPage() {
 
         {/* ── How it works ─────────────────────────────────────────────────── */}
         <section id="how-it-works" className="scroll-mt-24 border-b border-border bg-card/40 py-16 sm:py-24">
-          <div className="mx-auto grid w-full max-w-6xl gap-10 px-4 sm:px-6 lg:grid-cols-[0.8fr_1.2fr] lg:gap-16">
+          <div className="mx-auto grid grid-cols-1 w-full max-w-6xl gap-10 px-4 sm:px-6 lg:grid-cols-[0.8fr_1.2fr] lg:gap-16">
             <div className="lg:sticky lg:top-24 lg:self-start">
               <Eyebrow>How it works</Eyebrow>
               <h2 className="mt-4 text-pretty text-3xl font-semibold tracking-tight sm:text-4xl">
@@ -612,7 +612,7 @@ export default function LandingPage() {
               </a>
             </div>
 
-            <div className="mt-10 grid gap-4 sm:grid-cols-3">
+            <div className="mt-10 grid grid-cols-1 gap-4 sm:grid-cols-3">
               {WORK_PHOTOS.map((photo) => (
                 <figure
                   key={photo.src}
@@ -652,7 +652,7 @@ export default function LandingPage() {
               </p>
             </div>
 
-            <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="mt-10 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {CATEGORIES.map((category) => {
                 const Icon = category.icon
                 return (
@@ -698,7 +698,7 @@ export default function LandingPage() {
         <section id="payouts" className="scroll-mt-24 border-b border-border bg-card/40 py-16 sm:py-24">
           <div className="mx-auto w-full max-w-6xl px-4 sm:px-6">
             <div className="overflow-hidden rounded-3xl border border-border bg-background shadow-sm">
-              <div className="grid gap-10 p-6 sm:p-10 lg:grid-cols-2 lg:gap-14 lg:p-12">
+              <div className="grid grid-cols-1 gap-10 p-6 sm:p-10 lg:grid-cols-2 lg:gap-14 lg:p-12">
                 <div>
                   <Eyebrow>Payouts</Eyebrow>
                   <h2 className="mt-4 text-pretty text-3xl font-semibold tracking-tight sm:text-4xl">
@@ -840,7 +840,7 @@ export default function LandingPage() {
               </p>
             </div>
 
-            <div className="mt-10 grid gap-4 sm:grid-cols-2">
+            <div className="mt-10 grid grid-cols-1 gap-4 sm:grid-cols-2">
               {TRUST.map((item) => {
                 const Icon = item.icon
                 return (
@@ -967,7 +967,7 @@ export default function LandingPage() {
       {/* ── Footer ─────────────────────────────────────────────────────────── */}
       <footer className="border-t border-border bg-card/40">
         <div className="mx-auto w-full max-w-6xl px-4 py-12 sm:px-6 sm:py-14">
-          <div className="grid gap-10 sm:grid-cols-2 lg:grid-cols-[1.5fr_1fr_1fr_1fr]">
+          <div className="grid grid-cols-1 gap-10 sm:grid-cols-2 lg:grid-cols-[1.5fr_1fr_1fr_1fr]">
             <div>
               <div className="flex items-center gap-2.5">
                 <BrandMark size={36} />

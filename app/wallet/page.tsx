@@ -72,7 +72,7 @@ export default function WalletPage() {
       ) : null}
 
       {/* Balance breakdown */}
-      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <div className="rounded-2xl border border-primary/30 bg-primary/[0.06] p-4">
           <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-primary">
             <CircleDollarSign className="size-3.5" />

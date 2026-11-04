@@ -317,7 +317,7 @@ function ApplicationsPageInner() {
                   </div>
 
                   {isOpen && (
-                    <div className="mt-3 grid gap-3 border-t border-border/70 pt-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+                    <div className="mt-3 grid grid-cols-1 gap-3 border-t border-border/70 pt-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
                       <div>
                         <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Lifecycle</p>
                         <ol className="mt-1.5 flex flex-col gap-1.5">

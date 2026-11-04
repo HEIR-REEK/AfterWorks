@@ -166,13 +166,13 @@ function JobsPageInner() {
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
-          <div className="relative min-w-0 flex-1 sm:max-w-xs">
+          <div className="relative w-full min-w-0 sm:w-auto sm:max-w-xs sm:flex-1">
             <Search className="absolute left-3 top-2.5 size-4 text-muted-foreground" aria-hidden />
             <input
               type="search"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search title, category or skill…"
+              placeholder="Search jobs or skills…"
               aria-label="Search jobs"
               className="h-9 w-full rounded-lg border border-border bg-card pl-9 pr-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none"
             />
@@ -194,7 +194,7 @@ function JobsPageInner() {
           No jobs match your filters right now. Check back soon — new work is posted daily.
         </p>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {filtered.map((job) => (
             <JobCard key={job.id} job={job} />
           ))}

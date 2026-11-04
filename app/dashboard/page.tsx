@@ -177,7 +177,7 @@ export default function DashboardPage() {
           </button>
         </div>
 
-        <div className="grid border-t border-border sm:grid-cols-3">
+        <div className="grid grid-cols-1 border-t border-border sm:grid-cols-3">
           <div className="border-b border-border p-4 sm:border-b-0 sm:border-r">
             <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-primary">
               <Banknote className="size-3.5" />
@@ -294,7 +294,7 @@ export default function DashboardPage() {
             No active applications yet. Browse jobs to get started.
           </p>
         ) : (
-          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
             {activeApps.map((app) => {
               const job = getJob(app.jobId)
               if (!job) return null
@@ -330,7 +330,7 @@ export default function DashboardPage() {
             See all jobs
           </Link>
         </div>
-        <div className="mt-3 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {openJobs.slice(0, 3).map((job) => (
             <JobCard key={job.id} job={job} />
           ))}

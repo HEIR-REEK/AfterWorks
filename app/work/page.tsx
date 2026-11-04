@@ -83,7 +83,7 @@ export default async function WorkPage() {
         </div>
 
         {jobs.length > 0 ? (
-          <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {jobs.map((job) => <PublicJobCard key={job.id} job={job} />)}
           </div>
         ) : (
@@ -126,7 +126,7 @@ export default async function WorkPage() {
           <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
             Each category explains what the task involves and what a good submission looks like.
           </p>
-          <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {PUBLIC_JOB_CATEGORIES.map((category) => (
               <Link
                 key={category.slug}

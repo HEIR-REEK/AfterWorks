@@ -43,7 +43,7 @@ export function LegalDocument({
 
         <nav className="mt-8 rounded-xl border border-border bg-muted/30 p-4">
           <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">On this page</p>
-          <ol className="mt-2 grid gap-1.5 sm:grid-cols-2">
+          <ol className="mt-2 grid grid-cols-1 gap-1.5 sm:grid-cols-2">
             {sections.map((section) => (
               <li key={section.id}>
                 <a href={`#${section.id}`} className="text-sm text-muted-foreground underline-offset-2 hover:text-foreground hover:underline">

@@ -183,7 +183,7 @@ export default function AdminOverviewPage() {
         />
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         {/* Queues */}
         <AdminCard title="Work queues" description="What needs a human decision today." icon={<Clock3 className="size-4" />}>
           <ul className="flex flex-col divide-y divide-border/60">
@@ -278,7 +278,7 @@ export default function AdminOverviewPage() {
         </AdminCard>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <AdminCard
           className="lg:col-span-2"
           title="Payments & training"

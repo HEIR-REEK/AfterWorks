@@ -373,7 +373,7 @@ function ProfilePageContent() {
       </section>
 
       {/* Completion + payout readiness — the same score the server uses to release the $5 */}
-      <section className="grid gap-3 lg:grid-cols-[1.4fr_1fr]">
+      <section className="grid grid-cols-1 gap-3 lg:grid-cols-[1.4fr_1fr]">
         <div className="rounded-2xl border border-border bg-card p-4 shadow-sm sm:p-5">
           <div className="flex items-center justify-between gap-3">
             <div>
@@ -589,7 +589,7 @@ function ProfilePageContent() {
       </section>
 
       {/* Two Column Layout: Skills & Languages / Didit KYC */}
-      <div className="grid gap-4 sm:gap-6 md:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 sm:gap-6 md:grid-cols-2">
         {/* Skills & Badges */}
         <section className="flex flex-col justify-between overflow-hidden rounded-2xl border border-border bg-card p-6 shadow-sm">
           <div>
@@ -824,7 +824,7 @@ function ProfilePageContent() {
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <CountrySelect
                   id="country"
                   value={formData.country}
@@ -870,13 +870,13 @@ function ProfilePageContent() {
                     onChange={(e) => setFormData({ ...formData, preferredPayoutMethod: e.target.value })}
                     className="h-10 w-full rounded-lg border border-input bg-card px-3 text-sm outline-none focus:ring-2 focus:ring-primary"
                   >
-                    <option value="M-Pesa">M-Pesa (+254 Mobile Money)</option>
+                    <option value="M-Pesa">M-Pesa (mobile money)</option>
                     <option value="Bank Transfer">Bank Transfer</option>
                   </select>
                 </div>
 
                 {formData.preferredPayoutMethod === 'Bank Transfer' ? (
-                  <div className="grid grid-cols-2 gap-4 animate-in fade-in slide-in-from-top-2">
+                  <div className="grid grid-cols-1 gap-4 animate-in fade-in slide-in-from-top-2 sm:grid-cols-2">
                     <div className="space-y-1.5">
                       <label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
                         <Building2 className="size-3.5" />
@@ -992,7 +992,7 @@ function ProfilePageContent() {
                   Professional Details
                 </h4>
                 
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div className="space-y-1.5">
                     <label className="text-xs font-medium text-muted-foreground">School / University</label>
                     <input

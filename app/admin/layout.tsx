@@ -90,11 +90,11 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       <AdminIdleGuard />
       {/* Console header — same visual language as the worker shell, one notch denser. */}
       <header className="sticky top-0 z-40 border-b border-border bg-background/90 backdrop-blur">
-        <div className="mx-auto flex h-14 w-full max-w-7xl items-center gap-3 px-4 sm:px-6">
+        <div className="mx-auto flex h-14 w-full max-w-7xl items-center gap-2 px-3 sm:gap-3 sm:px-6">
           <Link href="/admin" className="flex items-center gap-2.5">
             <BrandMark size={32} />
             <span className="text-sm font-semibold tracking-tight">
-              AfterWorks
+              <span className="hidden min-[390px]:inline">AfterWorks</span>
               <span className="ml-1.5 rounded-md bg-primary/10 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-primary">
                 Ops
               </span>
@@ -131,11 +131,17 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             <span className="hidden max-w-[16ch] truncate text-xs font-medium text-muted-foreground md:inline" title={session.email}>
               {session.email}
             </span>
-            <Button render={<Link href="/dashboard" />} variant="ghost" size="sm" className="gap-1.5 text-muted-foreground">
-              Worker app
+            <Button
+              render={<Link href="/dashboard" />}
+              variant="ghost"
+              size="sm"
+              aria-label="Open the worker app"
+              className="gap-1.5 px-2 text-muted-foreground sm:px-3"
+            >
+              <span className="hidden sm:inline">Worker app</span>
               <ArrowUpRight className="size-3.5" />
             </Button>
-            <Button render={<Link href="/status" />} variant="ghost" size="sm" className="gap-1.5 text-muted-foreground">
+            <Button render={<Link href="/status" />} variant="ghost" size="sm" aria-label="Platform status" className="hidden gap-1.5 px-2 text-muted-foreground sm:inline-flex sm:px-3">
               <Activity className="size-3.5" />
               <span className="hidden lg:inline">Status</span>
             </Button>
@@ -172,7 +178,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                 href={item.href}
                 aria-current={active ? 'page' : undefined}
                 className={cn(
-                  'inline-flex shrink-0 items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-semibold transition-all sm:text-sm md:w-full md:justify-start md:px-3',
+                  'inline-flex min-h-10 shrink-0 items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-semibold transition-all sm:text-sm md:min-h-0 md:w-full md:justify-start md:px-3',
                   active
                     ? 'bg-primary text-primary-foreground shadow-sm'
                     : 'border border-border/70 bg-card text-muted-foreground hover:bg-muted hover:text-foreground',

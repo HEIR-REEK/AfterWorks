@@ -90,7 +90,7 @@ export function TrainingPushSection() {
       aria-labelledby="training-section-title"
     >
       <div className="mx-auto w-full max-w-6xl px-4 sm:px-6">
-        <div className="grid gap-10 lg:grid-cols-[1.05fr_0.95fr] lg:items-center lg:gap-16">
+        <div className="grid grid-cols-1 gap-10 lg:grid-cols-[1.05fr_0.95fr] lg:items-center lg:gap-16">
           <div>
             <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.18em] text-warning-foreground">
               Skill up, earn more
@@ -103,7 +103,7 @@ export function TrainingPushSection() {
             </h2>
             <p className="mt-4 text-sm leading-relaxed text-muted-foreground sm:text-base">{BODY}</p>
 
-            <ol className="mt-6 grid gap-3 text-sm sm:grid-cols-3">
+            <ol className="mt-6 grid grid-cols-1 gap-3 text-sm sm:grid-cols-3">
               {[
                 { n: '01', label: 'Take the short module' },
                 { n: '02', label: 'Pass the assessment' },

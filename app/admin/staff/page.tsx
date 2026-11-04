@@ -334,7 +334,7 @@ function StaffPageInner() {
           </div>
         }
       >
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div className="flex flex-col gap-1.5 rounded-xl border border-primary/30 bg-primary/5 p-3.5">
             <p className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
               <Crown className="size-3.5 text-primary" />

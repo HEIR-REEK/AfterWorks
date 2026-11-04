@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  ASSESSMENT_ONLY_CATALOGUE_JOB_IDS,
+  IMPORTABLE_CATALOGUE_JOB_IDS,
+  jobHasTraining,
   BUILT_IN_QUESTION_COUNT,
   EXPANDED_CATALOGUE_JOB_IDS,
   JOB_CATEGORY_LIST,
@@ -96,11 +99,16 @@ test('every card resolves a complete course, assessment, public card and checkou
   const jobs = seedJobs()
 
   for (const job of jobs) {
-    // The module a worker studies: authored briefings are prepended to the category coursebook,
-    // so a card can never fall back to two paragraphs and an empty assessment.
+    // The module a worker studies. A training card resolves the authored sections, or the category
+    // coursebook when there are none, so it can never fall back to two paragraphs and an empty
+    // assessment. An assessment-only card has no training at all, so it resolves nothing.
     const course = getJobTrainingCourse(job)
-    assert.ok(course.modules.length >= 12, `${job.id} renders only ${course.modules.length} lessons`)
-    assert.ok(trainingCourseMinutes(course) >= 90, `${job.id} course is too short to be a real briefing`)
+    if (job.trainingRequired) {
+      assert.ok(course.modules.length >= 12, `${job.id} is a training card and renders only ${course.modules.length} lessons`)
+      assert.ok(trainingCourseMinutes(course) >= 90, `${job.id} course is too short to be a real briefing`)
+    } else {
+      assert.equal(course.modules.length, 0, `${job.id} is assessment-only and must resolve no modules`)
+    }
 
     // The assessment behind the application gate: the full 20-question applied category bank, an 80% pass
     // mark and an answer key stripped from the public projection. This holds for free cards too —
@@ -134,5 +142,42 @@ test('every card resolves a complete course, assessment, public card and checkou
     if (job.status === 'open') {
       assert.ok(toPublicJob(job.id, job, Date.now()), `${job.id} would be dropped from the public board`)
     }
+  }
+})
+
+test('the assessment-only batch is free by design, not by omission', () => {
+  const jobs = seedJobs()
+  const batch = jobs.filter((job) => (ASSESSMENT_ONLY_CATALOGUE_JOB_IDS as readonly string[]).includes(job.id))
+  assert.equal(batch.length, ASSESSMENT_ONLY_CATALOGUE_JOB_IDS.length, 'every id in the batch must exist')
+
+  for (const job of batch) {
+    // The whole point of the batch: no training, and therefore no fee.
+    assert.equal(job.trainingNotes?.length ?? 0, 0, `${job.id} must carry no training sections`)
+    assert.equal(job.trainingRequired, false, `${job.id} must not charge`)
+    assert.ok(job.trainingFeeUsd === undefined, `${job.id} must not carry a fee of its own`)
+    // Still gated on identity, because the assessment is what verification unlocks.
+    assert.equal(job.requiresVerified, true, `${job.id} must still require verification`)
+    assert.ok(job.slotsRemaining > 0, `${job.id} must have slots open`)
+  }
+
+  // Both batches are importable, and they do not overlap.
+  assert.equal(new Set(IMPORTABLE_CATALOGUE_JOB_IDS).size, IMPORTABLE_CATALOGUE_JOB_IDS.length)
+  const overlap = (ASSESSMENT_ONLY_CATALOGUE_JOB_IDS as readonly string[]).filter(
+    (id) => (EXPANDED_CATALOGUE_JOB_IDS as readonly string[]).includes(id),
+  )
+  assert.deepEqual(overlap, [], 'a card cannot be in both batches')
+})
+
+test('the board has enough free cards that a new member can start without paying', () => {
+  // The reason the second batch exists. A board that is almost all paid-training cards leaves a
+  // member with nothing to do until they can pay, and nothing at all if they cannot.
+  const jobs = seedJobs()
+  const free = jobs.filter((job) => !jobHasTraining(job))
+  assert.ok(free.length >= 20, `expected at least 20 assessment-only cards, found ${free.length}`)
+
+  // Spread across every category, so it is not one category that is unusable.
+  for (const category of JOB_CATEGORY_LIST) {
+    const count = free.filter((job) => job.category === category).length
+    assert.ok(count >= 2, `${category} has only ${count} assessment-only cards`)
   }
 })

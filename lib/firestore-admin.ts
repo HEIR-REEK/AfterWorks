@@ -1584,6 +1584,9 @@ export async function attachAuthAccountState(rows: AdminUserRow[]): Promise<void
             exists: true,
             disabled: rec.disabled === true,
             emailVerified: rec.emailVerified === true,
+            // Auth holds the address even when the profile document never got one, so a stub
+            // profile still shows an email in the console instead of a blank cell.
+            ...(rec.email ? { email: rec.email } : {}),
             createdAt: rec.metadata?.creationTime ?? null,
             lastSignInAt: rec.metadata?.lastSignInTime ?? null,
             providers: (rec.providerData ?? []).map((p: UserInfo) => p.providerId),
@@ -2702,13 +2705,10 @@ export function sanitizeJob(input: AdminJobInput, existing?: Record<string, unkn
   const requested = Math.round(Number(input.slotsRemaining ?? capacity))
   const slots = Math.max(0, Math.min(capacity, Number.isFinite(requested) ? requested : capacity))
 
-  // The rule, enforced where the document is written: a card charges because it *has* training.
-  // Counting the authored sections here means no caller can store a fee on a card with no course,
-  // or a course with no fee.
-  const trainingNotes = (Array.isArray(input.trainingNotes) ? input.trainingNotes : []).filter(
-    (section) => String(section?.title ?? '').trim() !== '' || String(section?.content ?? '').trim() !== '',
-  )
-  const trainingRequired = trainingNotes.length > 0
+  // Which kind of card the admin is publishing. A training card has modules and a fee; an
+  // assessment-only card has neither.
+  const trainingRequired = input.trainingRequired === true
+  const trainingNotes = Array.isArray(input.trainingNotes) ? input.trainingNotes : []
 
   // Per-job training price. Only paid-training jobs carry one; when the admin omits it we keep the
   // stored fee (edits that do not touch the fee) or default to the global $10-equivalent.
@@ -2721,8 +2721,8 @@ export function sanitizeJob(input: AdminJobInput, existing?: Record<string, unkn
     : 0
 
   // Admin-authored training sections, bounded so a paste cannot balloon the document past
-  // Firestore's 1 MiB limit. Empty titles/contents are dropped; an empty list means the card is
-  // assessment-only and free — there is deliberately no built-in coursebook fallback.
+  // Firestore's 1 MiB limit. Empty titles/contents are dropped. An empty list is fine on a training
+  // card: the built-in category coursebook is used instead, so the card still has modules.
   const authoredTrainingNotes = trainingNotes
     .map((raw) => {
       const section = (raw ?? {}) as Record<string, unknown>

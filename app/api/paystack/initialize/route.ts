@@ -186,16 +186,10 @@ async function jobTrainingGate(jobId: string): Promise<{ missing: boolean; requi
     const data = snap.data() as Record<string, unknown> | undefined
     // The admin-set per-job fee; absent/invalid → undefined so the global configured fee applies.
     const fee = Number(data?.trainingFeeUsd)
-    // Derived, not read: a card charges because it *has* training. A stored `trainingRequired`
-    // that disagrees with the sections is exactly the inconsistency this rule removes.
-    const { jobHasTraining } = await import('@/lib/afterworks-data')
-    const sections = Array.isArray(data?.trainingNotes) ? (data!.trainingNotes as { title?: unknown; content?: unknown }[]) : []
-    const authored = sections.filter(
-      (section) => String(section?.title ?? '').trim() !== '' || String(section?.content ?? '').trim() !== '',
-    )
     return {
       missing: false,
-      requiresTraining: authored.length > 0 || (data?.trainingRequired === true && sections.length > 0),
+      // A training card is the kind that charges; an assessment-only card has nothing to charge for.
+      requiresTraining: data?.trainingRequired === true,
       feeUsd: Number.isFinite(fee) && fee > 0 ? fee : undefined,
     }
   } catch {

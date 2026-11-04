@@ -8,7 +8,7 @@
  * same `importStarterJobs()` function.
  *
  * It is idempotent and conservative:
- *   • only IDs in `EXPANDED_CATALOGUE_JOB_IDS` are considered;
+ *   • only IDs in `IMPORTABLE_CATALOGUE_JOB_IDS` are considered;
  *   • an existing document is skipped unless `--overwrite` is passed;
  *   • `--dry-run` prints the plan and writes nothing.
  *
@@ -21,7 +21,7 @@
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import {
-  EXPANDED_CATALOGUE_JOB_IDS,
+  IMPORTABLE_CATALOGUE_JOB_IDS,
   seedJobs,
 } from '../lib/afterworks-data'
 import { importStarterJobs, starterJobInput, STARTER_IMPORT_ACTOR } from '../lib/job-seed'
@@ -53,12 +53,12 @@ async function main() {
     .map((value) => value.trim())
     .filter(Boolean)
 
-  const allowed = new Set<string>(EXPANDED_CATALOGUE_JOB_IDS)
+  const allowed = new Set<string>(IMPORTABLE_CATALOGUE_JOB_IDS)
   const ids = requestedIds.length > 0 ? requestedIds : [...allowed]
   const unknown = ids.filter((id) => !allowed.has(id))
   if (unknown.length > 0) {
     console.error(`Refusing unknown card id(s): ${unknown.join(', ')}`)
-    console.error('This script only publishes the 2026 expansion batch.')
+    console.error('This script only publishes the known catalogue batches.')
     process.exitCode = 1
     return
   }

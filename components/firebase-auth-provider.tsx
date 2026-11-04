@@ -356,6 +356,7 @@ export function FirebaseAuthProvider({
         markAuthSession()
         if (name) await updateProfile(cred.user, { displayName: name })
         await createUserDocument(cred.user.uid, name || email.split('@')[0], email)
+        await bootstrapProfile(cred.user)
         setUser(cred.user)
         try {
           const token = await cred.user.getIdToken()
@@ -437,6 +438,33 @@ export function FirebaseAuthProvider({
      * Records the Terms & Privacy acceptance server-side. The boxes were ticked in the form; this
      * only reports that, and the server owns the timestamp and the version.
      */
+    /**
+     * Ask the server to make sure this account has a complete profile.
+     *
+     * The browser writes the profile itself, and a write the Firestore rules refuse leaves the
+     * member signed in with no document at all — which is what a Google sign-up did whenever the
+     * create rule's extra `email_verified` condition did not hold. The Admin SDK cannot be refused
+     * that way, so this is the repair. Best effort by design: the account works either way, and a
+     * failure here must never turn a successful sign-up into an error.
+     */
+    async function bootstrapProfile(user: User): Promise<string[]> {
+      try {
+        const token = await user.getIdToken()
+        const res = await fetch('/api/auth/bootstrap', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { accept: 'application/json', authorization: `Bearer ${token}` },
+          cache: 'no-store',
+        })
+        if (!res.ok) return []
+        const data = (await res.json().catch(() => ({}))) as { patched?: string[] }
+        return Array.isArray(data.patched) ? data.patched : []
+      } catch (err) {
+        console.warn('[auth] profile bootstrap skipped:', err instanceof Error ? err.message : err)
+        return []
+      }
+    }
+
     async function recordTermsAcceptance(user: User): Promise<boolean> {
       try {
         const token = await user.getIdToken()
@@ -497,6 +525,9 @@ export function FirebaseAuthProvider({
         // and the document must record what is true rather than a blanket "not yet".
         const googleVerified = await isEmailVerifiedNow(cred.user)
         await createUserDocument(cred.user.uid, name, cred.user.email || '', { emailVerified: googleVerified })
+        // The Google write is the one the rules can refuse, so this is where the profile is
+        // guaranteed rather than hoped for.
+        await bootstrapProfile(cred.user)
         setUser(cred.user)
         // Only for an account that did not exist a moment ago. `additionalInfo.isNewUser` is
         // Firebase's own answer to "was this a sign-up or a sign-in", and it matters here in a way

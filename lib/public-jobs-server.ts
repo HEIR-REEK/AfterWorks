@@ -77,11 +77,7 @@ export function toPublicJob(id: string, raw: unknown, now = Date.now()): PublicJ
 
   const payAmountUsd = Math.max(0, Math.min(10_000, finite(data.payAmountUsd, 0)))
   const estimatedMinutes = Math.max(5, Math.min(10_080, Math.round(finite(data.estimatedMinutes, 60))))
-  // Derived from the card's own content, not the stored flag: a card charges because it has training.
-  const sections = Array.isArray(data.trainingNotes) ? (data.trainingNotes as Record<string, unknown>[]) : []
-  const trainingRequired = sections.some(
-    (section) => String(section?.title ?? '').trim() !== '' || String(section?.content ?? '').trim() !== '',
-  )
+  const trainingRequired = data.trainingRequired === true
   const trainingFeeUsd = Math.max(0, Math.min(1_000, finite(data.trainingFeeUsd, 0)))
 
   return {

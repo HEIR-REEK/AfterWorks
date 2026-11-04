@@ -190,21 +190,22 @@ test('an edit that does not touch the fee keeps the stored one instead of resett
   assert.equal(sanitizeJob(adminInput({ trainingFeeUsd: undefined }), null).trainingFeeUsd, 10)
 })
 
-test('training implies a fee, and removing the training removes the fee', () => {
-  // The rule: a card charges because it has training. Sections present → a fee is stored.
-  const paid = sanitizeJob(adminInput({ trainingFeeUsd: 25 }))
+test('a training card keeps its fee, and an assessment-only card keeps none', () => {
+  // A training card charges because it is a training card — that is the one thing the flag means.
+  const paid = sanitizeJob(adminInput({ trainingRequired: true, trainingFeeUsd: 25 }))
   assert.equal(paid.trainingRequired, true)
   assert.equal(paid.trainingFeeUsd, 25)
 
-  // Strip the sections and the card becomes assessment-only, so the fee must not survive.
-  const free = sanitizeJob(adminInput({ trainingNotes: [], trainingFeeUsd: 25 }))
+  // An assessment-only card has no fee, whatever the body tried to send with it.
+  const free = sanitizeJob(adminInput({ trainingRequired: false, trainingFeeUsd: 25 }))
   assert.equal(free.trainingRequired, false)
   assert.equal(free.trainingFeeUsd, 0)
 
-  // A stored flag that disagrees with the content loses: sections win.
-  const lying = sanitizeJob(adminInput({ trainingRequired: false, trainingFeeUsd: 25 }))
-  assert.equal(lying.trainingRequired, true)
-  assert.equal(lying.trainingFeeUsd, 25)
+  // A training card with no authored sections is still a training card: it gets the built-in
+  // coursebook, so it still charges. The flag is the card type, not a guess about the content.
+  const builtIn = sanitizeJob(adminInput({ trainingRequired: true, trainingNotes: [], trainingFeeUsd: 12 }))
+  assert.equal(builtIn.trainingRequired, true)
+  assert.equal(builtIn.trainingFeeUsd, 12)
 
   assert.equal(sanitizeJob(adminInput({ trainingFeeUsd: 99_999 })).trainingFeeUsd, 1_000)
   assert.equal(sanitizeJob(adminInput({ trainingFeeUsd: -4 }), { trainingFeeUsd: 12.5 }).trainingFeeUsd, 12.5)

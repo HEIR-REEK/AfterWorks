@@ -257,7 +257,7 @@ Speaker 1: The total is four thousand two fifty, or maybe [inaudible].
 
 ### The assessment
 
-The assessment is not a memory test. It asks you to apply these rules to short situations: a messy speaker change, an unclear name, a noisy recording, a confidentiality question. You need two-thirds of the questions correct to pass.
+The assessment is not a memory test. It asks you to apply these rules to short situations: a messy speaker change, an unclear name, a noisy recording, a confidentiality question. You need 80% of the questions correct to pass, so a wrong answer costs more than a lucky guess can recover.
 
 If you miss a question, read the explanation, then retake the assessment. The goal is the judgement, not a lucky score.
 

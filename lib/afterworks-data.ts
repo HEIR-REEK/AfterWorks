@@ -337,15 +337,18 @@ export function paystackSubunitsFor(jobFeeUsd?: number | string | null): number 
  * admin console can show the real number without ever importing the answer key. The training
  * curriculum test checks this against `builtInQuestions()`.
  */
-export const BUILT_IN_QUESTION_COUNT = 25
+export const BUILT_IN_QUESTION_COUNT = 20
 
 /**
- * Pass mark for an assessment of any length. Keeps the ⅔ ratio, rounded up, so the built-in
- * 25-question banks need 17 correct and a custom bank of 6 questions needs 4.
+ * Pass mark for an assessment of any length: 80% correct, rounded up.
+ *
+ * The built-in banks carry 20 applied questions, so a pass needs 16. This is deliberately stricter
+ * than the old two-thirds threshold: every served question tests judgement under a brief, not
+ * vocabulary recall, and a marginal pass should not unlock paid work.
  */
 export function assessmentPassMark(questionCount: number): number {
   const n = Math.max(1, Math.floor(questionCount) || 1)
-  return Math.max(1, Math.ceil((n * 2) / 3))
+  return Math.max(1, Math.ceil((n * 4) / 5))
 }
 
 export function formatKes(usd: number): string {
@@ -512,6 +515,18 @@ export function seedJobs(): Job[] {
       slotsRemaining: 20,
       trainingRequired: true,
       trainingFeeUsd: 20,
+      trainingNotes: [
+        {
+          title: "The court transcript template",
+          content:
+            "Use the supplied page-and-line template exactly: a page number, a line number for every five lines of text, and a speaker label in capitals at each change. Never paraphrase a question, an objection or a ruling. Where the audio cannot support a word, write [inaudible 00:00:00] with the recorder timestamp and leave the gap visible rather than guessing from context.",
+        },
+        {
+          title: "Legal terms, names and confidentiality",
+          content:
+            "Case citations, statute names and party names must match the glossary character for character; expand an abbreviation only where the glossary gives the expansion. Hearings contain sensitive testimony, so keep every file inside the task workspace, never quote a case elsewhere, and send ambiguous passages to the review thread with the clause and timestamp attached.",
+        },
+      ],
       requiresVerified: true,
       status: 'open',
       closesAt: daysFromNow(8),
@@ -535,6 +550,19 @@ export function seedJobs(): Job[] {
       capacity: 100,
       slotsRemaining: 78,
       trainingRequired: true,
+      trainingFeeUsd: 18,
+      trainingNotes: [
+        {
+          title: "The street-scene taxonomy",
+          content:
+            "Label only the classes in the client taxonomy: car, van, truck, pedestrian and road sign. A tight box touches the outermost visible pixels of the object and stops at an occluder; it never includes road, shadow or a neighbouring object. A truncated object is boxed to the image edge, not completed by imagination.",
+        },
+        {
+          title: "Calibration and rejected frames",
+          content:
+            "Your first five images are calibration images and are checked before the rest of the batch is released. If two labels disagree on the same object, stop and ask rather than picking one style. For a corrupted, duplicated or unreadable frame, skip it and record the file name in the exception queue; never invent an object to fill an empty image.",
+        },
+      ],
       requiresVerified: true,
       status: 'open',
       closesAt: daysFromNow(6),
@@ -558,6 +586,18 @@ export function seedJobs(): Job[] {
       slotsRemaining: 24,
       trainingRequired: true,
       trainingFeeUsd: 25,
+      trainingNotes: [
+        {
+          title: "Anatomical region protocol",
+          content:
+            "Annotate the lung fields, heart silhouette and diaphragm with the region tool named in the brief. Trace the visible border of each region and do not infer a border hidden by a device, a rib or poor exposure. This is a geometry task, not a diagnosis: no finding, impression or clinical label belongs in the annotation.",
+        },
+        {
+          title: "Ambiguity and medical data handling",
+          content:
+            "If a region cannot be separated confidently, mark the image for radiologist review and move on. Never search for a patient name, never export an image, and never discuss a case outside the review thread. A single image copied for practice is still a confidentiality breach and ends the task.",
+        },
+      ],
       requiresVerified: true,
       status: 'open',
       closesAt: daysFromNow(10),
@@ -601,6 +641,19 @@ export function seedJobs(): Job[] {
       capacity: 50,
       slotsRemaining: 41,
       trainingRequired: true,
+      trainingFeeUsd: 16,
+      trainingNotes: [
+        {
+          title: "Choosing the dominant land use",
+          content:
+            "Classify each tile by the dominant land use in the supplied legend: farmland, urban, forest, water or barren. Judge the whole tile, not the most colourful corner. A mixed tile is assigned by the brief's majority rule; if no class clearly dominates, use the low-confidence flag instead of forcing a class.",
+        },
+        {
+          title: "Legend and seasonal traps",
+          content:
+            "Do not invent a class for a feature the legend does not contain. Dark water can resemble a shadow, and dry farmland can resemble barren land, so check the date and the surrounding tiles before deciding. Complete the calibration quiz first; a tile you cannot defend in one sentence goes to the exception queue.",
+        },
+      ],
       requiresVerified: true,
       status: 'open',
       closesAt: daysFromNow(9),
@@ -689,6 +742,19 @@ export function seedJobs(): Job[] {
       capacity: 60,
       slotsRemaining: 47,
       trainingRequired: true,
+      trainingFeeUsd: 15,
+      trainingNotes: [
+        {
+          title: "Marketplace policy codes",
+          content:
+            "Every decision needs one policy code from the client list plus the listing ID. Prohibited items and misleading health or safety claims are removals; a vague claim that does not meet a code is allowed or sent to review, not removed on personal dislike. Read the title, photo and description together before choosing a code.",
+        },
+        {
+          title: "Evidence notes and escalation",
+          content:
+            "Write a note a second reviewer can replay: policy code, the exact text or image region, and the action taken. Weapons, medicines with unsupported claims, and repeated listings from one seller are escalated rather than handled alone. Preserve the evidence before removing a listing, and never add a rule the client has not published.",
+        },
+      ],
       requiresVerified: true,
       status: 'open',
       closesAt: daysFromNow(4),
@@ -711,6 +777,19 @@ export function seedJobs(): Job[] {
       capacity: 35,
       slotsRemaining: 28,
       trainingRequired: true,
+      trainingFeeUsd: 16,
+      trainingNotes: [
+        {
+          title: "The four-category matrix",
+          content:
+            "Classify each comment as safe, spam, hate speech or misinformation using the published definitions. Read the parent thread before deciding: a quoted slur in a condemnation is not an attack, while a reclaimed term used to target a person still violates the hate policy. When two categories appear to fit, choose the one that carries the stronger enforcement and explain why.",
+        },
+        {
+          title: "Confidence, self-harm and escalation",
+          content:
+            "Confidence means how strongly the evidence supports your category, not how strongly you feel about the comment. A credible self-harm statement is escalated immediately through the safety path and is never handled by deleting the comment and moving on. Record the category, confidence, evidence and escalation target in the note.",
+        },
+      ],
       requiresVerified: true,
       status: 'open',
       closesAt: daysFromNow(6),
@@ -777,6 +856,19 @@ export function seedJobs(): Job[] {
       capacity: 20,
       slotsRemaining: 16,
       trainingRequired: true,
+      trainingFeeUsd: 22,
+      trainingNotes: [
+        {
+          title: "Contract structure and defined terms",
+          content:
+            "Preserve clause numbering, headings, cross-references, defined terms and placeholders exactly as the source presents them. Use the approved glossary for every legal term; do not simplify a term of art into everyday language, because that can change the legal effect. Keep the source's defined-term capitalisation consistent in the target.",
+        },
+        {
+          title: "Ambiguity and the review note",
+          content:
+            "When a clause is genuinely ambiguous, translate the most defensible reading and flag the clause number with the competing reading for the reviewer. Do not add a translator footnote unless the brief asks for one, and do not repair a defective cross-reference silently. Run a final pass for numbers, dates, parties and formatting before submission.",
+        },
+      ],
       requiresVerified: true,
       status: 'open',
       closesAt: daysFromNow(10),
@@ -863,6 +955,19 @@ export function seedJobs(): Job[] {
       capacity: 55,
       slotsRemaining: 44,
       trainingRequired: true,
+      trainingFeeUsd: 14,
+      trainingNotes: [
+        {
+          title: "Sentiment decision rules",
+          content:
+            "Rate the review as a whole, not the loudest sentence. A review that praises the product but condemns delivery is mixed and must be flagged for spot-check rather than forced into positive or negative. Treat sarcasm and a star rating that contradicts the text as evidence to weigh, not as automatic answers.",
+        },
+        {
+          title: "Topic taxonomy discipline",
+          content:
+            "Assign one primary topic from the supplied list. If the review covers two topics, choose the one the reviewer spends most words on and note the secondary topic only where the template allows it. Never invent a topic label, and never let a sentiment word decide the topic without reading what the review is actually about.",
+        },
+      ],
       requiresVerified: true,
       status: 'open',
       closesAt: daysFromNow(7),
@@ -887,6 +992,19 @@ export function seedJobs(): Job[] {
       capacity: 30,
       slotsRemaining: 24,
       trainingRequired: true,
+      trainingFeeUsd: 18,
+      trainingNotes: [
+        {
+          title: "Reconciliation before correction",
+          content:
+            "The printed statement is the authority, not the extraction. Recompute subtotals and totals from the source figures and compare them with the extracted row. Two offsetting errors can leave a total looking perfect, so check row-level values as well as the bottom line before marking an extraction correct.",
+        },
+        {
+          title: "Reason codes and escalation",
+          content:
+            "Every discrepancy needs the client reason code and the exact source location. Do not correct a figure unless the source clearly supports the correction; when the statement itself is inconsistent, preserve the printed value and flag the statement. Accuracy below the 95% threshold stops the batch for review rather than being averaged away.",
+        },
+      ],
       requiresVerified: true,
       status: 'open',
       closesAt: daysFromNow(8),
@@ -930,6 +1048,19 @@ export function seedJobs(): Job[] {
       capacity: 40,
       slotsRemaining: 33,
       trainingRequired: true,
+      trainingFeeUsd: 16,
+      trainingNotes: [
+        {
+          title: "Field boundaries and overlap",
+          content:
+            "Trace each field boundary as a polygon that follows the visible edge of the cultivated area, excluding tracks, buildings and tree lines unless the brief includes them. Separate adjacent fields at the shared boundary instead of drawing one merged polygon. Where a boundary is hidden, follow the visible evidence and flag the segment rather than inventing a straight line.",
+        },
+        {
+          title: "Crop legend and calibration",
+          content:
+            "Tag each field with one crop class from the supplied legend. For a mixed field, use the brief's dominant-crop rule; if the imagery is too early or too late in the season to distinguish the crop, use the uncertain tag. Complete the calibration test before the full batch and keep the same class for the same field across frames.",
+        },
+      ],
       requiresVerified: true,
       status: 'open',
       closesAt: daysFromNow(9),

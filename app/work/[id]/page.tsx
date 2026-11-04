@@ -145,18 +145,23 @@ export default async function PublicJobPage({ params }: Props) {
                   <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">2</span>
                   <div><p className="font-medium">Verify your identity once</p><p className="mt-1 text-muted-foreground">A government ID and liveness check through our verification partner. AfterWorks stores the result, not your document.</p></div>
                 </li>
-                {job.trainingRequired && (
-                  <li className="flex gap-3">
-                    <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">3</span>
-                    <div><p className="font-medium">Complete the paid training for this card</p><p className="mt-1 text-muted-foreground">The one-off training fee is {trainingFee}. The training material and assessment unlock after the required identity check is approved.</p></div>
-                  </li>
-                )}
                 <li className="flex gap-3">
-                  <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">{job.trainingRequired ? '4' : '3'}</span>
-                  <div><p className="font-medium">Pass the job assessment</p><p className="mt-1 text-muted-foreground">The short assessment is scored on the server. A pass is required before you can apply for this card.</p></div>
+                  <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">3</span>
+                  <div>
+                    <p className="font-medium">Complete the full training course for this card</p>
+                    <p className="mt-1 text-muted-foreground">
+                      {job.trainingRequired
+                        ? `The one-off training fee is ${trainingFee}. The course and assessment unlock after the required identity check is approved.`
+                        : 'This card has no training fee, but the full course is compulsory. It unlocks after the required identity check is approved.'}
+                    </p>
+                  </div>
                 </li>
                 <li className="flex gap-3">
-                  <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">{job.trainingRequired ? '5' : '4'}</span>
+                  <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">4</span>
+                  <div><p className="font-medium">Pass the job assessment</p><p className="mt-1 text-muted-foreground">The applied assessment is scored on the server and you need 80% to pass. A pass is required before you can apply for this card.</p></div>
+                </li>
+                <li className="flex gap-3">
+                  <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">5</span>
                   <div><p className="font-medium">Apply, do approved work and submit</p><p className="mt-1 text-muted-foreground">The client brief is released after approval. Completed work enters the quality review and clearing window before it becomes withdrawable.</p></div>
                 </li>
               </ol>

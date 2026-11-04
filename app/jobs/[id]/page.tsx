@@ -177,9 +177,14 @@ export default function JobDetailPage({
                   </div>
                 </li>
               ) : (
-                <li className="flex items-center gap-2.5 text-muted-foreground">
-                  <GraduationCap className="size-4 shrink-0 text-muted-foreground" />
-                  No training fee required for this job card category
+                <li className="flex items-start gap-2.5 text-muted-foreground">
+                  <GraduationCap className="mt-0.5 size-4 shrink-0 text-primary" />
+                  <div>
+                    <span>Step 1: Verify Identity → Step 2: Full Training Course → Step 3: Assessment → Apply for Job Card</span>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      There is no training fee for this card, but every lesson and the 20-question applied assessment (80% pass) are still required before you can apply.
+                    </p>
+                  </div>
                 </li>
               )}
             </ul>

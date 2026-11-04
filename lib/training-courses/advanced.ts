@@ -662,7 +662,7 @@ Then open the course and check. Any gap is today’s revision, not a character f
 
 ### How the assessment is scored
 
-The built-in bank has 25 questions and you need 17 correct. The questions mix definitions, short scenarios and visual judgements. You can retake it after reading the explanations. A pass is recorded on the server and unlocks the application for this card; it does not replace the job’s own review.
+The built-in bank has 20 applied questions and you need 16 correct (80%). The questions mix definitions, short scenarios and visual judgements. You can retake it after reading the explanations. A pass is recorded on the server and unlocks the application for this card; it does not replace the job’s own review.
 
 > **Last habit:** read every question twice. The difference between “what should you do first” and “what should you do next” is often the whole question.
 `,
@@ -672,7 +672,7 @@ The built-in bank has 25 questions and you need 17 correct. The questions mix de
       objective: 'Run a final self-audit across the brief, quality rule, risk boundaries and handoff.',
       image: '/training/assessment-readiness.svg',
       imageAlt:
-        'A four-station readiness scorecard covering the brief, quality rule, risk and handoff, with a 17-of-25 pass target.',
+        'A four-station readiness scorecard covering the brief, quality rule, risk and handoff, with a 16-of-20 pass target.',
       imageCaption: 'Readiness is four explainable decisions, not a lucky score.',
       check: {
         question: 'What is the best use of the five minutes before starting the assessment?',

@@ -5,6 +5,7 @@ import test from 'node:test'
 import {
   BUILT_IN_QUESTION_COUNT,
   JOB_CATEGORY_LIST,
+  assessmentPassMark,
   safeImageSrc,
   TRAINING_LESSON_KINDS,
   type Job,
@@ -204,19 +205,23 @@ test('the admin write path keeps safe figures and explanations, and drops unsafe
   assert.equal(saved.assessmentQuestions[0]!.explanation, 'The speaker change starts a new line.')
 })
 
-test('every category has a 25-question built-in assessment with figures and explanations', () => {
+test('every category ships the full 20-question applied assessment with figures and explanations', () => {
   for (const category of JOB_CATEGORY_LIST) {
     const questions = builtInQuestions(category)
     assert.equal(questions.length, BUILT_IN_QUESTION_COUNT, `${category} should ship ${BUILT_IN_QUESTION_COUNT} questions`)
-    assert.equal(BUILT_IN_QUESTION_COUNT, 25)
+    assert.equal(BUILT_IN_QUESTION_COUNT, 20)
+    assert.equal(assessmentPassMark(BUILT_IN_QUESTION_COUNT), 16, 'the built-in pass mark must stay at 80%')
     assert.deepEqual(
       questions.map((question) => question.id),
       Array.from({ length: BUILT_IN_QUESTION_COUNT }, (_, index) => index + 1),
       `${category} question ids should be stable and unique`,
     )
     for (const question of questions) {
-      assert.ok(question.question.trim().length > 20, `${category} has a thin question`)
-      assert.ok(question.options.length >= 2, `${category} / ${question.question} needs options`)
+      // The served bank is applied only: a short definition prompt or a two-option question would
+      // reopen the recall shortcut the assessment is meant to close.
+      assert.ok(question.question.trim().length >= 60, `${category} has a thin recall prompt`)
+      assert.equal(question.options.length, 4, `${category} / ${question.question} needs four options`)
+      assert.ok(question.explanation && question.explanation.length > 40, `${category} / ${question.question} needs a reasoned answer`)
       assert.ok(question.correctIndex >= 0 && question.correctIndex < question.options.length)
       if (question.image) {
         const path = localFigure(question.image)
@@ -270,4 +275,11 @@ test('a job with authored notes gets a job-specific course; an empty one gets th
   const builtIn = getJobTrainingCourse(base)
   assert.equal(builtIn.modules.length, getBuiltInTrainingCourse('Transcription').modules.length)
   assert.ok(builtIn.modules.length >= 12)
+})
+
+test('the pass mark is 80% rounded up for built-in and custom banks', () => {
+  assert.equal(assessmentPassMark(20), 16)
+  assert.equal(assessmentPassMark(6), 5)
+  assert.equal(assessmentPassMark(1), 1)
+  assert.equal(assessmentPassMark(0), 1)
 })

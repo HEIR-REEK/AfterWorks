@@ -341,7 +341,7 @@ export default function AdminJobsPage() {
     // ── Validate the learning content before it leaves the browser ──────────
     const fee = Number(editing.trainingFeeUsd)
     if (editing.trainingRequired && !(Number.isFinite(fee) && fee >= 0.0001 && fee <= 1000)) {
-      push('error', 'Set a training fee between $0.0001 and $1,000 — amounts under $1 are fine, the KES charge is rounded — or switch the card to assessment-only.')
+      push('error', 'Set a training fee between $0.0001 and $1,000 — amounts under $1 are fine, the KES charge is rounded — or switch the card to free course + assessment.')
       return
     }
     const cleanedQuestions = editing.assessmentQuestions.map((question, index) => {
@@ -707,7 +707,7 @@ export default function AdminJobsPage() {
                     Training &amp; assessment
                   </h3>
                   <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-                    Decide how this card gates applicants, what training costs, and what they study and answer on the user side.
+                    Every card ships a full course and assessment. Decide whether the course is paid or free, and what workers study and answer on the user side.
                   </p>
                   <div className="mt-2 flex flex-wrap gap-1.5 text-[10px] font-medium text-muted-foreground">
                     <span className="rounded-full border border-border bg-background px-2 py-0.5">
@@ -760,10 +760,10 @@ export default function AdminJobsPage() {
                   >
                     <span className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
                       <HelpCircle className="size-3.5 text-primary" />
-                      Assessment only (free)
+                      Free course + assessment
                     </span>
                     <span className="text-[11px] leading-snug text-muted-foreground">
-                      No payment. Workers see your preparation notes (if any) and must pass the assessment to apply.
+                      No payment. Workers must complete the full course — authored sections or the built-in coursebook — and pass the assessment before applying.
                     </span>
                   </button>
                 </div>
@@ -1112,7 +1112,7 @@ export default function AdminJobsPage() {
                     </Button>
                   </div>
                   <p className="text-[11px] leading-snug text-muted-foreground">
-                    Shown in the assessment on the user side — workers need two-thirds correct. Leave empty to use the built-in {editing.category} question bank ({BUILT_IN_QUESTION_COUNT} questions).{' '}
+                    Shown in the assessment on the user side — workers need 80% correct. Leave empty to use the built-in {editing.category} question bank ({BUILT_IN_QUESTION_COUNT} questions).{' '}
                     {editing.assessmentQuestions.length > 0 && (
                       <span className="font-medium text-foreground">
                         Pass mark: {assessmentPassMark(editing.assessmentQuestions.length)} of {editing.assessmentQuestions.length}.

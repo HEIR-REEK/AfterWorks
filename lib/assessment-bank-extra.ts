@@ -51,15 +51,15 @@ export const EXTRA_BANKS: Record<string, RawBankQuestion[]> = {
       why: "A name is a fact. When the approved list does not settle it, the honest output is a tag or a targeted question, not a confident guess.",
     },
     {
-      q: "The brief says “clean verbatim”. Which change is allowed?",
+      q: "A client sends a 22-minute interview and the brief says “clean verbatim”. The speaker says: “I— I mean, um, the invoice went out on Friday, right?” What is the allowed output?",
       opts: [
-        "Remove filler sounds and false starts while preserving every idea",
-        "Correct the speaker's grammar so the transcript reads better",
-        "Replace unclear words with likely alternatives",
-        "Merge short speaker turns to make the conversation flow",
+        "Correct the grammar and drop the false start so it reads as a clean statement",
+        "Keep every false start and filler, because clean verbatim is still strict verbatim",
+        "Remove the fillers and false start, keep the question and its meaning, and do not invent an answer",
+        "Turn the question into a statement so the reader is not left waiting",
       ],
-      ans: 0,
-      why: "Clean verbatim removes verbal clutter, not meaning, grammar or speaker structure. The speaker's ideas and turns must survive.",
+      ans: 2,
+      why: "Clean verbatim removes verbal clutter, not the speaker's question or meaning. Correcting the grammar or converting the question into a statement changes what was actually asked; keeping every filler defeats the clean brief.",
     },
     {
       q: "The audio drops out for eight seconds during a sentence. The speaker is clearly mid-thought when it returns. What should the transcript show?",
@@ -462,10 +462,10 @@ export const EXTRA_BANKS: Record<string, RawBankQuestion[]> = {
       why: "Credible, specific threats carry immediate physical risk. Insults and product criticism need the lower rungs of the ladder.",
     },
     {
-      q: "Which decision note is strong enough for a second reviewer to defend?",
+      q: "A reviewer removes a post that repeatedly targets a named user with sexual insults. The appeal queue needs a note a second reviewer can defend. Which note is strongest?",
       opts: [
         "Bad post, removed.",
-        "Removed under the harassment policy: the post repeatedly targets a named user with sexual insults. Evidence preserved; no formal appeal on file.",
+        "Harassment policy: repeated sexual insults at a named user in frames 00:04–00:22; evidence preserved, removed, and no appeal is on file.",
         "I did not like it.",
         "AI said 0.87, so removed.",
       ],

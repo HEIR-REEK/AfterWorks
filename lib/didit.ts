@@ -35,6 +35,7 @@
  */
 
 import { timingSafeEqual, createHmac } from 'crypto'
+import { isPublicHttpsUrl } from '@/lib/security-core'
 
 const DIDIT_BASE_URL = process.env.DIDIT_API_URL || 'https://verification.didit.me'
 const DIDIT_API_KEY = process.env.DIDIT_API_KEY || ''
@@ -333,6 +334,34 @@ function getCallbackUrl(origin?: string): string {
   return `${baseUrl.replace(/\/$/, '')}/kyc/callback`
 }
 
+/**
+ * Reports the callback URL that would be handed to Didit right now, and whether a member's browser
+ * could actually reach it. Used by the console connection test: a healthy provider plus an
+ * unreachable callback origin is a flow that starts and then strands the member, which looks like
+ * "verification is broken" and is invisible in every other diagnostic.
+ */
+export function callbackTarget(origin?: string): {
+  url: string
+  origin: string
+  fromEnv: boolean
+  isPublicHttps: boolean
+} {
+  const url = getCallbackUrl(origin)
+  const envUrl = (
+    process.env.NEXT_PUBLIC_APP_URL ||
+    process.env.APP_URL ||
+    process.env.RENDER_EXTERNAL_URL ||
+    process.env.VERCEL_URL ||
+    ''
+  ).trim()
+  return {
+    url,
+    origin: url.replace(/\/kyc\/callback$/, ''),
+    fromEnv: Boolean(envUrl),
+    isPublicHttps: isPublicHttpsUrl(url),
+  }
+}
+
 // ─── Session Creation ─────────────────────────────────────────────────────────
 
 export type KycSessionResult = {
@@ -379,6 +408,16 @@ export async function createKycSession(
   const baseCbUrl = getCallbackUrl(origin)
   // Include device type so the callback page can render the correct UI branch
   const cbUrl = isMobile ? `${baseCbUrl}?device=mobile` : `${baseCbUrl}?device=cross_device`
+
+  // A callback the member's browser cannot reach is not a provider error, so nothing in the response
+  // gives it away: the session is created, the flow completes, and the redirect dies. Say it here,
+  // where the operator's log can see it, rather than leaving a half-finished verification to explain.
+  if (!isPublicHttpsUrl(baseCbUrl)) {
+    console.warn(
+      `[KYC] Callback URL is not a public https address (${baseCbUrl}). Didit will send the member back to ` +
+        `an address their browser may not reach — set NEXT_PUBLIC_APP_URL to the deployed site.`,
+    )
+  }
 
   // ── Real Didit API call ───────────────────────────────────────────────────
   const response = await fetch(`${DIDIT_BASE_URL}/v3/session/`, {

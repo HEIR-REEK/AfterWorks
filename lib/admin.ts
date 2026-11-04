@@ -463,6 +463,13 @@ export const adminApi = {
         workflowFound: boolean
         hint: string | null
       }
+      /** Where Didit sends the member after the flow — and whether their browser can reach it. */
+      callback: {
+        url: string
+        origin: string
+        source: 'env' | 'forwarded-host' | 'host-header' | 'request-origin'
+        isPublicHttps: boolean
+      }
       hint: string | null
     }>('/api/admin/kyc/diagnose', { timeoutMs: 20_000 }),
   /** Staff desk (owner only): list console accounts, add staff with an owner-chosen password, reset, disable, remove. */

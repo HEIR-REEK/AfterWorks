@@ -55,7 +55,7 @@ export function AssessmentQuiz({ category, jobId, onPass }: { category: JobCateg
 
   // Camera proctoring: the questions are not even fetched until the camera is on, and the quiz
   // closes automatically if no person is detected in front of it.
-  const { cameraState, terminated, startCamera, videoRef, eventsRef } = useCameraProctor(
+  const { cameraState, permissionState, secureContext, terminated, startCamera, videoRef, eventsRef } = useCameraProctor(
     !submitted && !proctorTerminated,
     (t) => {
       setProctorTerminated(t)
@@ -172,16 +172,37 @@ export function AssessmentQuiz({ category, jobId, onPass }: { category: JobCateg
         <video ref={videoRef} autoPlay playsInline muted className={cameraState === 'requesting' ? 'hidden' : 'h-32 w-40 rounded-lg border border-border bg-black object-cover'} aria-label="Camera preview" />
         {cameraState === 'denied' ? (
           <div className="flex flex-col items-center gap-2">
-            <p className="flex items-center gap-1.5 text-sm text-destructive">
-              <CameraOff className="size-4" />
-              Camera access was denied, so the assessment cannot open. Allow camera access in your browser and try again.
-            </p>
-            <Button size="sm" variant="outline" onClick={startCamera}>Try again</Button>
+            {!secureContext ? (
+              <p className="flex items-center gap-1.5 text-sm text-destructive">
+                <CameraOff className="size-4" />
+                Camera needs a secure (HTTPS) page. Open AfterWorks over https:// and try again.
+              </p>
+            ) : permissionState === 'denied' ? (
+              <>
+                <p className="flex items-center gap-1.5 text-sm text-destructive">
+                  <CameraOff className="size-4" />
+                  Camera is blocked for this site, so the assessment cannot open — and Chrome will not show its popup again until you allow it.
+                </p>
+                <p className="max-w-md text-xs leading-relaxed text-muted-foreground">
+                  Click the <strong className="font-semibold">lock / tune icon</strong> in the address bar → <em>Site settings</em> → <em>Camera</em> → <em>Allow</em> (or open
+                  <span className="font-mono"> chrome://settings/content/camera </span> and allow this site). The assessment starts automatically once allowed.
+                </p>
+                <Button size="sm" variant="outline" onClick={startCamera}>Try again</Button>
+              </>
+            ) : (
+              <>
+                <p className="flex items-center gap-1.5 text-sm text-destructive">
+                  <CameraOff className="size-4" />
+                  Camera access was denied, so the assessment cannot open. Allow camera access in your browser and try again.
+                </p>
+                <Button size="sm" variant="outline" onClick={startCamera}>Try again</Button>
+              </>
+            )}
           </div>
         ) : (
           <Button size="lg" onClick={startCamera} disabled={cameraState === 'requesting'} className="gap-2">
             <Camera className="size-4" />
-            {cameraState === 'requesting' ? 'Requesting camera…' : 'Enable camera & start assessment'}
+            {cameraState === 'requesting' ? 'Waiting for the browser permission prompt…' : 'Enable camera & start assessment'}
           </Button>
         )}
       </div>

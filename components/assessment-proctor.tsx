@@ -45,8 +45,16 @@ function frameFlatness(ctx: CanvasRenderingContext2D, w: number, h: number): num
   return Math.sqrt(variance)
 }
 
+export type CameraPermissionState = 'unknown' | 'granted' | 'prompt' | 'denied'
+
 export function useCameraProctor(active: boolean, onTerminated: (t: ProctorTermination) => void) {
   const [cameraState, setCameraState] = useState<'idle' | 'requesting' | 'on' | 'denied'>('idle')
+  // The browser's own permission state. Chrome only shows its native camera prompt when the
+  // permission is in the "prompt" state AND the call comes from a user gesture on a secure
+  // context; if it was denied before (or the page is not HTTPS), getUserMedia rejects silently
+  // with no popup — which is exactly the "denied, cannot open" confusion.
+  const [permissionState, setPermissionState] = useState<CameraPermissionState>('unknown')
+  const [secureContext, setSecureContext] = useState(true)
   const [terminated, setTerminated] = useState<ProctorTermination | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const videoRef = useRef<HTMLVideoElement | null>(null)
@@ -83,10 +91,34 @@ export function useCameraProctor(active: boolean, onTerminated: (t: ProctorTermi
   const terminateRef = useRef(terminate)
   terminateRef.current = terminate
 
+  // Track the browser permission state so the UI can explain *why* no prompt appeared and
+  // auto-start the moment the user allows camera via the address-bar icon (no re-click needed).
+  useEffect(() => {
+    setSecureContext(typeof window !== 'undefined' && window.isSecureContext)
+    if (typeof navigator === 'undefined' || !navigator.permissions?.query) return
+    let status: PermissionStatus | null = null
+    navigator.permissions
+      .query({ name: 'camera' as PermissionName })
+      .then((s) => {
+        status = s
+        setPermissionState(s.state as CameraPermissionState)
+        s.onchange = () => {
+          setPermissionState(s.state as CameraPermissionState)
+          if (s.state === 'granted' && !streamRef.current) void startCameraRef.current()
+        }
+      })
+      .catch(() => setPermissionState('unknown'))
+    return () => {
+      if (status) status.onchange = null
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   const startCamera = useCallback(async () => {
     if (streamRef.current || cameraState === 'requesting') return
     setCameraState('requesting')
     try {
+      if (typeof window === 'undefined' || !window.isSecureContext) throw new Error('insecure-context')
       if (!navigator.mediaDevices?.getUserMedia) throw new Error('unsupported')
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: 'user', width: { ideal: 320 }, height: { ideal: 240 } },
@@ -99,11 +131,20 @@ export function useCameraProctor(active: boolean, onTerminated: (t: ProctorTermi
       })
       setCameraState('on')
       record('camera-started')
-    } catch {
+    } catch (err) {
       setCameraState('denied')
+      // Refresh the permission state so the UI can tell "denied permanently" (fix via the
+      // address-bar icon) from a transient failure.
+      const name = err instanceof Error ? err.message : ''
+      if (name === 'insecure-context') setPermissionState('denied')
+      else if (navigator.permissions?.query) {
+        navigator.permissions.query({ name: 'camera' as PermissionName }).then((ps) => setPermissionState(ps.state as CameraPermissionState)).catch(() => {})
+      }
       record('camera-denied')
     }
   }, [cameraState, record])
+  const startCameraRef = useRef(startCamera)
+  startCameraRef.current = startCamera
 
   // Periodic person-presence check while the assessment is active.
   useEffect(() => {
@@ -175,5 +216,5 @@ export function useCameraProctor(active: boolean, onTerminated: (t: ProctorTermi
   // Stop the camera when the component unmounts.
   useEffect(() => () => stopCamera(), [stopCamera])
 
-  return { cameraState, terminated, startCamera, videoRef, eventsRef }
+  return { cameraState, permissionState, secureContext, terminated, startCamera, videoRef, eventsRef }
 }

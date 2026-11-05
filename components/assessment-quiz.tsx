@@ -55,7 +55,7 @@ export function AssessmentQuiz({ category, jobId, onPass }: { category: JobCateg
 
   // Camera proctoring: the questions are not even fetched until the camera is on, and the quiz
   // closes automatically if no person is detected in front of it.
-  const { cameraState, permissionState, secureContext, terminated, startCamera, videoRef, eventsRef } = useCameraProctor(
+  const { cameraState, permissionState, secureContext, lastError, terminated, startCamera, videoRef, eventsRef } = useCameraProctor(
     !submitted && !proctorTerminated,
     (t) => {
       setProctorTerminated(t)
@@ -172,11 +172,27 @@ export function AssessmentQuiz({ category, jobId, onPass }: { category: JobCateg
         <video ref={videoRef} autoPlay playsInline muted className={cameraState === 'requesting' ? 'hidden' : 'h-32 w-40 rounded-lg border border-border bg-black object-cover'} aria-label="Camera preview" />
         {cameraState === 'denied' ? (
           <div className="flex flex-col items-center gap-2">
-            {!secureContext ? (
+            {!secureContext || lastError === 'SecurityError' || lastError === 'insecure-context' ? (
               <p className="flex items-center gap-1.5 text-sm text-destructive">
                 <CameraOff className="size-4" />
                 Camera needs a secure (HTTPS) page. Open AfterWorks over https:// and try again.
               </p>
+            ) : lastError === 'NotReadableError' ? (
+              <p className="max-w-md text-sm text-destructive">
+                The camera is in use by another app (Zoom, Meet, Teams…) or blocked by the operating system.
+                Close the other app — on Windows check Settings → Privacy → Camera — then try again.
+              </p>
+            ) : lastError === 'NotFoundError' || lastError === 'OverconstrainedError' ? (
+              <p className="max-w-md text-sm text-destructive">
+                No camera was found on this device. Connect a webcam and try again.
+              </p>
+            ) : permissionState === 'granted' ? (
+              <>
+                <p className="max-w-md text-sm text-destructive">
+                  Camera is allowed for <span className="font-mono">{typeof window !== 'undefined' ? window.location.hostname : 'this site'}</span>, but the page was loaded before you allowed it.
+                </p>
+                <Button size="sm" variant="outline" onClick={() => window.location.reload()}>Reload page & retry</Button>
+              </>
             ) : permissionState === 'denied' ? (
               <>
                 <p className="flex items-center gap-1.5 text-sm text-destructive">
@@ -184,8 +200,9 @@ export function AssessmentQuiz({ category, jobId, onPass }: { category: JobCateg
                   Camera is blocked for this site, so the assessment cannot open — and Chrome will not show its popup again until you allow it.
                 </p>
                 <p className="max-w-md text-xs leading-relaxed text-muted-foreground">
-                  Click the <strong className="font-semibold">lock / tune icon</strong> in the address bar → <em>Site settings</em> → <em>Camera</em> → <em>Allow</em> (or open
-                  <span className="font-mono"> chrome://settings/content/camera </span> and allow this site). The assessment starts automatically once allowed.
+                  Click the <strong className="font-semibold">lock / tune icon</strong> in the address bar → <em>Site settings</em> → <em>Camera</em> → <em>Allow</em> for{' '}
+                  <span className="font-mono">{typeof window !== 'undefined' ? window.location.hostname : 'this site'}</span> (or open
+                  <span className="font-mono"> chrome://settings/content/camera </span> and move the site to Allowed). The assessment starts automatically once allowed; if you changed it in another tab, reload the page.
                 </p>
                 <Button size="sm" variant="outline" onClick={startCamera}>Try again</Button>
               </>
@@ -193,7 +210,7 @@ export function AssessmentQuiz({ category, jobId, onPass }: { category: JobCateg
               <>
                 <p className="flex items-center gap-1.5 text-sm text-destructive">
                   <CameraOff className="size-4" />
-                  Camera access was denied, so the assessment cannot open. Allow camera access in your browser and try again.
+                  The camera prompt was dismissed, so the assessment cannot open. Click below — Chrome will ask again.
                 </p>
                 <Button size="sm" variant="outline" onClick={startCamera}>Try again</Button>
               </>

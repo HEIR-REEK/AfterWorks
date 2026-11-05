@@ -55,6 +55,9 @@ export function useCameraProctor(active: boolean, onTerminated: (t: ProctorTermi
   // with no popup — which is exactly the "denied, cannot open" confusion.
   const [permissionState, setPermissionState] = useState<CameraPermissionState>('unknown')
   const [secureContext, setSecureContext] = useState(true)
+  // DOMException name from the last getUserMedia failure (NotAllowedError, NotReadableError,
+  // NotFoundError, SecurityError, …) so the gate can explain the real cause.
+  const [lastError, setLastError] = useState<string | null>(null)
   const [terminated, setTerminated] = useState<ProctorTermination | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const videoRef = useRef<HTMLVideoElement | null>(null)
@@ -133,10 +136,11 @@ export function useCameraProctor(active: boolean, onTerminated: (t: ProctorTermi
       record('camera-started')
     } catch (err) {
       setCameraState('denied')
+      const name = err instanceof DOMException ? err.name : err instanceof Error ? err.message : 'unknown'
+      setLastError(name)
       // Refresh the permission state so the UI can tell "denied permanently" (fix via the
       // address-bar icon) from a transient failure.
-      const name = err instanceof Error ? err.message : ''
-      if (name === 'insecure-context') setPermissionState('denied')
+      if (name === 'insecure-context' || name === 'SecurityError') setPermissionState('denied')
       else if (navigator.permissions?.query) {
         navigator.permissions.query({ name: 'camera' as PermissionName }).then((ps) => setPermissionState(ps.state as CameraPermissionState)).catch(() => {})
       }
@@ -216,5 +220,5 @@ export function useCameraProctor(active: boolean, onTerminated: (t: ProctorTermi
   // Stop the camera when the component unmounts.
   useEffect(() => () => stopCamera(), [stopCamera])
 
-  return { cameraState, permissionState, secureContext, terminated, startCamera, videoRef, eventsRef }
+  return { cameraState, permissionState, secureContext, lastError, terminated, startCamera, videoRef, eventsRef }
 }

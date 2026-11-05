@@ -606,7 +606,7 @@ function UsersPageInner() {
                   </Button>
                 )}
                 {isOwner && (
-                  <Button size="sm" variant="outline" className="gap-1.5" disabled={busy} onClick={() => setConfirm({ action: 'role', title: selected.role === 'admin' ? 'Revoke staff access' : 'Grant staff access', description: selected.role === 'admin' ? 'Removes the staff label and the staff account, so this person can no longer sign in to the staff panel. Role changes are immediate, always audited, and cannot be applied to your own account.' : 'You allocate a password for this member; they sign in to the staff panel at /staff with this email and that password. Their worker-app sign-in is not used. Role changes are immediate, always audited, and cannot be applied to your own account.', confirmLabel: selected.role === 'admin' ? 'Revoke role' : 'Grant role', tone: selected.role === 'admin' ? 'destructive' : 'default' })}>
+                  <Button size="sm" variant="outline" className="gap-1.5" disabled={busy} onClick={() => setConfirm({ action: 'role', title: selected.role === 'admin' ? 'Revoke staff access' : 'Grant staff access', description: selected.role === 'admin' ? 'Removes the staff label and the staff account, so this person can no longer sign in to the console. Role changes are immediate, always audited, and cannot be applied to your own account.' : 'You allocate a password for this member; they sign in to the console at /admin with this email and that password. Their worker-app sign-in is not used. Role changes are immediate, always audited, and cannot be applied to your own account.', confirmLabel: selected.role === 'admin' ? 'Revoke role' : 'Grant role', tone: selected.role === 'admin' ? 'destructive' : 'default' })}>
                     <ShieldCheck className="size-3.5" />
                     {selected.role === 'admin' ? 'Revoke staff' : 'Make staff'}
                   </Button>
@@ -896,7 +896,7 @@ function UsersPageInner() {
             <div className="mt-3 flex flex-col gap-3">
               <Field
                 label={`Staff panel password for ${selected.email || 'this member'}`}
-                hint="You allocate it — it opens the staff panel at /staff only, stored as a scrypt hash, never shown again. Their worker-app sign-in (including Google) is untouched and does not open the staff panel."
+                hint="You allocate it — it opens the console at /admin only, stored as a scrypt hash, never shown again. Their worker-app sign-in (including Google) is untouched and does not open the console."
               >
                 <input
                   id="role-passcode"

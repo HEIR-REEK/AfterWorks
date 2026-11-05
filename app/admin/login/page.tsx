@@ -18,7 +18,6 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { authenticateAdminSession, useAdminCapabilities, useAdminSession } from '@/lib/admin'
-import { consolePanelFromLocation } from '@/lib/client-api'
 import { safeAdminReturnPath } from '@/lib/security-core'
 import { useMaintenance } from '@/components/maintenance-provider'
 import { site } from '@/lib/site'
@@ -76,14 +75,7 @@ export default function AdminLoginPage() {
       setSuccess(true)
       setPasscode('')
       await refresh()
-      setTimeout(() => {
-        // On the staff panel, land on the panel's own URLs (/staff/...), not the internal /admin
-        // routes — those belong to the admin panel's session cookie.
-        const panel = consolePanelFromLocation()
-        let dest = nextPath ?? (panel === 'staff' ? '/staff' : '/admin')
-        if (panel === 'staff' && dest.startsWith('/admin')) dest = `/staff${dest.slice('/admin'.length) || ''}`
-        router.replace(dest)
-      }, 350)
+      setTimeout(() => router.replace(nextPath ?? '/admin'), 350)
       return
     }
 
@@ -109,11 +101,11 @@ export default function AdminLoginPage() {
           </span>
           <h1 className="text-2xl font-semibold tracking-tight text-balance sm:text-3xl">Administrator sign-in</h1>
           <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
-            Main administrators and console staff, verified server-side. Two separate panels:
-            the <strong className="font-semibold">admin panel</strong> at <span className="font-mono">/admin</span> is
-            for the main administrator (master passcode); the <strong className="font-semibold">staff panel</strong> at{' '}
-            <span className="font-mono">/staff</span> is for staff, using the password the owner allocated
-            when making you staff. Worker-app credentials — including Google sign-in — never open either panel.
+            Main administrators and console staff, verified server-side. One console at{' '}
+            <span className="font-mono">/admin</span>: the main administrator signs in with the master
+            passcode; staff sign in with the password the owner allocated when making you staff, and
+            see only the sections their role allows. Worker-app credentials — including Google
+            sign-in — never open the console.
           </p>
           {nextPath && (
             <p className="mt-2 rounded-lg border border-border bg-muted/40 px-3 py-1.5 font-mono text-[11px] text-muted-foreground">

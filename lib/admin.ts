@@ -15,7 +15,7 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import { apiFetch, consolePanelFromLocation, describeError } from '@/lib/client-api'
+import { apiFetch, describeError } from '@/lib/client-api'
 import {
   adminUserDetailFromDoc,
   adminUserRowsFromPayload,
@@ -164,7 +164,7 @@ export async function authenticateAdminSession(
   try {
     const data = await apiFetch<{ ok: true; email: string; role?: AdminRole; session: { expiresAt: string } }>('/api/admin/auth', {
       method: 'POST',
-      body: { email: cleanEmail, password: cleanPass, panel: consolePanelFromLocation() },
+      body: { email: cleanEmail, password: cleanPass },
       timeoutMs: 25_000,
     })
     publish({ status: 'authorized', email: data.email, role: data.role, via: 'session-cookie', expiresAt: data.session.expiresAt })

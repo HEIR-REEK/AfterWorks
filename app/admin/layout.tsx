@@ -26,7 +26,6 @@ import { Button } from '@/components/ui/button'
 import { StatusBadge } from '@/components/status-badge'
 import { cn } from '@/lib/utils'
 import { useAdminSession } from '@/lib/admin'
-import { consolePanelFromLocation } from '@/lib/client-api'
 import { useMaintenance } from '@/components/maintenance-provider'
 import { BrandMark } from '@/components/brand'
 import { AdminIdleGuard } from '@/components/admin-idle-guard'
@@ -71,12 +70,6 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     return () => clearInterval(id)
   }, [session.status, session.remainingSeconds])
 
-  // Links inside the console must stay on the panel the operator signed in to: /staff/... on the
-  // staff panel, /admin/... on the admin panel (both are served by the same routes; the middleware
-  // maps them, and each panel only honours its own session cookie).
-  const panelBase = consolePanelFromLocation() === 'staff' ? '/staff' : '/admin'
-  const panelPath = (href: string) => (href === '/admin' ? panelBase : `${panelBase}${href.slice('/admin'.length)}`)
-
   // Owner-only sections are hidden from the staff nav, but a typed URL must not reach them either:
   // the APIs already refuse staff, this stops the page itself from rendering. Staff keep the
   // operations desk (overview, users & KYC, applications, withdrawals).
@@ -85,10 +78,10 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   )
   const blockedForStaff = session.role !== 'owner' && ownerOnlyPath
   useEffect(() => {
-    if (blockedForStaff) router.replace(panelBase)
-  }, [blockedForStaff, router, panelBase])
+    if (blockedForStaff) router.replace('/admin')
+  }, [blockedForStaff, router])
 
-  const isLoginPage = pathname === '/admin/login' || pathname === '/staff/login'
+  const isLoginPage = pathname === '/admin/login'
 
   if (isLoginPage) return <>{children}</>
 
@@ -113,7 +106,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         <p className="max-w-sm text-xs leading-relaxed text-muted-foreground">
           This section is restricted to the main administrator. Staff accounts work from the operations desk.
         </p>
-        <Button size="sm" render={<Link href={panelBase} />}>Back to overview</Button>
+        <Button size="sm" render={<Link href="/admin" />}>Back to overview</Button>
       </div>
     )
   }
@@ -126,7 +119,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       {/* Console header — same visual language as the worker shell, one notch denser. */}
       <header className="sticky top-0 z-40 border-b border-border bg-background/90 backdrop-blur">
         <div className="mx-auto flex h-14 w-full max-w-7xl items-center gap-2 px-3 sm:gap-3 sm:px-6">
-          <Link href={panelBase} className="flex items-center gap-2.5">
+          <Link href="/admin" className="flex items-center gap-2.5">
             <BrandMark size={32} />
             <span className="text-sm font-semibold tracking-tight">
               <span className="hidden min-[390px]:inline">AfterWorks</span>
@@ -206,12 +199,11 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         <nav className="no-scrollbar -mx-1 flex gap-1.5 overflow-x-auto border-b border-border px-1 pb-2.5 sm:gap-2 md:sticky md:top-[4.5rem] md:mx-0 md:h-[calc(100dvh-5.5rem)] md:w-56 md:shrink-0 md:flex-col md:overflow-visible md:border-b-0 md:border-r md:px-0 md:pb-0 md:pr-4" aria-label="Console sections">
           {adminNavItems.filter((item) => !item.ownerOnly || session.role === 'owner').map((item) => {
             const Icon = item.icon
-            const href = panelPath(item.href)
-            const active = item.exact ? pathname === href || pathname === item.href : pathname.startsWith(href) || pathname.startsWith(item.href)
+            const active = item.exact ? pathname === item.href : pathname.startsWith(item.href)
             return (
               <Link
                 key={item.href}
-                href={href}
+                href={item.href}
                 aria-current={active ? 'page' : undefined}
                 className={cn(
                   'inline-flex min-h-10 shrink-0 items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-semibold transition-all sm:text-sm md:min-h-0 md:w-full md:justify-start md:px-3',

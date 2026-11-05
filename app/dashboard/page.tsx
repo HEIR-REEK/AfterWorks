@@ -18,6 +18,7 @@ import {
   Sparkles,
   Star,
   Wallet as WalletIcon,
+  CheckCircle2,
 } from 'lucide-react'
 import { useAfterWorks } from '@/components/afterworks-provider'
 import { JobCard } from '@/components/job-card'
@@ -246,9 +247,15 @@ export default function DashboardPage() {
             </div>
           </div>
           {welcomeRewardPaid ? (
-            <Button render={<Link href="/wallet" />} size="sm" variant="outline">
-              View in wallet
-            </Button>
+            <span className="flex items-center gap-2">
+              <Button size="sm" variant="outline" disabled className="gap-1.5">
+                <CheckCircle2 className="size-3.5" />
+                Already claimed
+              </Button>
+              <Button render={<Link href="/wallet" />} size="sm" variant="ghost">
+                View in wallet
+              </Button>
+            </span>
           ) : onboarding.completion.complete ? (
             <Button
               size="sm"

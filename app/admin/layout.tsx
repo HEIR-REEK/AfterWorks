@@ -6,6 +6,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import {
   Activity,
   ArrowUpRight,
+  Bell,
   Banknote,
   Briefcase,
   Globe2,
@@ -56,8 +57,31 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const { view } = useMaintenance()
   const [mounted, setMounted] = useState(false)
   const [remaining, setRemaining] = useState<number | null>(null)
+  const [unreadNotices, setUnreadNotices] = useState(0)
 
   useEffect(() => setMounted(true), [])
+
+  // Poll the console notification badge (verification requests etc.) — no email/SMS needed.
+  useEffect(() => {
+    if (session.status !== 'authorized') return
+    let cancelled = false
+    const load = async () => {
+      try {
+        const res = await fetch('/api/admin/notifications?limit=1', { cache: 'no-store' })
+        if (!res.ok) return
+        const data = (await res.json()) as { unread?: number }
+        if (!cancelled) setUnreadNotices(Number(data.unread) || 0)
+      } catch {
+        /* badge is best-effort */
+      }
+    }
+    void load()
+    const id = setInterval(load, 30_000)
+    return () => {
+      cancelled = true
+      clearInterval(id)
+    }
+  }, [session.status])
 
   // Live countdown so an operator is not surprised by a mid-task logout.
   useEffect(() => {
@@ -159,6 +183,21 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             <span className="hidden max-w-[16ch] truncate text-xs font-medium text-muted-foreground md:inline" title={session.email}>
               {session.email}
             </span>
+            <Button
+              render={<Link href="/admin/notifications" />}
+              variant="ghost"
+              size="sm"
+              aria-label={`Console notifications${unreadNotices > 0 ? ` — ${unreadNotices} unread` : ''}`}
+              className="relative gap-1.5 px-2 text-muted-foreground sm:px-3"
+            >
+              <Bell className="size-3.5" />
+              {unreadNotices > 0 && (
+                <span className="absolute -right-0.5 -top-0.5 flex size-4 items-center justify-center rounded-full bg-destructive text-[9px] font-bold text-destructive-foreground">
+                  {unreadNotices > 9 ? '9+' : unreadNotices}
+                </span>
+              )}
+              <span className="hidden lg:inline">Alerts</span>
+            </Button>
             <Button
               render={<Link href="/dashboard" />}
               variant="ghost"

@@ -343,7 +343,12 @@ function ProfilePageContent() {
                     : `Finish every field to receive the ${formatUsd(payouts.welcomeBonus.amountUsd)} welcome reward.`}
               </p>
             </div>
-            {onboarding.completion.complete ? (
+            {payouts.welcomeBonus.granted ? (
+              <Button size="sm" variant="outline" disabled className="shrink-0 gap-1.5">
+                <CheckCircle2 className="size-3.5" />
+                Already claimed
+              </Button>
+            ) : onboarding.completion.complete ? (
               <Button
                 size="sm"
                 className="shrink-0 gap-1.5"

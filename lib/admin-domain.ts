@@ -335,6 +335,8 @@ export function adminUserRowFromDoc(
     kycStatus: asText(doc.kycStatus).trim() || undefined,
     kycRequestedAt: coerceIsoTimestamp(doc.kycRequestedAt) ?? undefined,
     role: doc.isAdmin === true ? 'admin' : asText(doc.role).trim() || 'user',
+    // Set by the users API for emails on the ADMIN_EMAILS roster — shown as Admin, not Staff.
+    isOwner: doc.isOwner === true ? true : undefined,
     qualityScore: asCount(doc.qualityScore, 100),
     jobsCompleted: asCount(doc.jobsCompleted, 0),
     memberSince: asText(doc.memberSince).trim(),

@@ -16,6 +16,7 @@
 import { createHmac, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto'
 import {
   ADMIN_SESSION_COOKIE,
+  STAFF_SESSION_COOKIE,
   LEGACY_ADMIN_SESSION_COOKIES,
   MAINTENANCE_BYPASS_COOKIE,
   env,
@@ -207,6 +208,7 @@ export function passcodeStrength(input: string): { score: 0 | 1 | 2 | 3 | 4; iss
 // rather than an implementation detail of this file.
 
 export const ADMIN_COOKIE = ADMIN_SESSION_COOKIE
+export const STAFF_COOKIE = STAFF_SESSION_COOKIE
 export const BYPASS_COOKIE = MAINTENANCE_BYPASS_COOKIE
 export const LEGACY_ADMIN_COOKIES: string[] = [...LEGACY_ADMIN_SESSION_COOKIES]
 

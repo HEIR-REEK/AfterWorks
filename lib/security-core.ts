@@ -326,6 +326,13 @@ export const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 
 /** The console session. HttpOnly + SameSite=strict; the only carrier of console privilege. */
 export const ADMIN_SESSION_COOKIE = 'aw_admin_session'
+/**
+ * The staff panel's own session cookie. The staff panel is reachable at `/staff` on the app host
+ * (and on the optional staff subdomain), so host separation alone is not enough — each panel gets
+ * its own cookie name, and the guards only honour the cookie that belongs to the panel being
+ * addressed. Same-site, HttpOnly, host-only, exactly like the admin cookie.
+ */
+export const STAFF_SESSION_COOKIE = 'aw_staff_session'
 /** Maintenance passage only. It never unlocks the console (`lib/session-token` types the claim). */
 export const MAINTENANCE_BYPASS_COOKIE = 'aw_ops_bypass'
 /** Cookies written by the pre-hardening client, cleared on sign-in and refused for privilege. */
@@ -357,18 +364,43 @@ export function consoleHostKind(hostHeader: string | null | undefined): 'staff' 
   return 'admin'
 }
 
-/** The staff-panel origin hint shown to a staff member who lands on the admin panel. */
+/** Is this URL path inside the staff panel (`/staff`, `/staff/...`)? */
+export function isStaffPanelPath(pathname: string): boolean {
+  const path = String(pathname ?? '').split(/[?#]/)[0]
+  return path === '/staff' || path.startsWith('/staff/')
+}
+
+/**
+ * Which console panel a request belongs to. The staff panel is served at `/staff` on the app host
+ * and at the root of the optional staff subdomain; the admin panel is `/admin` on the app host.
+ * API routes carry the panel in the `x-console-panel` header (set by the console client from the
+ * page it is running on); page requests are classified from host + path.
+ */
+export function requestConsolePanel(
+  hostHeader: string | null | undefined,
+  pathname: string,
+  headerPanel?: string | null,
+): 'staff' | 'admin' {
+  if (consoleHostKind(hostHeader) === 'staff') return 'staff'
+  if (isStaffPanelPath(pathname)) return 'staff'
+  if (headerPanel === 'staff') return 'staff'
+  return 'admin'
+}
+
+/** The staff-panel URL shown to a staff member who lands on the admin panel: `https://<host>/staff`. */
 export function staffPanelHint(hostHeader: string | null | undefined, appUrlEnv?: string): string {
   const sub = String(process.env.STAFF_SUBDOMAIN ?? 'staff').trim().toLowerCase() || 'staff'
-  const host = String(hostHeader ?? '').toLowerCase().split(':')[0].trim()
-  if (host.startsWith(`${sub}.`)) return host
-  if (host) return `${sub}.${host}`
-  const fallback = String(appUrlEnv ?? process.env.NEXT_PUBLIC_APP_URL ?? process.env.APP_URL ?? '').trim()
-  try {
-    return `${sub}.${new URL(fallback.startsWith('http') ? fallback : `https://${fallback}`).host}`
-  } catch {
-    return `${sub}.<your-app-domain>`
+  let host = String(hostHeader ?? '').toLowerCase().split(':')[0].trim()
+  if (host.startsWith(`${sub}.`)) host = host.slice(sub.length + 1)
+  if (!host) {
+    const fallback = String(appUrlEnv ?? process.env.NEXT_PUBLIC_APP_URL ?? process.env.APP_URL ?? '').trim()
+    try {
+      host = new URL(fallback.startsWith('http') ? fallback : `https://${fallback}`).host
+    } catch {
+      host = '<your-app-domain>'
+    }
   }
+  return `https://${host}/staff`
 }
 
 export function isAdminConsolePath(pathname: string): boolean {

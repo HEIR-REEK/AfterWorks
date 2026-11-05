@@ -3773,6 +3773,93 @@ export async function listNotifications(uid: string, limit = 20): Promise<Notifi
   }
 }
 
+export type AdminNotificationRow = {
+  id: string
+  title: string
+  body: string
+  tone: string
+  link: string
+  actorUid?: string
+  actorEmail?: string
+  read: boolean
+  createdAt: string
+}
+
+/**
+ * Console-wide in-app notifications (server-only writes; rules default-deny client access).
+ * Used for "a member requested verification" and similar events that staff must see without
+ * email/SMS. `read` is console-global: any owner/staff marking it read clears the badge.
+ */
+export async function recordAdminNotification(input: {
+  title: string
+  body: string
+  link?: string
+  tone?: string
+  actorUid?: string
+  actorEmail?: string
+}): Promise<void> {
+  const db = adminDb()
+  await db.collection('admin_notifications').add({
+    title: String(input.title ?? '').slice(0, 140),
+    body: String(input.body ?? '').slice(0, 500),
+    link: String(input.link ?? '').slice(0, 200),
+    tone: String(input.tone ?? 'info').slice(0, 20),
+    actorUid: String(input.actorUid ?? '').slice(0, 128),
+    actorEmail: String(input.actorEmail ?? '').slice(0, 200),
+    read: false,
+    createdAt: new Date().toISOString(),
+  })
+}
+
+export async function listAdminNotifications(limit = 30): Promise<AdminNotificationRow[]> {
+  const db = dbOrNull()
+  if (!db) return []
+  const cap = Math.min(100, Math.max(1, limit))
+  try {
+    const snap = await db.collection('admin_notifications').orderBy('createdAt', 'desc').limit(cap).get()
+    return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<AdminNotificationRow, 'id'>) }))
+  } catch (err) {
+    console.warn('[FirestoreAdmin] listAdminNotifications fell back to unordered read:', err)
+    try {
+      const snap = await db.collection('admin_notifications').limit(cap).get()
+      const rows = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<AdminNotificationRow, 'id'>) }))
+      return rows.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
+    } catch {
+      return []
+    }
+  }
+}
+
+export async function countUnreadAdminNotifications(): Promise<number> {
+  const db = dbOrNull()
+  if (!db) return 0
+  try {
+    const snap = await db.collection('admin_notifications').where('read', '==', false).limit(100).get()
+    return snap.size
+  } catch (err) {
+    console.warn('[FirestoreAdmin] countUnreadAdminNotifications failed:', err)
+    return 0
+  }
+}
+
+export async function markAdminNotificationsRead(ids?: string[]): Promise<number> {
+  const db = adminDb()
+  const clean = Array.isArray(ids) ? ids.map((v) => String(v).slice(0, 64)).filter(Boolean).slice(0, 100) : null
+  const snap = clean
+    ? await db.collection('admin_notifications').where(FieldPath.documentId(), 'in', clean).get()
+    : await db.collection('admin_notifications').where('read', '==', false).limit(100).get()
+  const batch = db.batch()
+  let n = 0
+  snap.docs.forEach((d) => {
+    if (d.get('read') !== true) {
+      batch.update(d.ref, { read: true })
+      n += 1
+    }
+  })
+  if (n > 0) await batch.commit()
+  return n
+}
+
 export type NotificationRow = {
   id: string
   uid: string

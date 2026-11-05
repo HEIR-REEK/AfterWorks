@@ -22,7 +22,7 @@ export const dynamic = 'force-dynamic'
 
 import { after, NextRequest } from 'next/server'
 import { consumeBucket, fail, json, rateLimit, requireUser } from '@/lib/guards'
-import { requestKycReview, getUserProfile } from '@/lib/firestore-admin'
+import { requestKycReview, getUserProfile, recordAdminNotification } from '@/lib/firestore-admin'
 import { profileCompletion, type ProfileCompletion } from '@/lib/profile-completion'
 
 export async function POST(req: NextRequest) {
@@ -58,6 +58,14 @@ export async function POST(req: NextRequest) {
     try {
       const { holdKycRequest } = await import('@/lib/firestore-admin')
       heldAt = (await holdKycRequest(guard.value.uid, completion.missingLabels)).heldAt
+      await recordAdminNotification({
+        title: 'Verification request held — profile incomplete',
+        body: `${guard.value.email ?? guard.value.uid} asked for review but is missing: ${completion.missingLabels.join(', ')}.`,
+        link: '/admin/users',
+        tone: 'warning',
+        actorUid: guard.value.uid,
+        actorEmail: guard.value.email ?? undefined,
+      })
     } catch (err) {
       console.warn('[kyc] could not record the hold marker:', err instanceof Error ? err.message : err)
     }
@@ -125,6 +133,19 @@ export async function POST(req: NextRequest) {
     // Sent after the response: the recorded request is the source of truth, so a slow or refused
     // email must never turn a successful request into an error the member has to act on.
     after(async () => {
+      try {
+        const profile = await getUserProfile(guard.value.uid)
+        await recordAdminNotification({
+          title: 'New verification request',
+          body: `${profile?.name ? String(profile.name) + ' — ' : ''}${guard.value.email ?? guard.value.uid} requested an identity review.`,
+          link: '/admin/users',
+          tone: 'info',
+          actorUid: guard.value.uid,
+          actorEmail: guard.value.email ?? undefined,
+        })
+      } catch (err) {
+        console.warn('[kyc] admin notification failed:', err instanceof Error ? err.message : err)
+      }
       try {
         const { sendEmail, isResendConfigured, kycRequestReceivedEmailSubject, kycRequestReceivedEmailText, kycRequestReceivedEmailHtml } =
           await import('@/lib/email')

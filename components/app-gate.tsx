@@ -63,7 +63,9 @@ function Gate({ children }: { children: React.ReactNode }) {
   const [redirectArmed, setRedirectArmed] = useState(false)
 
   const isPublic = useMemo(() => isPublicRoute(pathname), [pathname])
-  const isAdminRoute = pathname.startsWith('/admin') || pathname.startsWith('/api/admin')
+  // /admin and /staff are both console panels (the staff panel maps onto the same routes); the
+  // member gate must never treat them as worker pages and redirect them to /sign-in.
+  const isAdminRoute = pathname.startsWith('/admin') || pathname.startsWith('/staff') || pathname.startsWith('/api/admin')
   // Nothing below the gate can show a real account when there is no Firebase, and the console brings
   // its own (server-side) session. Public routes still render — they explain the situation themselves.
   const unconfigured = configured === false

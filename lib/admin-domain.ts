@@ -238,6 +238,15 @@ export type AdminUserDetailModel = AdminUserRowModel & {
   signupBonusGranted?: boolean
   welcomeBonusPending?: boolean
   signupBonusGrantedAt?: string | null
+  /** Latest camera-proctoring event for this member's assessments (server-recorded). */
+  proctoring?: {
+    terminated?: boolean
+    reason?: string
+    at?: string
+    eventCount?: number
+    kinds?: string[]
+    jobId?: string
+  } | null
   kycProvider?: string
   kycLevel?: string
   kycRejectedAt?: string | null
@@ -415,6 +424,18 @@ export function adminUserDetailFromDoc(raw: unknown): AdminUserDetailModel {
   const doc = asRecord(raw)
   const row = adminUserRowFromDoc(asText(doc.uid) || asText(doc.id), doc)
   const detail: AdminUserDetailModel = { ...row }
+
+  const proctoring = asRecord(doc.proctoring)
+  if (proctoring) {
+    detail.proctoring = {
+      terminated: proctoring.terminated === true,
+      reason: asText(proctoring.reason) || undefined,
+      at: asText(proctoring.at) || undefined,
+      eventCount: asCount(proctoring.eventCount, 0),
+      kinds: Array.isArray(proctoring.kinds) ? proctoring.kinds.map((k) => asText(k)).filter(Boolean).slice(0, 12) : [],
+      jobId: asText(proctoring.jobId) || undefined,
+    }
+  }
 
   const phone = asText(doc.phone).trim()
   if (phone) detail.phone = phone

@@ -469,6 +469,11 @@ function UsersPageInner() {
                 <div className="flex items-center gap-2">
                   <h2 className="truncate text-base font-semibold tracking-tight">{selected.name || 'Unnamed member'}</h2>
                   {selected.isOwner && <StatusBadge tone="info"><ShieldCheck className="size-3" />Admin</StatusBadge>}
+                  {selected.proctoring?.terminated === true && (
+                    <StatusBadge tone="warning" title={`Latest assessment proctoring event: terminated (${selected.proctoring.reason || 'no person detected'}) · ${selected.proctoring.eventCount ?? 0} checks · ${selected.proctoring.kinds?.join(', ') || ''}`}>
+                      Proctor: closed
+                    </StatusBadge>
+                  )}
                   {!selected.isOwner && selected.role === 'admin' && <StatusBadge tone="info">Staff</StatusBadge>}
                   {selected.profileIncomplete && <StatusBadge tone="warning">Incomplete record</StatusBadge>}
                 </div>

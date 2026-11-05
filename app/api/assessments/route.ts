@@ -45,7 +45,7 @@ export async function POST(req: NextRequest) {
   const budget = consumeBucket('assessment-score', 20, 60_000, guard.value.uid)
   if (!budget.ok) return fail(429, 'Too many assessment submissions. Please wait a moment.', { headers: { 'Retry-After': String(budget.retryAfterSec) } })
 
-  const parsed = await readJsonBody<{ jobId?: unknown; answers?: unknown }>(req, 16_000)
+  const parsed = await readJsonBody<{ jobId?: unknown; answers?: unknown; proctoring?: unknown }>(req, 16_000)
   if (!parsed.ok) return fail(parsed.error.includes('large') ? 413 : 400, parsed.error, { code: 'bad_request' })
   const jobId = sanitizeLine(parsed.data.jobId, 128)
   if (!jobId) return fail(400, 'A job id is required.', { code: 'missing_job' })
@@ -76,7 +76,31 @@ export async function POST(req: NextRequest) {
         ...(question.explanation ? { explanation: question.explanation } : {}),
       }
     })
-    const passed = score >= source.passMark
+    // Camera-proctoring outcome, reported by the client (counts/labels only, never images). A
+    // proctor-terminated attempt can never record a pass, whatever its answers were.
+    const proctoring = (parsed.data.proctoring ?? {}) as {
+      terminated?: unknown
+      reason?: unknown
+      events?: unknown
+    }
+    const proctorTerminated = proctoring.terminated === true
+    const proctorEvents = Array.isArray(proctoring.events)
+      ? proctoring.events
+          .slice(0, 200)
+          .map((e) => {
+            const rec = (e ?? {}) as Record<string, unknown>
+            return { at: String(rec.at ?? '').slice(0, 40), kind: String(rec.kind ?? '').slice(0, 60) }
+          })
+      : []
+    void firestore
+      .recordProctorEvent(guard.value.uid, jobId, {
+        terminated: proctorTerminated,
+        reason: String(proctoring.reason ?? '').slice(0, 120),
+        events: proctorEvents,
+      })
+      .catch((err) => console.warn('[assessments] proctor event write failed:', err))
+
+    const passed = !proctorTerminated && score >= source.passMark
     if (passed) {
       // The marker is written server-side; the client never gets to assert its own pass.
       await firestore.recordAssessmentPass(guard.value.uid, jobId)
@@ -84,6 +108,7 @@ export async function POST(req: NextRequest) {
     return json({
       ok: true,
       passed,
+      proctorTerminated,
       score,
       total: source.questions.length,
       passMark: source.passMark,

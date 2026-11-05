@@ -6,7 +6,8 @@ import type { JobCategory } from '@/lib/afterworks-data'
 import { authedFetch, describeError } from '@/lib/client-api'
 import { TrainingFigure } from '@/components/training-figure'
 import { NoCopyPaste } from '@/components/no-copy-paste'
-import { CheckCircle2, Circle, AlertCircle, BookOpen } from 'lucide-react'
+import { useCameraProctor, type ProctorTermination } from '@/components/assessment-proctor'
+import { CheckCircle2, Circle, AlertCircle, BookOpen, Camera, CameraOff, ShieldAlert } from 'lucide-react'
 
 type QuizQuestion = {
   id: number
@@ -31,6 +32,7 @@ type ScoreResponse = {
   total: number
   passMark: number
   review: ReviewRow[]
+  proctorTerminated?: boolean
 }
 
 export function AssessmentQuiz({ category, jobId, onPass }: { category: JobCategory; jobId: string; onPass: () => void }) {
@@ -47,12 +49,28 @@ export function AssessmentQuiz({ category, jobId, onPass }: { category: JobCateg
   const [loadError, setLoadError] = useState<string | null>(null)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [active, setActive] = useState(0)
+  const [proctorTerminated, setProctorTerminated] = useState<ProctorTermination | null>(null)
   const questionRef = useRef<HTMLDivElement | null>(null)
   const assessmentRef = useRef<HTMLDivElement | null>(null)
+
+  // Camera proctoring: the questions are not even fetched until the camera is on, and the quiz
+  // closes automatically if no person is detected in front of it.
+  const { cameraState, terminated, startCamera, videoRef, eventsRef } = useCameraProctor(
+    !submitted && !proctorTerminated,
+    (t) => {
+      setProctorTerminated(t)
+      // Record the termination server-side (no pass can be recorded for a terminated attempt).
+      void authedFetch('/api/assessments', {
+        method: 'POST',
+        body: { jobId, answers: {}, proctoring: { terminated: true, reason: t.reason, events: t.events } },
+      }).catch(() => {})
+    },
+  )
 
   // Questions come from the server *without* the answer key. There is no local passing flag to
   // edit: a pass exists only after POST /api/assessments wrote it to the profile.
   useEffect(() => {
+    if (cameraState !== 'on') return // questions load only after the camera is running
     let cancelled = false
     setLoading(true)
     setLoadError(null)
@@ -83,7 +101,7 @@ export function AssessmentQuiz({ category, jobId, onPass }: { category: JobCateg
     return () => {
       cancelled = true
     }
-  }, [jobId])
+  }, [jobId, cameraState])
 
   const handleSelect = (qId: number, oIdx: number) => {
     if (submitted || submitting) return
@@ -97,7 +115,7 @@ export function AssessmentQuiz({ category, jobId, onPass }: { category: JobCateg
     try {
       const result = await authedFetch<ScoreResponse>('/api/assessments', {
         method: 'POST',
-        body: { jobId, answers },
+        body: { jobId, answers, proctoring: { terminated: false, events: eventsRef.current } },
       })
       setScore(Number(result.score) || 0)
       setPassMark(Number(result.passMark) || passMark)
@@ -117,6 +135,57 @@ export function AssessmentQuiz({ category, jobId, onPass }: { category: JobCateg
 
   const handleProceed = () => {
     onPass()
+  }
+
+  // Proctored assessment closed automatically (no person / camera disconnected): show the reason
+  // and nothing else — the questions are never revealed again.
+  if (proctorTerminated || terminated) {
+    const reason = (proctorTerminated ?? terminated)?.reason ?? 'no-person-detected'
+    return (
+      <div className="flex flex-col items-center gap-3 rounded-xl border border-destructive/40 bg-destructive/5 p-8 text-center">
+        <ShieldAlert className="size-8 text-destructive" />
+        <p className="text-base font-semibold text-destructive">Assessment closed automatically</p>
+        <p className="max-w-md text-sm leading-relaxed text-muted-foreground">
+          {reason === 'camera-disconnected'
+            ? 'The camera was disconnected, so the assessment closed. Reopen the assessment and keep the camera on and uncovered for the whole test.'
+            : 'No person was detected in front of the camera, so the assessment closed to protect its integrity. Reopen the assessment and stay visible in the camera for the whole test.'}
+        </p>
+        <p className="text-[11px] text-muted-foreground">This has been recorded for review. Nothing was submitted.</p>
+      </div>
+    )
+  }
+
+  // Notice + gate: the assessment cannot open until the camera is on.
+  if (cameraState !== 'on') {
+    return (
+      <div className="flex flex-col items-center gap-4 rounded-xl border border-border bg-card p-8 text-center shadow-sm">
+        <Camera className="size-8 text-primary" />
+        <div>
+          <p className="text-base font-semibold">This assessment is camera-proctored</p>
+          <p className="mx-auto mt-1.5 max-w-md text-sm leading-relaxed text-muted-foreground">
+            Before you begin, your camera must be on. During the test the camera is checked periodically:
+            if no person is detected in front of it — for example the lens is covered or an object is held
+            up — or the camera is disconnected, the assessment closes automatically and nothing is submitted.
+            No video or photos leave your device; only the check results are recorded.
+          </p>
+        </div>
+        <video ref={videoRef} autoPlay playsInline muted className={cameraState === 'requesting' ? 'hidden' : 'h-32 w-40 rounded-lg border border-border bg-black object-cover'} aria-label="Camera preview" />
+        {cameraState === 'denied' ? (
+          <div className="flex flex-col items-center gap-2">
+            <p className="flex items-center gap-1.5 text-sm text-destructive">
+              <CameraOff className="size-4" />
+              Camera access was denied, so the assessment cannot open. Allow camera access in your browser and try again.
+            </p>
+            <Button size="sm" variant="outline" onClick={startCamera}>Try again</Button>
+          </div>
+        ) : (
+          <Button size="lg" onClick={startCamera} disabled={cameraState === 'requesting'} className="gap-2">
+            <Camera className="size-4" />
+            {cameraState === 'requesting' ? 'Requesting camera…' : 'Enable camera & start assessment'}
+          </Button>
+        )}
+      </div>
+    )
   }
 
   if (loading) {
@@ -222,6 +291,10 @@ export function AssessmentQuiz({ category, jobId, onPass }: { category: JobCateg
   return (
     <div ref={assessmentRef} className="flex scroll-mt-24 flex-col gap-4">
       <NoCopyPaste className="flex flex-col gap-4">
+      <div className="flex items-center justify-end gap-2">
+        <video ref={videoRef} autoPlay playsInline muted className="h-16 w-24 rounded-md border border-border bg-black object-cover" aria-label="Camera preview — proctoring active" />
+        <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Camera proctoring active</span>
+      </div>
       <div className="rounded-xl border border-border bg-card p-5 shadow-sm sm:p-6">
         <div className="flex flex-col justify-between gap-4 border-b border-border pb-5 sm:flex-row sm:items-center">
           <div>

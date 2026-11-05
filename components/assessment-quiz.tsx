@@ -200,10 +200,17 @@ export function AssessmentQuiz({ category, jobId, onPass }: { category: JobCateg
             )}
           </div>
         ) : (
-          <Button size="lg" onClick={startCamera} disabled={cameraState === 'requesting'} className="gap-2">
-            <Camera className="size-4" />
-            {cameraState === 'requesting' ? 'Waiting for the browser permission prompt…' : 'Enable camera & start assessment'}
-          </Button>
+          <div className="flex flex-col items-center gap-2">
+            <Button size="lg" onClick={startCamera} disabled={cameraState === 'requesting'} className="gap-2">
+              <Camera className="size-4" />
+              {cameraState === 'requesting' ? 'Waiting for the browser permission prompt…' : 'Enable camera & start assessment'}
+            </Button>
+            {permissionState === 'prompt' && cameraState !== 'requesting' && (
+              <p className="text-[11px] text-muted-foreground">
+                Chrome will pop up and ask for camera permission — just click <strong className="font-semibold">Allow</strong>. No settings needed.
+              </p>
+            )}
+          </div>
         )}
       </div>
     )

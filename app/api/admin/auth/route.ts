@@ -11,7 +11,7 @@ import {
   registerFailedAttempt,
   verifyPasscode,
 } from '@/lib/security'
-import { env, envBool, envInt, isEmailLike, isProduction, parseEmailList, consoleHostKind, staffPanelHint, NO_STORE_HEADERS } from '@/lib/security-core'
+import { env, envBool, envInt, isEmailLike, isProduction, parseEmailList, requestConsolePanel, staffPanelHint, STAFF_SESSION_COOKIE, NO_STORE_HEADERS } from '@/lib/security-core'
 import { audit, consumeBucket, fail, json, requestContext, resolveAdmin, type AdminRole } from '@/lib/guards'
 
 /**
@@ -63,12 +63,14 @@ export async function POST(req: NextRequest) {
   // 3. Body: capped, typed, never echoed back.
   let email = ''
   let passcode = ''
+  let panelHint: 'staff' | 'admin' | null = null
   try {
     const raw = await req.text()
     if (raw.length > 8_000) return fail(413, 'Request payload is too large.', { code: 'payload_too_large' })
     const body = (raw.trim() ? JSON.parse(raw) : {}) as Record<string, unknown>
     email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : ''
     passcode = typeof body.password === 'string' ? body.password : typeof body.passcode === 'string' ? body.passcode : ''
+    panelHint = body.panel === 'staff' || body.panel === 'admin' ? body.panel : null
   } catch {
     return fail(400, 'Expected a JSON body.', { code: 'bad_request' })
   }
@@ -149,16 +151,17 @@ export async function POST(req: NextRequest) {
   if (!role) return reject('Invalid administrator credentials.', 'not_privileged')
   if (!passcodeOk) return reject('Invalid administrator credentials.', 'bad_passcode')
 
-  // Each panel serves exactly one role. The staff panel (staff subdomain) is for staff only; the
-  // admin panel (app host) is for the main administrator only. Session cookies are host-only, so
-  // the two never share a jar in one browser — a wrong-panel sign-in is a configuration slip, not
-  // a brute-force signal, so it answers 403 without touching the lockout budget.
-  const hostKind = consoleHostKind(req.headers.get('host'))
-  if (hostKind === 'staff' && role === 'owner') {
-    return fail(403, 'The main administrator signs in on the admin panel, not the staff panel.', { code: 'wrong_panel' })
+  // Each panel serves exactly one role. The staff panel (`/staff` on the app host, or the staff
+  // subdomain) is for staff only; the admin panel (`/admin`) is for the main administrator only.
+  // Each panel has its own session cookie, so the two never share a jar in one browser — a
+  // wrong-panel sign-in is a configuration slip, not a brute-force signal, so it answers 403
+  // without touching the lockout budget.
+  const panel = requestConsolePanel(req.headers.get('host'), req.nextUrl.pathname, panelHint ?? undefined)
+  if (panel === 'staff' && role === 'owner') {
+    return fail(403, 'The main administrator signs in on the admin panel (/admin), not the staff panel.', { code: 'wrong_panel' })
   }
-  if (hostKind === 'admin' && role === 'staff') {
-    return fail(403, `Staff sign in on the staff panel: https://${staffPanelHint(req.headers.get('host'))}/login`, { code: 'wrong_panel' })
+  if (panel === 'admin' && role === 'staff') {
+    return fail(403, `Staff sign in on the staff panel: ${staffPanelHint(req.headers.get('host'))}/login`, { code: 'wrong_panel' })
   }
 
   // 6. Issue the session.
@@ -171,7 +174,7 @@ export async function POST(req: NextRequest) {
   await audit({
     action: 'ADMIN_LOGIN_SUCCESS',
     actorEmail: email,
-    details: { jti: session.jti, role, credential, ip: ctx.identity.ipHash, expiresAt: new Date(session.expiresAt).toISOString() },
+    details: { jti: session.jti, role, credential, panel, ip: ctx.identity.ipHash, expiresAt: new Date(session.expiresAt).toISOString() },
     req,
   })
 
@@ -227,7 +230,8 @@ export async function POST(req: NextRequest) {
   // `ADMIN_SESSION_PERSIST=true` restores a durable cookie for an operator who wants to stay signed
   // in on a machine they control.
   const persistCookie = envBool('ADMIN_SESSION_PERSIST', false)
-  response.cookies.set(ADMIN_COOKIE, session.token, {
+  const sessionCookie = panel === 'staff' ? STAFF_SESSION_COOKIE : ADMIN_COOKIE
+  response.cookies.set(sessionCookie, session.token, {
     httpOnly: true,
     secure,
     sameSite: 'strict',
@@ -243,7 +247,9 @@ export async function POST(req: NextRequest) {
       maxAge: 12 * 60 * 60,
     })
   }
-  // Clear the legacy cookie the previous client wrote (it was readable by JS).
+  // Clear the legacy cookie the previous client wrote (it was readable by JS). The OTHER panel's
+  // cookie is deliberately left alone: separate cookie names mean signing in here never disturbs
+  // an admin or staff session open in another tab of the same browser.
   response.cookies.set('afterworks_admin_session', '', { httpOnly: true, secure, path: '/', maxAge: 0 })
 
   // No custom-claim sync here. `admin` is not a Firestore credential any more: the rules do not

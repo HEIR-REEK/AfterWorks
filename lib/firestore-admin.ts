@@ -3610,11 +3610,18 @@ export async function listJobsServer(opts: { status?: string; pageSize?: number;
         // Reuse the worker-facing normalisers so the console edits exactly the lesson fields the
         // training reader renders — duration and the end-of-lesson check included.
         trainingNotes: normaliseTrainingSections(data.trainingNotes),
-        // Derived from those sections, so the console never shows a stale "free" on a card that
-        // actually carries a course.
-        trainingRequired: normaliseTrainingSections(data.trainingNotes).some(
-          (section) => section.title.trim() !== '' || section.content.trim() !== '',
-        ),
+        // The stored flag is the one source of truth — it is what the worker-facing board reads
+        // (lib/job-catalogue.ts, lib/public-jobs-server.ts) and what the fee hangs on. Deriving it
+        // from the authored sections made the console disagree with the board: a training card
+        // with no custom sections (it uses the built-in coursebook) showed as "assessment only"
+        // here, and saving it from the console would have zeroed its fee. Only documents written
+        // before the flag existed fall back to the sections heuristic.
+        trainingRequired:
+          typeof data.trainingRequired === 'boolean'
+            ? data.trainingRequired
+            : normaliseTrainingSections(data.trainingNotes).some(
+                (section) => section.title.trim() !== '' || section.content.trim() !== '',
+              ),
         assessmentQuestions: normaliseAssessmentQuestions(data.assessmentQuestions),
         requiresVerified: data.requiresVerified !== false,
         status: String(data.status ?? 'open'),

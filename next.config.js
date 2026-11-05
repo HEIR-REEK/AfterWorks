@@ -74,10 +74,23 @@ const nextConfig = {
     localPatterns: [{ pathname: '/**' }],
   },
   output: process.env.NEXT_OUTPUT_STANDALONE === '1' ? 'standalone' : undefined,
+  // The staff panel is served at /staff on the app domain, exactly like /admin. Middleware maps
+  // these paths too (with the session-cookie gate), but this rewrite lives in the server config,
+  // so the mapping holds even on deployments where the edge middleware does not run — without it
+  // /staff would fall through to the member app and its gate would bounce visitors to /sign-in.
+  async rewrites() {
+    return {
+      beforeFiles: [
+        { source: '/staff', destination: '/admin' },
+        { source: '/staff/:path*', destination: '/admin/:path*' },
+      ],
+    }
+  },
   async headers() {
     return [
       { source: '/:path*', headers: securityHeaders },
       { source: '/admin/:path*', headers: noStore },
+      { source: '/staff/:path*', headers: noStore },
       { source: '/api/admin/:path*', headers: noStore },
       { source: '/api/:path*', headers: [{ key: 'Cache-Control', value: 'private, no-store, max-age=0' }] },
       {

@@ -32,17 +32,31 @@ function getFaceDetector(): FaceDetectorCtor | null {
   return typeof ctor === 'function' ? ctor : null
 }
 
-/** Standard deviation of grayscale samples — a covered lens gives a near-zero value. */
-function frameFlatness(ctx: CanvasRenderingContext2D, w: number, h: number): number {
-  const data = ctx.getImageData(0, 0, w, h).data
+/** Grayscale samples of a frame (subsampled) — shared by the flatness and motion checks. */
+function graySamples(img: ImageData): number[] {
+  const data = img.data
   const samples: number[] = []
   for (let i = 0; i < data.length; i += 40) {
     samples.push((data[i] + data[i + 1] + data[i + 2]) / 3)
   }
+  return samples
+}
+
+/** Standard deviation of grayscale samples — a covered lens gives a near-zero value. */
+function flatness(samples: number[]): number {
   if (samples.length === 0) return 0
   const mean = samples.reduce((a, b) => a + b, 0) / samples.length
   const variance = samples.reduce((a, b) => a + (b - mean) * (b - mean), 0) / samples.length
   return Math.sqrt(variance)
+}
+
+/** Mean absolute difference between two frames — a live person moves; a static object doesn't. */
+function motion(a: number[], b: number[]): number {
+  const n = Math.min(a.length, b.length)
+  if (n === 0) return 0
+  let sum = 0
+  for (let i = 0; i < n; i++) sum += Math.abs(a[i] - b[i])
+  return sum / n
 }
 
 export type CameraPermissionState = 'unknown' | 'granted' | 'prompt' | 'denied'
@@ -60,7 +74,16 @@ export function useCameraProctor(active: boolean, onTerminated: (t: ProctorTermi
   const [lastError, setLastError] = useState<string | null>(null)
   const [terminated, setTerminated] = useState<ProctorTermination | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
-  const videoRef = useRef<HTMLVideoElement | null>(null)
+  const videoElRef = useRef<HTMLVideoElement | null>(null)
+  // Callback ref: whichever preview <video> mounts (gate screen vs in-quiz) immediately gets
+  // the live stream and is told to play — a plain object ref could leave the element black.
+  const videoRef = useCallback((el: HTMLVideoElement | null) => {
+    videoElRef.current = el
+    if (el && streamRef.current) {
+      el.srcObject = streamRef.current
+      void el.play().catch(() => {})
+    }
+  }, [])
   const eventsRef = useRef<ProctorEvent[]>([])
   const missesRef = useRef(0)
   const detectorRef = useRef<FaceDetectorInstance | null>(null)
@@ -75,7 +98,7 @@ export function useCameraProctor(active: boolean, onTerminated: (t: ProctorTermi
   const stopCamera = useCallback(() => {
     streamRef.current?.getTracks().forEach((t) => t.stop())
     streamRef.current = null
-    if (videoRef.current) videoRef.current.srcObject = null
+    if (videoElRef.current) videoElRef.current.srcObject = null
   }, [])
 
   const terminate = useCallback(
@@ -128,7 +151,10 @@ export function useCameraProctor(active: boolean, onTerminated: (t: ProctorTermi
         audio: false,
       })
       streamRef.current = stream
-      if (videoRef.current) videoRef.current.srcObject = stream
+      if (videoElRef.current) {
+        videoElRef.current.srcObject = stream
+        void videoElRef.current.play().catch(() => {})
+      }
       stream.getVideoTracks().forEach((track) => {
         track.onended = () => terminateRef.current('camera-disconnected')
       })
@@ -167,33 +193,38 @@ export function useCameraProctor(active: boolean, onTerminated: (t: ProctorTermi
     const ctx = canvas.getContext('2d', { willReadFrequently: true })
     if (!ctx) return
 
+    const startedAt = Date.now()
+    const prevSamplesRef = { current: null as number[] | null }
     const check = async () => {
-      const video = videoRef.current
-      if (!video || video.readyState < 2 || video.videoWidth === 0) {
-        missesRef.current += 1
+      const video = videoElRef.current
+      // No frame yet (element still warming up) is NOT a miss — otherwise a slow-starting
+      // preview would auto-close the assessment while the user is plainly in front of it.
+      if (!video || video.readyState < 2 || video.videoWidth === 0) return
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+      let personDetected = false
+      if (detectorRef.current) {
+        try {
+          const faces = await detectorRef.current.detect(canvas)
+          personDetected = faces.length > 0
+        } catch {
+          personDetected = true // detector hiccup — don't punish on a transient error
+        }
       } else {
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
-        let personDetected = false
-        if (detectorRef.current) {
-          try {
-            const faces = await detectorRef.current.detect(canvas)
-            personDetected = faces.length > 0
-          } catch {
-            personDetected = true // detector hiccup — don't punish on a transient error
-          }
-        } else {
-          // Fallback (no FaceDetector): a live face gives a non-flat frame; a covered lens or an
-          // object held still gives near-zero variance.
-          personDetected = frameFlatness(ctx, canvas.width, canvas.height) > 8
-        }
-        if (personDetected) {
-          missesRef.current = 0
-        } else {
-          missesRef.current += 1
-          record('no-person-detected')
-        }
+        // Fallback (no FaceDetector): a live face gives a non-flat frame AND slight motion;
+        // a covered lens or a still object gives a flat, motionless frame — even in dim light.
+        const samples = graySamples(ctx.getImageData(0, 0, canvas.width, canvas.height))
+        const still = motion(samples, prevSamplesRef.current ?? samples)
+        prevSamplesRef.current = samples
+        personDetected = flatness(samples) > 5 || still > 1.5
       }
-      if (missesRef.current >= MAX_CONSECUTIVE_MISSES) {
+      if (personDetected) {
+        missesRef.current = 0
+      } else {
+        missesRef.current += 1
+        record('no-person-detected')
+      }
+      // Grace period: never close within the first 20s after the camera turned on.
+      if (missesRef.current >= MAX_CONSECUTIVE_MISSES && Date.now() - startedAt > 20_000) {
         terminateRef.current('no-person-detected')
       }
     }
@@ -208,14 +239,6 @@ export function useCameraProctor(active: boolean, onTerminated: (t: ProctorTermi
       document.removeEventListener('visibilitychange', onHidden)
     }
   }, [active, cameraState, terminated, record])
-
-  // (Re)attach the stream whenever the preview element (re)mounts while the camera is on — the
-  // gate screen and the in-quiz preview are different elements.
-  useEffect(() => {
-    if (cameraState === 'on' && videoRef.current && streamRef.current) {
-      videoRef.current.srcObject = streamRef.current
-    }
-  }, [cameraState, active])
 
   // Stop the camera when the component unmounts.
   useEffect(() => () => stopCamera(), [stopCamera])

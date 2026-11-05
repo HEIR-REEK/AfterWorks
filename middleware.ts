@@ -151,9 +151,13 @@ const FIREBASE_HOSTS = 'https://*.firebaseapp.com https://*.firebaseio.com https
 const FIREBASE_WSS_HOSTS = 'wss://*.googleapis.com'
 const PAYSTACK_HOSTS = 'https://checkout.paystack.com https://api.paystack.co https://js.paystack.co'
 
-function buildCsp(production: boolean): string {
+function buildCsp(production: boolean, nonce: string): string {
+  // Production: no 'unsafe-inline' / 'unsafe-eval' for scripts — Next.js's own inline bootstrap
+  // scripts carry the per-request nonce (passed via the x-nonce request header below), and the app
+  // has no other inline scripts (the only <script> blocks are JSON-LD data, which CSP does not
+  // treat as executable). An XSS that slips in therefore has no inline script execution channel.
   const scriptSrc = production
-        ? `script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' ${FIREBASE_HOSTS} https://apis.google.com https://js.paystack.co`
+    ? `script-src 'self' 'nonce-${nonce}' 'wasm-unsafe-eval' ${FIREBASE_HOSTS} https://apis.google.com https://js.paystack.co`
     : // Dev mode needs inline/eval for the React refresh runtime injected by Next.
       `script-src 'self' 'unsafe-eval' 'unsafe-inline' ${FIREBASE_HOSTS} https://apis.google.com https://js.paystack.co`
 
@@ -174,15 +178,15 @@ function buildCsp(production: boolean): string {
     `base-uri 'self'`,
     `form-action 'self'`,
     ...(production ? [`frame-ancestors 'none'`] : []),
-    // No `require-trusted-types-for`: Next 14 injects inline bootstrap scripts, so declaring a
-    // Trusted Types requirement here would break the app in a way that only shows up in production.
-    // XSS is instead handled the other way round — no unsafe-inline in production script-src above.
+    // No `require-trusted-types-for`: Next 14 injects inline bootstrap scripts (nonce'd above), so
+    // declaring a Trusted Types requirement here would break the app in a way that only shows up
+    // in production.
     ...(production ? [`upgrade-insecure-requests`] : []),
   ].join('; ')
 }
 
-function applySecurityHeaders(res: NextResponse): void {
-  res.headers.set('Content-Security-Policy', buildCsp(PRODUCTION))
+function applySecurityHeaders(res: NextResponse, nonce: string): void {
+  res.headers.set('Content-Security-Policy', buildCsp(PRODUCTION, nonce))
   if (PRODUCTION) res.headers.set('X-Frame-Options', 'DENY')
   res.headers.set('X-Content-Type-Options', 'nosniff')
   res.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin')
@@ -207,6 +211,11 @@ export async function middleware(request: NextRequest) {
   const method = request.method.toUpperCase()
   const ipHash = fnv(clientIp(request) || 'unknown')
   const requestId = `${Date.now().toString(36)}${ipHash}`.slice(0, 20)
+  // Per-request CSP nonce for production. It is put on the request (x-nonce) so Next.js stamps it
+  // on its own inline bootstrap scripts, and into the CSP header so only those may run.
+  const cspNonce = PRODUCTION
+    ? btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(16))))
+    : ''
 
   const reject = (status: number, message: string, code: string, extra?: Record<string, string>) => {
     const res = NextResponse.json(
@@ -271,7 +280,7 @@ export async function middleware(request: NextRequest) {
       if (PRODUCTION) {
         const res = NextResponse.redirect(new URL('/admin/login?reason=console_unconfigured', request.url), 307)
         res.headers.set('Cache-Control', 'no-store')
-        applySecurityHeaders(res)
+        applySecurityHeaders(res, cspNonce)
         return res
       }
     } else {
@@ -286,7 +295,7 @@ export async function middleware(request: NextRequest) {
           307,
         )
         res.headers.set('Cache-Control', 'no-store')
-        applySecurityHeaders(res)
+        applySecurityHeaders(res, cspNonce)
         return res
       }
     }
@@ -352,11 +361,12 @@ export async function middleware(request: NextRequest) {
                 'X-Robots-Tag': 'noindex, nofollow',
               },
             })
-            applySecurityHeaders(res)
+            applySecurityHeaders(res, cspNonce)
             return res
           }
           const rewriteHeaders = new Headers(request.headers)
           rewriteHeaders.set('x-afterworks-maintenance-mode', modeLabel)
+          if (PRODUCTION) rewriteHeaders.set('x-nonce', cspNonce)
           const res = NextResponse.rewrite(new URL(`/maintenance${search}`, request.url), {
             status: 503,
             request: { headers: rewriteHeaders },
@@ -364,7 +374,7 @@ export async function middleware(request: NextRequest) {
           res.headers.set('Retry-After', String(status.retryAfterSec || 300))
           res.headers.set('X-Maintenance-Mode', modeLabel)
           res.headers.set('X-Robots-Tag', 'noindex, nofollow')
-          applySecurityHeaders(res)
+          applySecurityHeaders(res, cspNonce)
           return res
         }
       }
@@ -374,9 +384,10 @@ export async function middleware(request: NextRequest) {
   // 7. Pass through with hardened headers.
   const headers = new Headers(request.headers)
   headers.set('x-request-id', requestId)
+  if (PRODUCTION) headers.set('x-nonce', cspNonce)
   if (maintenanceMode !== 'off') headers.set('x-afterworks-maintenance-mode', maintenanceMode)
   const response = NextResponse.next({ request: { headers } })
-  applySecurityHeaders(response)
+  applySecurityHeaders(response, cspNonce)
   response.headers.set('X-Request-Id', requestId)
 
   if (ADMIN_PATH.test(pathname) || pathname.startsWith('/api/admin')) {

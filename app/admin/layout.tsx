@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import {
   Activity,
   ArrowUpRight,
@@ -20,6 +20,7 @@ import {
   UserCog,
   Users,
   Wrench,
+  type LucideIcon,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { StatusBadge } from '@/components/status-badge'
@@ -32,7 +33,9 @@ import AdminLoginPage from './login/page'
 
 // `ownerOnly` sections are hidden from staff sessions — the API guards enforce the same split,
 // this just keeps the console honest about what each role can reach.
-const adminNavItems = [
+type AdminNavItem = { href: string; label: string; icon: LucideIcon; exact?: boolean; ownerOnly?: boolean }
+
+const adminNavItems: AdminNavItem[] = [
   { href: '/admin', label: 'Overview', icon: LayoutDashboard, exact: true },
   { href: '/admin/users', label: 'Users & KYC', icon: Users },
   { href: '/admin/jobs', label: 'Jobs Catalogue', icon: Briefcase, exact: true },
@@ -48,6 +51,7 @@ const adminNavItems = [
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
+  const router = useRouter()
   const session = useAdminSession()
   const { view } = useMaintenance()
   const [mounted, setMounted] = useState(false)
@@ -66,6 +70,17 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     return () => clearInterval(id)
   }, [session.status, session.remainingSeconds])
 
+  // Owner-only sections are hidden from the staff nav, but a typed URL must not reach them either:
+  // the APIs already refuse staff, this stops the page itself from rendering. Staff keep the
+  // operations desk (overview, users & KYC, applications, withdrawals).
+  const ownerOnlyPath = adminNavItems.some(
+    (item) => item.ownerOnly && (item.exact ? pathname === item.href : pathname.startsWith(item.href)),
+  )
+  const blockedForStaff = session.role !== 'owner' && ownerOnlyPath
+  useEffect(() => {
+    if (blockedForStaff) router.replace('/admin')
+  }, [blockedForStaff, router])
+
   const isLoginPage = pathname === '/admin/login'
 
   if (isLoginPage) return <>{children}</>
@@ -81,6 +96,19 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   if (session.status !== 'authorized') {
     return <AdminLoginPage />
+  }
+
+  if (blockedForStaff) {
+    return (
+      <div className="flex min-h-dvh flex-col items-center justify-center gap-3 bg-background p-6 text-center">
+        <Shield className="size-8 text-muted-foreground" />
+        <p className="text-sm font-semibold">Main administrator only</p>
+        <p className="max-w-sm text-xs leading-relaxed text-muted-foreground">
+          This section is restricted to the main administrator. Staff accounts work from the operations desk.
+        </p>
+        <Button size="sm" render={<Link href="/admin" />}>Back to overview</Button>
+      </div>
+    )
   }
 
   return (

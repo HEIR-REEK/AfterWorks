@@ -45,6 +45,8 @@ export async function GET(req: NextRequest) {
       // The profile says what we know about them; Auth says whether they can actually sign in.
       const account = await firestore.getAuthAccountStateForUid(uid.slice(0, 128))
       const user = markOwner(redactSecrets(detail))
+      const proctoring = await firestore.getLatestProctorEvent(uid.slice(0, 128))
+      if (proctoring) (user as Record<string, unknown>).proctoring = proctoring
       // A profile can lack its email copy (e.g. an interrupted write) while Auth still holds the
       // roster address — Auth is the authority on the address, so tag on it too.
       const authEmail = typeof (account as { email?: unknown } | null)?.email === 'string' ? String((account as { email?: string }).email).trim().toLowerCase() : ''

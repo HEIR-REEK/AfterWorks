@@ -2924,6 +2924,45 @@ export async function getAssessmentSource(jobId: string): Promise<AssessmentSour
 }
 
 /** Records a server-scored assessment pass. The client cannot write this field. */
+/**
+ * Record a camera-proctoring event for an assessment attempt. Written server-only (the client
+ * only reports counts/labels, never images). `proctor_events` is read by the console's user
+ * detail; `lastProctorEvent` on the user doc powers the badge in the members drawer.
+ */
+export async function recordProctorEvent(
+  uid: string,
+  jobId: string,
+  data: { terminated?: boolean; reason?: string; events?: { at: string; kind: string }[] },
+): Promise<void> {
+  const db = adminDb()
+  const cleanJob = String(jobId ?? '').slice(0, 128)
+  const summary = {
+    uid,
+    jobId: cleanJob,
+    terminated: data.terminated === true,
+    reason: String(data.reason ?? '').slice(0, 120),
+    eventCount: Array.isArray(data.events) ? data.events.length : 0,
+    kinds: Array.isArray(data.events) ? [...new Set(data.events.map((e) => String(e?.kind ?? '').slice(0, 60)))].slice(0, 12) : [],
+    at: new Date().toISOString(),
+  }
+  await db.collection('proctor_events').add(summary)
+  await db.collection('users').doc(uid).set({ lastProctorEvent: summary, updatedAt: summary.at }, { merge: true })
+}
+
+/** Latest proctoring event for a member, for the console's user drawer. */
+export async function getLatestProctorEvent(uid: string): Promise<Record<string, unknown> | null> {
+  const db = dbOrNull()
+  if (!db) return null
+  try {
+    const snap = await db.collection('proctor_events').where('uid', '==', uid).orderBy('at', 'desc').limit(1).get()
+    if (snap.empty) return null
+    return (snap.docs[0].data() ?? {}) as Record<string, unknown>
+  } catch (err) {
+    console.warn('[FirestoreAdmin] getLatestProctorEvent failed:', err)
+    return null
+  }
+}
+
 export async function recordAssessmentPass(uid: string, jobId: string): Promise<void> {
   const db = adminDb()
   const ref = db.collection('users').doc(uid)

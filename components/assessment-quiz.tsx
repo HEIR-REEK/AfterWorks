@@ -157,6 +157,9 @@ export function AssessmentQuiz({ category, jobId, onPass }: { category: JobCateg
 
   // Notice + gate: the assessment cannot open until the camera is on.
   if (cameraState !== 'on') {
+    // Embedded in another page (iframe) without allow="camera": the browser blocks the camera
+    // with a Permissions-Policy violation regardless of site settings — say so explicitly.
+    const inIframe = typeof window !== 'undefined' && window.self !== window.top
     return (
       <div className="flex flex-col items-center gap-4 rounded-xl border border-border bg-card p-8 text-center shadow-sm">
         <Camera className="size-8 text-primary" />
@@ -169,10 +172,25 @@ export function AssessmentQuiz({ category, jobId, onPass }: { category: JobCateg
             No video or photos leave your device; only the check results are recorded.
           </p>
         </div>
+        {inIframe && (
+          <p className="max-w-md rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs leading-relaxed text-amber-700 dark:text-amber-400">
+            This page is embedded inside another site, and that embed does not allow camera access — that is why
+            the camera keeps failing even after allowing it. Open the assessment directly at{' '}
+            <span className="font-mono">{typeof window !== 'undefined' ? window.location.origin : 'the site address'}</span>{' '}
+            in a normal browser tab.
+          </p>
+        )}
         <video ref={videoRef} autoPlay playsInline muted className={cameraState === 'requesting' ? 'hidden' : 'h-32 w-40 rounded-lg border border-border bg-black object-cover'} aria-label="Camera preview" />
         {cameraState === 'denied' ? (
           <div className="flex flex-col items-center gap-2">
-            {!secureContext || lastError === 'SecurityError' || lastError === 'insecure-context' ? (
+            {inIframe ? (
+              <p className="max-w-md text-sm text-destructive">
+                This page is embedded in another site that does not allow camera access (Permissions-Policy).
+                Open the assessment directly at{' '}
+                <span className="font-mono">{typeof window !== 'undefined' ? window.location.origin : 'the site address'}</span>{' '}
+                in a normal tab and try again.
+              </p>
+            ) : !secureContext || lastError === 'SecurityError' || lastError === 'insecure-context' ? (
               <p className="flex items-center gap-1.5 text-sm text-destructive">
                 <CameraOff className="size-4" />
                 Camera needs a secure (HTTPS) page. Open AfterWorks over https:// and try again.

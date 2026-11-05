@@ -29,9 +29,6 @@ import {
   isSameSiteRequest,
   parseEmailList,
   type ClientIdentity,
-  consoleHostKind,
-  requestConsolePanel,
-  STAFF_SESSION_COOKIE,
 } from '@/lib/security-core'
 import { getCachedMaintenanceStatus, isGatedPath, isSignInExempt, resolveMaintenance } from '@/lib/maintenance-shared'
 import {
@@ -269,19 +266,10 @@ export function invalidateAdminCache(email?: string): void {
 // ─── requireAdmin ────────────────────────────────────────────────────────────
 
 export async function resolveAdmin(req: NextRequest): Promise<AdminPrincipal | null> {
-  // A session only counts on the panel it was issued for: staff sessions on the staff panel
-  // (`/staff`, or the staff subdomain), owner sessions on the admin panel. Each panel has its own
-  // cookie name, and only that cookie is read here — so an admin and a staff member sharing one
-  // browser never disrupt each other, and a cookie minted for one panel is worthless on the other.
-  const panel = requestConsolePanel(req.headers.get('host'), req.nextUrl.pathname, req.headers.get('x-console-panel'))
-  const roleAllowedOnPanel = (role: AdminRole | null): role is AdminRole =>
-    role !== null && (panel === 'staff' ? role === 'staff' : role === 'owner')
-
   // 1) Signed, HttpOnly, SameSite=strict session cookie (set by /api/admin/auth).
-  const sessionCookie = panel === 'staff' ? STAFF_SESSION_COOKIE : ADMIN_COOKIE
   const cookieToken =
-    req.cookies.get(sessionCookie)?.value ||
-    (panel === 'admin' ? LEGACY_ADMIN_COOKIES.map((name) => req.cookies.get(name)?.value).find(Boolean) : undefined) ||
+    req.cookies.get(ADMIN_COOKIE)?.value ||
+    LEGACY_ADMIN_COOKIES.map((name) => req.cookies.get(name)?.value).find(Boolean) ||
     null
 
   if (cookieToken) {
@@ -292,7 +280,7 @@ export async function resolveAdmin(req: NextRequest): Promise<AdminPrincipal | n
       // The role is re-resolved on every request (cached briefly): disabling or removing a staff
       // account takes effect immediately, without waiting for their cookie to expire.
       const role = revoked ? null : await resolveAdminRole(claims.sub)
-      if (roleAllowedOnPanel(role)) {
+      if (role) {
         return { email: claims.sub, jti: claims.jti, expiresAt: claims.exp, via: 'session-cookie', role }
       }
     }
@@ -312,7 +300,7 @@ export async function resolveAdmin(req: NextRequest): Promise<AdminPrincipal | n
       const decoded = await verifyIdToken(bearer)
       if (decoded) {
         const role = await resolveAdminRole(String(decoded.email ?? ''))
-        const identity = roleAllowedOnPanel(role) ? bearerAdminPrincipal(decoded, role) : null
+        const identity = bearerAdminPrincipal(decoded, role)
         if (identity) {
           return {
             email: identity.email,

@@ -42,21 +42,6 @@ const GENERIC_BY_STATUS: Record<number, string> = {
   503: 'That action is unavailable during the maintenance window.',
 }
 
-/**
- * Which console panel this browser tab is on: the staff panel is served at `/staff` on the app
- * host (or at the root of the staff subdomain); everything else under the console is the admin
- * panel. Sent as `x-console-panel` so the server honours only the session cookie that belongs to
- * this panel — an admin and a staff tab in the same browser never read each other's session.
- */
-export function consolePanelFromLocation(): 'staff' | 'admin' {
-  if (typeof window === 'undefined') return 'admin'
-  const host = window.location.hostname.toLowerCase()
-  if (host === 'staff' || host.startsWith('staff.')) return 'staff'
-  const path = window.location.pathname
-  if (path === '/staff' || path.startsWith('/staff/')) return 'staff'
-  return 'admin'
-}
-
 export function buildUrl(path: string, query?: ApiOptions['query']): string {
   if (!query) return path
   const params = new URLSearchParams()
@@ -81,7 +66,6 @@ export async function apiFetch<T = Record<string, unknown>>(path: string, opts: 
       cache: 'no-store',
       headers: {
         accept: 'application/json',
-        'x-console-panel': consolePanelFromLocation(),
         ...(opts.body === undefined ? {} : { 'content-type': 'application/json' }),
         ...(opts.idempotencyKey ? { 'idempotency-key': opts.idempotencyKey } : {}),
         ...(opts.token ? { authorization: `Bearer ${opts.token}` } : {}),

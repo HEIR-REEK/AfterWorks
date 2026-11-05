@@ -326,13 +326,6 @@ export const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 
 /** The console session. HttpOnly + SameSite=strict; the only carrier of console privilege. */
 export const ADMIN_SESSION_COOKIE = 'aw_admin_session'
-/**
- * The staff panel's own session cookie. The staff panel is reachable at `/staff` on the app host
- * (and on the optional staff subdomain), so host separation alone is not enough — each panel gets
- * its own cookie name, and the guards only honour the cookie that belongs to the panel being
- * addressed. Same-site, HttpOnly, host-only, exactly like the admin cookie.
- */
-export const STAFF_SESSION_COOKIE = 'aw_staff_session'
 /** Maintenance passage only. It never unlocks the console (`lib/session-token` types the claim). */
 export const MAINTENANCE_BYPASS_COOKIE = 'aw_ops_bypass'
 /** Cookies written by the pre-hardening client, cleared on sign-in and refused for privilege. */
@@ -347,62 +340,6 @@ export const LEGACY_ADMIN_SESSION_COOKIES = ['afterworks_admin_session'] as cons
  * verified session) and must answer JSON errors, not redirects. `/admin/login` is where you go
  * when the answer is "no", so it is never gated.
  */
-/**
- * Which console panel a Host header belongs to: the staff panel lives on its own subdomain
- * (`staff.<app host>`, override with STAFF_SUBDOMAIN), the admin panel on the app host itself.
- *
- * Session cookies are set host-only (no Domain attribute), so the two panels never share a cookie
- * jar — an admin and a staff member can use the same browser in different tabs without their
- * sessions disrupting each other. This helper only *classifies* the host; both runtimes import it
- * (edge middleware included), so it must stay runtime-agnostic and read env statically.
- */
-export function consoleHostKind(hostHeader: string | null | undefined): 'staff' | 'admin' {
-  const sub = String(process.env.STAFF_SUBDOMAIN ?? 'staff').trim().toLowerCase() || 'staff'
-  const host = String(hostHeader ?? '').toLowerCase().split(':')[0].trim()
-  if (!host) return 'admin'
-  if (host === sub || host.startsWith(`${sub}.`)) return 'staff'
-  return 'admin'
-}
-
-/** Is this URL path inside the staff panel (`/staff`, `/staff/...`)? */
-export function isStaffPanelPath(pathname: string): boolean {
-  const path = String(pathname ?? '').split(/[?#]/)[0]
-  return path === '/staff' || path.startsWith('/staff/')
-}
-
-/**
- * Which console panel a request belongs to. The staff panel is served at `/staff` on the app host
- * and at the root of the optional staff subdomain; the admin panel is `/admin` on the app host.
- * API routes carry the panel in the `x-console-panel` header (set by the console client from the
- * page it is running on); page requests are classified from host + path.
- */
-export function requestConsolePanel(
-  hostHeader: string | null | undefined,
-  pathname: string,
-  headerPanel?: string | null,
-): 'staff' | 'admin' {
-  if (consoleHostKind(hostHeader) === 'staff') return 'staff'
-  if (isStaffPanelPath(pathname)) return 'staff'
-  if (headerPanel === 'staff') return 'staff'
-  return 'admin'
-}
-
-/** The staff-panel URL shown to a staff member who lands on the admin panel: `https://<host>/staff`. */
-export function staffPanelHint(hostHeader: string | null | undefined, appUrlEnv?: string): string {
-  const sub = String(process.env.STAFF_SUBDOMAIN ?? 'staff').trim().toLowerCase() || 'staff'
-  let host = String(hostHeader ?? '').toLowerCase().split(':')[0].trim()
-  if (host.startsWith(`${sub}.`)) host = host.slice(sub.length + 1)
-  if (!host) {
-    const fallback = String(appUrlEnv ?? process.env.NEXT_PUBLIC_APP_URL ?? process.env.APP_URL ?? '').trim()
-    try {
-      host = new URL(fallback.startsWith('http') ? fallback : `https://${fallback}`).host
-    } catch {
-      host = '<your-app-domain>'
-    }
-  }
-  return `https://${host}/staff`
-}
-
 export function isAdminConsolePath(pathname: string): boolean {
   const path = String(pathname ?? '').split(/[?#]/)[0]
   if (path !== '/admin' && !path.startsWith('/admin/')) return false

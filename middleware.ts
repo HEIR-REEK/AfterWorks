@@ -22,15 +22,12 @@ import { NextResponse, type NextRequest } from 'next/server'
 
 import {
   ADMIN_SESSION_COOKIE,
-  STAFF_SESSION_COOKIE,
   MAINTENANCE_BYPASS_COOKIE,
   MUTATING_METHODS,
   NO_STORE_HEADERS,
-  consoleHostKind,
+  adminConsoleLoginPath,
   isAdminConsolePath,
-  isStaffPanelPath,
   isSameSiteRequest,
-  safeAdminReturnPath,
 } from '@/lib/security-core'
 import { getCachedMaintenanceStatus, isGatedPath, isSignInExempt } from '@/lib/maintenance-shared'
 import { renderMaintenanceShell } from '@/lib/maintenance-shell'
@@ -95,21 +92,6 @@ const PREVIEW_HOST = /^[a-z0-9-]+\.e2b\.app$/i
 
 function isOpenPath(pathname: string): boolean {
   return ALWAYS_OPEN.some((path) => pathname === path || pathname.startsWith(`${path}/`))
-}
-
-/**
- * On the staff subdomain the console is served at the root: `/` is the overview, `/login` the
- * staff sign-in, `/users` → `/admin/users`, and so on. `/admin/*`, `/api/*`, open paths and static
- * assets are left alone. Returns null when the path must not be rewritten.
- */
-function staffConsoleTarget(pathname: string): string | null {
-  if (EXTENSION_PATH.test(pathname)) return null
-  if (pathname.startsWith('/_next') || pathname.startsWith('/api/') || pathname.startsWith('/admin')) return null
-  if (isOpenPath(pathname)) return null
-  if (isNoisePath(pathname)) return null
-  // `/staff/...` on the app host, or any console path on the staff subdomain, maps into /admin.
-  const stripped = pathname === '/staff' ? '/' : pathname.startsWith('/staff/') ? pathname.slice('/staff'.length) : pathname
-  return stripped === '/' ? '/admin' : `/admin${stripped}`
 }
 
 function hostAllowed(host: string | null): boolean {
@@ -244,13 +226,6 @@ export async function middleware(request: NextRequest) {
     console.warn(`[middleware] Host "${host}" is not listed in APP_ALLOWED_HOSTS (dev: passing through).`)
   }
 
-  // The staff panel lives on its own subdomain, so its session cookie (host-only) never shares a
-  // jar with the admin panel in the same browser. Non-console paths there are rewritten into the
-  // console below; the gate treats them as console pages.
-  const hostKind = consoleHostKind(host)
-  const onStaffPanel = hostKind === 'staff' || isStaffPanelPath(pathname)
-  const staffTarget = onStaffPanel ? staffConsoleTarget(pathname) : null
-
   // 3. Cross-site writes.
   if (MUTATING_METHODS.has(method) && !WEBHOOK_PATHS.includes(pathname) && !isSameSiteRequest(request.headers)) {
     return reject(403, 'Cross-site request rejected.', 'csrf_rejected')
@@ -287,10 +262,7 @@ export async function middleware(request: NextRequest) {
   //    production and falls back to a process-local dev key otherwise, where the in-app gate
   //    still applies). That keeps local development without ADMIN_SESSION_SECRET working instead
   //    of bouncing an operator around the login form forever.
-  const consoleGatePath = staffTarget ?? pathname
-  const gatePanel: 'staff' | 'admin' = onStaffPanel ? 'staff' : 'admin'
-  const gateCookie = gatePanel === 'staff' ? STAFF_SESSION_COOKIE : ADMIN_SESSION_COOKIE
-  if (isAdminConsolePath(consoleGatePath)) {
+  if (isAdminConsolePath(pathname)) {
     // With no signing secret the edge cannot verify a session, but it must still not serve console
     // pages. In production that is a configuration failure: send the operator to the sign-in page
     // (which explains the console is disabled) instead of rendering console chrome and relying on a
@@ -304,17 +276,15 @@ export async function middleware(request: NextRequest) {
       }
     } else {
       const session = await readSession(
-        request.cookies.get(gateCookie)?.value,
+        request.cookies.get(ADMIN_SESSION_COOKIE)?.value,
         SESSION_SECRET,
         'admin',
       )
       if (!session) {
-        // Send the visitor to the login page of the panel they were heading for (/staff/login on
-        // the app host, /admin/login on the staff subdomain) — both render the same sign-in form.
-        const next = safeAdminReturnPath(`${consoleGatePath}${search}`)
-        const loginPath = gatePanel === 'staff' ? '/staff/login' : '/admin/login'
-        const target = next ? `${loginPath}?next=${encodeURIComponent(next)}` : loginPath
-        const res = NextResponse.redirect(new URL(target, request.url), 307)
+        const res = NextResponse.redirect(
+          new URL(adminConsoleLoginPath(pathname, request.nextUrl.search), request.url),
+          307,
+        )
         res.headers.set('Cache-Control', 'no-store')
         applySecurityHeaders(res)
         return res
@@ -344,7 +314,6 @@ export async function middleware(request: NextRequest) {
       // /sign-in — `allowSignIn` only keeps auth reachable during a *scoped* window.
       const gated =
         !ADMIN_PATH.test(pathname) &&
-        staffTarget === null &&
         !isOpenPath(pathname) &&
         !isSignInExempt(pathname, status) &&
         (status.blocksAll || isGatedPath(pathname, status))
@@ -402,24 +371,21 @@ export async function middleware(request: NextRequest) {
     }
   }
 
-  // 7. Pass through with hardened headers. On the staff subdomain, console paths are served from
-  //    their pretty URLs (`/`, `/login`, `/users`…) by rewriting into the real /admin routes.
+  // 7. Pass through with hardened headers.
   const headers = new Headers(request.headers)
   headers.set('x-request-id', requestId)
   if (maintenanceMode !== 'off') headers.set('x-afterworks-maintenance-mode', maintenanceMode)
-  const response = staffTarget
-    ? NextResponse.rewrite(new URL(`${staffTarget}${search}`, request.url), { request: { headers } })
-    : NextResponse.next({ request: { headers } })
+  const response = NextResponse.next({ request: { headers } })
   applySecurityHeaders(response)
   response.headers.set('X-Request-Id', requestId)
 
-  if (ADMIN_PATH.test(pathname) || pathname.startsWith('/api/admin') || isStaffPanelPath(pathname)) {
+  if (ADMIN_PATH.test(pathname) || pathname.startsWith('/api/admin')) {
     for (const [key, value] of Object.entries(NO_STORE_HEADERS)) response.headers.set(key, value)
   }
 
   // Tell crawlers not to index private/API routes even if they discover them through links.
   // This is belt-and-suspenders alongside robots.txt (which they should respect first).
-  const NOINDEX_PATHS = /^\/(api|admin|staff|dashboard|profile|applications|jobs|referrals|kyc|training|wallet|verify-email|forgot-password)(\/|$)/
+  const NOINDEX_PATHS = /^\/(api|admin|dashboard|profile|applications|jobs|referrals|kyc|training|wallet|verify-email|forgot-password)(\/|$)/
   if (NOINDEX_PATHS.test(pathname)) {
     response.headers.set('X-Robots-Tag', 'noindex, nofollow')
   }

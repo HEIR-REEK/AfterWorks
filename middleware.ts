@@ -26,6 +26,7 @@ import {
   MUTATING_METHODS,
   NO_STORE_HEADERS,
   adminConsoleLoginPath,
+  consoleHostKind,
   isAdminConsolePath,
   isSameSiteRequest,
 } from '@/lib/security-core'
@@ -92,6 +93,19 @@ const PREVIEW_HOST = /^[a-z0-9-]+\.e2b\.app$/i
 
 function isOpenPath(pathname: string): boolean {
   return ALWAYS_OPEN.some((path) => pathname === path || pathname.startsWith(`${path}/`))
+}
+
+/**
+ * On the staff subdomain the console is served at the root: `/` is the overview, `/login` the
+ * staff sign-in, `/users` → `/admin/users`, and so on. `/admin/*`, `/api/*`, open paths and static
+ * assets are left alone. Returns null when the path must not be rewritten.
+ */
+function staffConsoleTarget(pathname: string): string | null {
+  if (EXTENSION_PATH.test(pathname)) return null
+  if (pathname.startsWith('/_next') || pathname.startsWith('/api/') || pathname.startsWith('/admin')) return null
+  if (isOpenPath(pathname)) return null
+  if (isNoisePath(pathname)) return null
+  return pathname === '/' ? '/admin' : `/admin${pathname}`
 }
 
 function hostAllowed(host: string | null): boolean {
@@ -226,6 +240,12 @@ export async function middleware(request: NextRequest) {
     console.warn(`[middleware] Host "${host}" is not listed in APP_ALLOWED_HOSTS (dev: passing through).`)
   }
 
+  // The staff panel lives on its own subdomain, so its session cookie (host-only) never shares a
+  // jar with the admin panel in the same browser. Non-console paths there are rewritten into the
+  // console below; the gate treats them as console pages.
+  const hostKind = consoleHostKind(host)
+  const staffTarget = hostKind === 'staff' ? staffConsoleTarget(pathname) : null
+
   // 3. Cross-site writes.
   if (MUTATING_METHODS.has(method) && !WEBHOOK_PATHS.includes(pathname) && !isSameSiteRequest(request.headers)) {
     return reject(403, 'Cross-site request rejected.', 'csrf_rejected')
@@ -262,7 +282,8 @@ export async function middleware(request: NextRequest) {
   //    production and falls back to a process-local dev key otherwise, where the in-app gate
   //    still applies). That keeps local development without ADMIN_SESSION_SECRET working instead
   //    of bouncing an operator around the login form forever.
-  if (isAdminConsolePath(pathname)) {
+  const consoleGatePath = staffTarget ?? pathname
+  if (isAdminConsolePath(consoleGatePath)) {
     // With no signing secret the edge cannot verify a session, but it must still not serve console
     // pages. In production that is a configuration failure: send the operator to the sign-in page
     // (which explains the console is disabled) instead of rendering console chrome and relying on a
@@ -282,7 +303,7 @@ export async function middleware(request: NextRequest) {
       )
       if (!session) {
         const res = NextResponse.redirect(
-          new URL(adminConsoleLoginPath(pathname, request.nextUrl.search), request.url),
+          new URL(adminConsoleLoginPath(consoleGatePath, request.nextUrl.search), request.url),
           307,
         )
         res.headers.set('Cache-Control', 'no-store')
@@ -314,6 +335,7 @@ export async function middleware(request: NextRequest) {
       // /sign-in — `allowSignIn` only keeps auth reachable during a *scoped* window.
       const gated =
         !ADMIN_PATH.test(pathname) &&
+        staffTarget === null &&
         !isOpenPath(pathname) &&
         !isSignInExempt(pathname, status) &&
         (status.blocksAll || isGatedPath(pathname, status))
@@ -371,11 +393,14 @@ export async function middleware(request: NextRequest) {
     }
   }
 
-  // 7. Pass through with hardened headers.
+  // 7. Pass through with hardened headers. On the staff subdomain, console paths are served from
+  //    their pretty URLs (`/`, `/login`, `/users`…) by rewriting into the real /admin routes.
   const headers = new Headers(request.headers)
   headers.set('x-request-id', requestId)
   if (maintenanceMode !== 'off') headers.set('x-afterworks-maintenance-mode', maintenanceMode)
-  const response = NextResponse.next({ request: { headers } })
+  const response = staffTarget
+    ? NextResponse.rewrite(new URL(`${staffTarget}${search}`, request.url), { request: { headers } })
+    : NextResponse.next({ request: { headers } })
   applySecurityHeaders(response)
   response.headers.set('X-Request-Id', requestId)
 

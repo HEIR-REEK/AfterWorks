@@ -11,7 +11,7 @@ import {
   registerFailedAttempt,
   verifyPasscode,
 } from '@/lib/security'
-import { env, envBool, envInt, isEmailLike, isProduction, parseEmailList, NO_STORE_HEADERS } from '@/lib/security-core'
+import { env, envBool, envInt, isEmailLike, isProduction, parseEmailList, consoleHostKind, staffPanelHint, NO_STORE_HEADERS } from '@/lib/security-core'
 import { audit, consumeBucket, fail, json, requestContext, resolveAdmin, type AdminRole } from '@/lib/guards'
 
 /**
@@ -108,16 +108,17 @@ export async function POST(req: NextRequest) {
   // 4+5. Identify the account, then verify *its own* credential (constant-time by construction:
   // hash the candidate, compare digests).
   //
-  //   • owner  — email on the ADMIN_EMAILS roster; signs in with the shared master passcode.
-  //   • staff  — an `admin_accounts` entry created by the owner on the Staff page, with an
-  //              individual password the owner chose.
-  //   • staff with an existing worker account — no `admin_accounts` entry needed: the owner taps
-  //     "Make staff" in the Users drawer (which sets the rules-protected `users.isAdmin` label),
-  //     and the member signs in here with the SAME email + password they use on the worker app.
-  //     The password is verified against Firebase Auth server-side before any session exists.
+  //   • owner  — email on the ADMIN_EMAILS roster; signs in with the shared master passcode on the
+  //              admin panel (the app host).
+  //   • staff  — an `admin_accounts` entry created by the owner ("Make staff" in the Users drawer
+  //              or the Staff page), with an individual password the OWNER allocated. Staff sign
+  //              in on the staff panel (staff.<app domain>) — never with their worker-app password:
+  //              members who signed up with Google have no password at all, so a worker-credential
+  //              door cannot serve them.
+  // There is no third path: `users.isAdmin` is a label, not a credential.
   const roster = parseEmailList(env('ADMIN_EMAILS'))
   let role: AdminRole | null = null
-  let credential: 'master' | 'staff-account' | 'firebase-account' = 'master'
+  let credential: 'master' | 'staff-account' = 'master'
   let passcodeOk = false
 
   if (roster.includes(email)) {
@@ -139,20 +140,6 @@ export async function POST(req: NextRequest) {
         role = account.role === 'owner' ? 'owner' : 'staff'
         credential = 'staff-account'
         passcodeOk = verifyPasscode(account.passcodeHash, passcode)
-      } else {
-        // No separate console account: try the worker-app credential (Firebase Auth password).
-        // Only a profile the owner marked as staff gets a console session from it — the label
-        // itself is never trusted as a credential, and firestore.rules keeps members from
-        // setting it on their own document.
-        const firebase = await signInWithFirebasePassword(email, passcode)
-        if (firebase) {
-          const labelRole = await firestore.getUserRoleByEmail(firebase.email)
-          if (labelRole === 'staff') {
-            role = 'staff'
-            credential = 'firebase-account'
-            passcodeOk = true
-          }
-        }
       }
     } catch (err) {
       console.warn('[admin/auth] account lookup failed:', err)
@@ -161,6 +148,18 @@ export async function POST(req: NextRequest) {
 
   if (!role) return reject('Invalid administrator credentials.', 'not_privileged')
   if (!passcodeOk) return reject('Invalid administrator credentials.', 'bad_passcode')
+
+  // Each panel serves exactly one role. The staff panel (staff subdomain) is for staff only; the
+  // admin panel (app host) is for the main administrator only. Session cookies are host-only, so
+  // the two never share a jar in one browser — a wrong-panel sign-in is a configuration slip, not
+  // a brute-force signal, so it answers 403 without touching the lockout budget.
+  const hostKind = consoleHostKind(req.headers.get('host'))
+  if (hostKind === 'staff' && role === 'owner') {
+    return fail(403, 'The main administrator signs in on the admin panel, not the staff panel.', { code: 'wrong_panel' })
+  }
+  if (hostKind === 'admin' && role === 'staff') {
+    return fail(403, `Staff sign in on the staff panel: https://${staffPanelHint(req.headers.get('host'))}/login`, { code: 'wrong_panel' })
+  }
 
   // 6. Issue the session.
   const session = await createAdminSession(email)
@@ -280,44 +279,4 @@ export async function GET(req: NextRequest) {
     sessionMinutes: Math.round(cfg.sessionTtlMs / 60_000),
     production: isProduction(),
   })
-}
-
-/**
- * Verify an email+password pair against Firebase Auth (Identity Toolkit REST) and, on success,
- * verify the returned ID token with the Admin SDK. Returns the canonical email + uid, or null.
- *
- * Used for the "staff who already has a worker account" door: the owner marks the member staff
- * in the Users drawer, and that member signs in to /admin/login with the same credentials they
- * use on the worker app. The profile label alone never grants anything — the password must be
- * valid AND the label must be set.
- */
-async function signInWithFirebasePassword(
-  email: string,
-  password: string,
-): Promise<{ email: string; uid: string } | null> {
-  const apiKey = env('FIREBASE_WEB_API_KEY') || env('NEXT_PUBLIC_FIREBASE_API_KEY')
-  if (!apiKey) return null
-  try {
-    const res = await fetch(
-      `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${encodeURIComponent(apiKey)}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password, returnSecureToken: true }),
-        cache: 'no-store',
-      },
-    )
-    if (!res.ok) return null
-    const data = (await res.json().catch(() => null)) as { idToken?: string } | null
-    if (!data?.idToken) return null
-    const firestore = await import('@/lib/firestore-admin')
-    if (!firestore.isFirebaseAdminUsable()) return null
-    const decoded = await firestore.verifyIdToken(data.idToken)
-    if (!decoded) return null
-    const verifiedEmail = String(decoded.email ?? '').trim().toLowerCase()
-    if (!verifiedEmail || verifiedEmail !== email.trim().toLowerCase()) return null
-    return { email: verifiedEmail, uid: decoded.uid }
-  } catch {
-    return null
-  }
 }

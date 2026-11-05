@@ -320,10 +320,13 @@ export function FirebaseAuthProvider({
         return { ok: false, error: 'Sign-in is not available on this site right now.', code: 'auth/configuration-not-found' }
       }
       try {
-        const cred = await signInWithEmailAndPassword(authRef.current, email, password)
-        // This browser session signed in deliberately: mark it, so the policy's "restored from
-        // somewhere durable" check does not end a session the member just started.
+        // This browser session is signing in deliberately: mark it BEFORE the auth call. The
+        // onAuthStateChanged listener can fire the moment the credential resolves — before the
+        // next line would run — and with session persistence a restored-looking session without
+        // the marker is force-signed-out, which is exactly why the first sign-in used to bounce
+        // back to /sign-in and only the second one opened the dashboard.
         markAuthSession()
+        const cred = await signInWithEmailAndPassword(authRef.current, email, password)
         // Publish the session *before* the network round trip below, or the app gate sees a null
         // user for its duration and bounces a perfectly good sign-in to /sign-in.
         setUser(cred.user)
@@ -352,8 +355,10 @@ export function FirebaseAuthProvider({
         return { ok: false, error: 'Sign-in is not available on this site right now.', code: 'auth/configuration-not-found' }
       }
       try {
-        const cred = await createUserWithEmailAndPassword(authRef.current, email, password)
+        // Mark before the auth call — see signIn: the listener can observe the new user before
+        // this line would have run and force-sign-out the fresh account.
         markAuthSession()
+        const cred = await createUserWithEmailAndPassword(authRef.current, email, password)
         if (name) await updateProfile(cred.user, { displayName: name })
         await createUserDocument(cred.user.uid, name || email.split('@')[0], email)
         await bootstrapProfile(cred.user)
@@ -493,6 +498,9 @@ export function FirebaseAuthProvider({
       }
       const allowSignUp = options?.allowSignUp !== false
       try {
+        // Mark before the popup resolves — see signIn: the auth-state listener can observe the
+        // new credential before markAuthSession() would have run below and force-sign-out.
+        markAuthSession()
         const provider = new GoogleAuthProvider()
         provider.setCustomParameters({ prompt: 'select_account' })
         const cred = await signInWithPopup(authRef.current, provider)
@@ -518,9 +526,6 @@ export function FirebaseAuthProvider({
         }
 
         const name = cred.user.displayName || cred.user.email?.split('@')[0] || 'Worker'
-        // Google sign-in succeeded and this visitor is being admitted, so this browser session has
-        // now signed in deliberately: mark it before anything else can observe the session.
-        markAuthSession()
         // Ask Auth *before* writing the profile: Google has normally already proven the address,
         // and the document must record what is true rather than a blanket "not yet".
         const googleVerified = await isEmailVerifiedNow(cred.user)

@@ -606,7 +606,7 @@ function UsersPageInner() {
                   </Button>
                 )}
                 {isOwner && (
-                  <Button size="sm" variant="outline" className="gap-1.5" disabled={busy} onClick={() => setConfirm({ action: 'role', title: selected.role === 'admin' ? 'Revoke staff access' : 'Grant staff access', description: selected.role === 'admin' ? 'Removes the staff label and any console account, so this person can no longer sign in to /admin. Role changes are immediate, always audited, and cannot be applied to your own account.' : 'One tap: this member can then sign in to the staff console at /admin with the email and password they already use on the worker app. No new password needed. To add staff who has no worker account, use the Staff page. Role changes are immediate, always audited, and cannot be applied to your own account.', confirmLabel: selected.role === 'admin' ? 'Revoke role' : 'Grant role', tone: selected.role === 'admin' ? 'destructive' : 'default' })}>
+                  <Button size="sm" variant="outline" className="gap-1.5" disabled={busy} onClick={() => setConfirm({ action: 'role', title: selected.role === 'admin' ? 'Revoke staff access' : 'Grant staff access', description: selected.role === 'admin' ? 'Removes the staff label and the staff account, so this person can no longer sign in to the staff panel. Role changes are immediate, always audited, and cannot be applied to your own account.' : 'You allocate a password for this member; they sign in to the staff panel (staff subdomain) with this email and that password. Their worker-app sign-in is not used. Role changes are immediate, always audited, and cannot be applied to your own account.', confirmLabel: selected.role === 'admin' ? 'Revoke role' : 'Grant role', tone: selected.role === 'admin' ? 'destructive' : 'default' })}>
                     <ShieldCheck className="size-3.5" />
                     {selected.role === 'admin' ? 'Revoke staff' : 'Make staff'}
                   </Button>
@@ -778,9 +778,33 @@ function UsersPageInner() {
             }
             case 'role': {
               const granting = selected.role !== 'admin'
-              if (!granting) {
-                // Revoking removes any console account too (404 = there was none to remove), so
-                // both sign-in doors close at once.
+              if (granting) {
+                // Staff sign in with a password the OWNER allocates — never their worker-app
+                // credentials (Google sign-in members have no password). Create the admin_accounts
+                // entry so they can sign in to the staff panel (staff subdomain).
+                const passcode = (document.getElementById('role-passcode') as HTMLInputElement | null)?.value ?? ''
+                const repeat = (document.getElementById('role-passcode2') as HTMLInputElement | null)?.value ?? ''
+                if (passcode.length < 10) {
+                  push('error', 'Choose a staff password of at least 10 characters.')
+                  return undefined
+                }
+                if (passcode !== repeat) {
+                  push('error', 'The two passwords do not match.')
+                  return undefined
+                }
+                try {
+                  await adminApi.staffAdd({ email: selected.email, passcode })
+                } catch (err) {
+                  // 409 = a staff account already exists for this email; keep going and just
+                  // refresh the label (the password can be reset from the Staff page).
+                  if (errorStatus(err) !== 409) {
+                    push('error', describeError(err))
+                    return undefined
+                  }
+                }
+              } else {
+                // Revoking removes the staff account too (404 = there was none to remove), so the
+                // staff panel door closes at once.
                 try {
                   await adminApi.staffRemove(selected.email)
                 } catch (err) {
@@ -790,10 +814,6 @@ function UsersPageInner() {
                   }
                 }
               }
-              // Granting is one tap: it sets the owner-controlled profile label, and the member
-              // signs in at /admin/login with the email + password they already use on the worker
-              // app. No console password is chosen here — for someone with no worker account, add
-              // them by email + password from the Staff page instead.
               return act({ ...base, action: 'role', payload: { isAdmin: granting, email: selected.email } })
             }
             case 'wallet': {
@@ -869,6 +889,30 @@ function UsersPageInner() {
                   autoComplete="current-password"
                   className={inputClass}
                   placeholder="Re-enter the master passcode"
+                />
+              </Field>
+            </div>
+          ) : confirm?.action === 'role' && selected && selected.role !== 'admin' ? (
+            <div className="mt-3 flex flex-col gap-3">
+              <Field
+                label={`Staff panel password for ${selected.email || 'this member'}`}
+                hint="You allocate it — it opens the staff panel (staff subdomain) only, stored as a scrypt hash, never shown again. Their worker-app sign-in (including Google) is untouched and does not open the staff panel."
+              >
+                <input
+                  id="role-passcode"
+                  type="password"
+                  autoComplete="new-password"
+                  className={inputClass}
+                  placeholder="At least 10 characters"
+                />
+              </Field>
+              <Field label="Repeat staff password">
+                <input
+                  id="role-passcode2"
+                  type="password"
+                  autoComplete="new-password"
+                  className={inputClass}
+                  placeholder="Repeat the password"
                 />
               </Field>
             </div>

@@ -340,6 +340,37 @@ export const LEGACY_ADMIN_SESSION_COOKIES = ['afterworks_admin_session'] as cons
  * verified session) and must answer JSON errors, not redirects. `/admin/login` is where you go
  * when the answer is "no", so it is never gated.
  */
+/**
+ * Which console panel a Host header belongs to: the staff panel lives on its own subdomain
+ * (`staff.<app host>`, override with STAFF_SUBDOMAIN), the admin panel on the app host itself.
+ *
+ * Session cookies are set host-only (no Domain attribute), so the two panels never share a cookie
+ * jar — an admin and a staff member can use the same browser in different tabs without their
+ * sessions disrupting each other. This helper only *classifies* the host; both runtimes import it
+ * (edge middleware included), so it must stay runtime-agnostic and read env statically.
+ */
+export function consoleHostKind(hostHeader: string | null | undefined): 'staff' | 'admin' {
+  const sub = String(process.env.STAFF_SUBDOMAIN ?? 'staff').trim().toLowerCase() || 'staff'
+  const host = String(hostHeader ?? '').toLowerCase().split(':')[0].trim()
+  if (!host) return 'admin'
+  if (host === sub || host.startsWith(`${sub}.`)) return 'staff'
+  return 'admin'
+}
+
+/** The staff-panel origin hint shown to a staff member who lands on the admin panel. */
+export function staffPanelHint(hostHeader: string | null | undefined, appUrlEnv?: string): string {
+  const sub = String(process.env.STAFF_SUBDOMAIN ?? 'staff').trim().toLowerCase() || 'staff'
+  const host = String(hostHeader ?? '').toLowerCase().split(':')[0].trim()
+  if (host.startsWith(`${sub}.`)) return host
+  if (host) return `${sub}.${host}`
+  const fallback = String(appUrlEnv ?? process.env.NEXT_PUBLIC_APP_URL ?? process.env.APP_URL ?? '').trim()
+  try {
+    return `${sub}.${new URL(fallback.startsWith('http') ? fallback : `https://${fallback}`).host}`
+  } catch {
+    return `${sub}.<your-app-domain>`
+  }
+}
+
 export function isAdminConsolePath(pathname: string): boolean {
   const path = String(pathname ?? '').split(/[?#]/)[0]
   if (path !== '/admin' && !path.startsWith('/admin/')) return false

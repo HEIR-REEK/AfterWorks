@@ -10,6 +10,7 @@ import {
   type ReactNode,
 } from 'react'
 import { initializeApp, getApps, getApp, type FirebaseApp } from 'firebase/app'
+import { initializeAppCheck, ReCaptchaV3Provider } from 'firebase/app-check'
 import {
   browserLocalPersistence,
   browserSessionPersistence,
@@ -175,6 +176,21 @@ export function FirebaseAuthProvider({
     const app: FirebaseApp = getApps().length ? getApp() : initializeApp(config)
     const auth = getAuth(app)
     authRef.current = auth
+
+    // App Check (optional but recommended in production): proves calls come from the real app,
+    // not a script abusing the public web API key. Enabled only when a reCAPTCHA v3 site key is
+    // configured; without it the app simply runs unprotected, as before.
+    const appCheckKey = String(process.env.NEXT_PUBLIC_FIREBASE_APP_CHECK_SITE_KEY ?? '').trim()
+    if (appCheckKey) {
+      try {
+        initializeAppCheck(app, {
+          provider: new ReCaptchaV3Provider(appCheckKey),
+          isTokenAutoRefreshEnabled: true,
+        })
+      } catch (err) {
+        console.warn('[firebase] App Check init failed; continuing without it:', err)
+      }
+    }
 
     /**
      * Persistence is chosen *before* the first auth event, so a sign-in made from this page lands

@@ -19,7 +19,8 @@ const securityHeaders = [
   // Keep OAuth and checkout popups connected to the page that opened them. `same-origin` breaks
   // Firebase signInWithPopup by severing window.opener before Google can return the result.
   { key: 'Cross-Origin-Opener-Policy', value: 'same-origin-allow-popups' },
-  { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=(), payment=(self), browsing-topics=()' },
+  // camera=(self): the assessment proctor needs the webcam on this origin. microphone stays off.
+  { key: 'Permissions-Policy', value: 'camera=(self), microphone=(), geolocation=(), payment=(self), browsing-topics=()' },
   ...(isProduction
     ? [
         { key: 'Strict-Transport-Security', value: 'max-age=63072000; includeSubDomains; preload' },

@@ -190,7 +190,8 @@ function applySecurityHeaders(res: NextResponse, nonce: string): void {
   if (PRODUCTION) res.headers.set('X-Frame-Options', 'DENY')
   res.headers.set('X-Content-Type-Options', 'nosniff')
   res.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin')
-  res.headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(self), browsing-topics=(), interest-cohort=()')
+  // camera=(self): the assessment proctor needs the webcam on this origin. microphone stays off.
+  res.headers.set('Permissions-Policy', 'camera=(self), microphone=(), geolocation=(), payment=(self), browsing-topics=(), interest-cohort=()')
   // OAuth/payment popups must retain a reference to their opener so they can post the result back.
   // `same-origin` severs that channel for Google's cross-origin window and makes Firebase report a
   // closed/cancelled popup. This still isolates pages opened *by* another origin while allowing

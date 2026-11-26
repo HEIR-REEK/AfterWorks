@@ -8,6 +8,7 @@
     "start": "next start -H 0.0.0.0 -p ${PORT:-3000}",
     "typecheck": "tsc --noEmit",
     "brand:build": "node scripts/build-brand-assets.mjs",
+    "brand:embed": "node scripts/embed-email-logo.mjs",
     "seed:catalogue": "tsx scripts/seed-jobs.ts",
     "hash:admin-password": "node scripts/hash-admin-password.mjs",
     "deploy:rules": "firebase deploy --only firestore:rules,firestore:indexes",
@@ -15,7 +16,11 @@
     "test": "tsx --test tests/*.test.ts",
     "test:browser": "playwright test",
     "backfill:training-fees": "tsx scripts/backfill-training-fees.ts",
-    "backfill:profile-emails": "tsx scripts/backfill-profile-emails.ts"
+    "backfill:profile-emails": "tsx scripts/backfill-profile-emails.ts",
+    "cf:build": "opennextjs-cloudflare build",
+    "cf:preview": "opennextjs-cloudflare preview",
+    "cf:deploy": "opennextjs-cloudflare deploy",
+    "cf:typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts"
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.3.0",
@@ -26,7 +31,7 @@
     "firebase": "^12.16.0",
     "firebase-admin": "^14.3.0",
     "lucide-react": "^0.263.1",
-    "next": "16.4.4",
+    "next": "16.4.6",
     "postcss": "^8.5.17",
     "qrcode.react": "^4.2.0",
     "react": "^18.2.0",
@@ -35,6 +40,7 @@
     "tailwindcss": "^4.3.2"
   },
   "devDependencies": {
+    "@opennextjs/cloudflare": "^1.20.19",
     "@playwright/test": "^1.63.0",
     "@tailwindcss/postcss": "^4.3.2",
     "@types/node": "^20.10.5",
@@ -42,7 +48,8 @@
     "@types/react-dom": "^18.2.18",
     "tsx": "^4.23.13",
     "tw-animate-css": "^1.4.0",
-    "typescript": "^5.3.3"
+    "typescript": "^5.3.3",
+    "wrangler": "^4.168.0"
   },
   "engines": {
     "node": ">=20.11"

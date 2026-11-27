@@ -126,9 +126,16 @@ cached with `max-age`, with a single refresh on an unknown `kid`.
 The certificate → SPKI extraction walks DER TLVs properly; a byte-scan for `0x30` gets long-form
 lengths wrong for 2048-bit keys (this was found by the tests, not by inspection).
 
-### Tests: 31 new, all passing
+### `lib/cloud-benchmark.ts` + `scripts/cloud-firestore.ts` — the decision tool
 
-`tests/firestore-rest.test.ts` (21) and `tests/id-token-rest.test.ts` (10). Notable coverage:
+`npm run cloud:read` measures the Firestore round-trip through the REST client and prints a
+verdict (§5). Credential parsing (quoted / base64 / `\n`-escaped pastes, PKCS#1 vs PKCS#8) and the
+statistics live in the lib module so they are unit-tested; the script is I/O only.
+
+### Tests: 47 new, all passing
+
+`tests/firestore-rest.test.ts` (21), `tests/id-token-rest.test.ts` (10) and
+`tests/cloud-benchmark.test.ts` (16). Notable coverage:
 
 - a payload **edited after signing** is rejected, and a token signed by an attacker key with a
   *known* `kid` is rejected — these prove verification is not just decoding;
@@ -136,7 +143,7 @@ lengths wrong for 2048-bit keys (this was found by the tests, not by inspection)
   id (otherwise they are not in the snapshot);
 - a batch over 500 writes throws before sending rather than half-applying.
 
-**Suite total: 315 tests, 311 pass, 4 fail.** The 4 failures are pre-existing on `main` and
+**Suite total: 331 tests, 327 pass, 4 fail.** The 4 failures are pre-existing on `main` and
 unrelated to this branch — they are listed in §6.
 
 ---
@@ -153,9 +160,11 @@ it:
    `createUser`, `deleteUser`, `updateUser`, `setCustomUserClaims`, `revokeRefreshTokens`. Only
    *token verification* is covered so far. The Identity Toolkit REST API supports all of these, but
    each needs encoding and a test.
-3. **`FieldValue` sentinels** — `arrayUnion` (6), `increment` (3), `delete` (2). These map to the
+3. **KV/Durable-Object backed lockout + rate limiting** (§4a) — required for production, not
+   optional, and it costs a round-trip per rate-limited request.
+4. **`FieldValue` sentinels** — `arrayUnion` (6), `increment` (3), `delete` (2). These map to the
    REST `updateTransforms` / `DELETE_FIELD` machinery and are not yet implemented.
-4. **The `proctor_events` composite index** required by `tests/firestore-indexes.test.ts` (see §6).
+5. **The `proctor_events` composite index** required by `tests/firestore-indexes.test.ts` (see §6).
 
 ---
 
@@ -188,18 +197,59 @@ Two Worker-specific traps, both of which cost real debugging time here:
 
 ---
 
-## 5. Benchmark checklist
+## 4a. A security blocker independent of latency
 
-Run these before deciding whether the migration is worth finishing. The edge-latency win is the
-entire justification, so measure it rather than assuming it.
+Both of these keep their state in `globalThis` — i.e. **in-process memory**:
 
-**Latency**
-- [ ] TTFB p50/p95 for `/` and `/jobs` — Workers vs current Render, same region (Nairobi clients,
-      so compare `nbo`/`jnb`-close PoPs against Render's region).
+- `lib/security.ts:257` — the console passcode lockout (`AttemptStore`).
+- `lib/guards.ts:128` — the per-IP API rate-limit buckets.
+
+On a single Render instance that is fine. On Workers, an isolate is one of many across the fleet,
+so **an attacker gets a fresh attempt budget per isolate**: the 5-attempt console lockout and the
+API rate limits stop being effective guarantees. This must move to KV or Durable Objects *before*
+any production cutover — and note that adds a round-trip to every rate-limited request, which
+further reduces the latency case below.
+
+This is not in the original plan and it is not optional.
+
+## 5. Measure before building: `npm run cloud:read`
+
+The edge-latency win is the entire justification for this work, so it is now a measurement rather
+than a checklist. `scripts/cloud-firestore.ts` exercises `lib/firestore-rest.ts` — the same
+transport a Workers deployment would use — against the real project.
+
+```bash
+set -a && . ./.env.local && set +a
+npm run cloud:status   # credentials, token exchange, one read, datastore location
+npm run cloud:read     # latency benchmark + verdict
+```
+
+It only reads; it never writes or deletes. `read` prints p50/p95 for a point read and for a
+bounded list query, plus the verdict below.
+
+| p50 round-trip | Verdict | What to do |
+|---|---|---|
+| ≤ 80 ms | `favourable` | Continue the port; geography is not the problem. |
+| 81–160 ms | `marginal` | Only overlapped-read routes improve. Hard to justify. |
+| > 160 ms | `unfavourable` | Put Cloudflare **in front of** Render; do not move the app. |
+
+**Run it from the host whose position you are reasoning about.** From a laptop it measures the
+ISP; from a Worker it measures the edge. The second number is the one that matters — and note that
+a `us-central1` datastore (not recorded anywhere in this repo) would make the verdict obvious
+before you run anything.
+
+If the verdict is `unfavourable`, the cheaper option is a Cloudflare proxy in front of the existing
+Render service: CDN, DDoS protection and asset caching for a DNS/TLS change and **no code change**.
+That keeps `firebase-admin` and sidesteps §4a entirely.
+
+### Remaining checklist, once the verdict justifies continuing
+
+**Latency** (the Firestore round-trip is covered by `npm run cloud:read`; these are the rest)
+- [ ] TTFB p50/p95 for `/` and `/jobs` — Workers vs current Render (Nairobi clients, so compare
+      `nbo`/`jnb`-close PoPs against Render's region).
 - [ ] Cold start: first request to a freshly deployed Worker, and after 5 minutes idle.
-- [ ] A request that hits Firestore — REST round-trip to `us-central1` may dominate and erase the
-      edge win. **This is the number that decides the project.**
-- [ ] Console dashboard (`/api/admin`) — it aggregates several reads; measure the fan-out.
+- [ ] Console dashboard (`/api/admin`) — `getPlatformStats` alone issues 7 datastore calls;
+      measure the real fan-out, not the theoretical one.
 
 **CPU (Workers bills CPU time, and the free tier is 10 ms/invocation)**
 - [ ] `scrypt` sign-in: CPU ms per `POST /api/admin/auth`.

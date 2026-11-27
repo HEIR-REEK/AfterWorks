@@ -23,19 +23,47 @@ function read(rel: string): string {
   return readFileSync(resolve(root, rel), 'utf8')
 }
 
+/**
+ * Named imports a module takes from one specifier.
+ *
+ * Pinning the exact import statement (as this file used to) fails every time the route gains an
+ * unrelated import, and a maintainer then "fixes" it by deleting the assertion — losing the guard.
+ * Parsing the list lets the test state the real invariant: which server capabilities the route can
+ * reach. An extra console-notification helper is fine; a verdict writer is not.
+ */
+function importsFrom(source: string, specifier: string): string[] {
+  const pattern = new RegExp(`import\\s*\\{([^}]*)\\}\\s*from\\s*['"]${specifier.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}['"]`, 'g')
+  const names: string[] = []
+  for (const match of source.matchAll(pattern)) {
+    for (const part of match[1]!.split(',')) {
+      const name = part.trim().split(/\s+as\s+/)[0]?.trim()
+      if (name) names.push(name)
+    }
+  }
+  return names
+}
+
 test('the member-facing route only stamps a review request', () => {
   const route = read('app/api/kyc/request/route.ts')
   assert.match(route, /export async function POST/, 'the route must exist')
   assert.match(route, /requestKycReview/, 'it delegates the write to the server helper')
 
   // It must not import anything that could write a verdict. This is the whole security property:
-  // the route can reach exactly two server functions, and neither can verify anyone.
-  assert.match(
-    route,
-    /import \{ requestKycReview, getUserProfile \} from '@\/lib\/firestore-admin'/,
-    'the route reaches exactly the request stamper and a profile read',
-  )
+  // every server helper the route can reach is on an allow-list, and none of them can verify
+  // anyone. An allow-list (rather than an exact import string) is what makes this survive the next
+  // unrelated helper being added without ever permitting a verdict writer.
+  const helpers = importsFrom(route, '@/lib/firestore-admin')
+  const ALLOWED = ['requestKycReview', 'getUserProfile', 'recordAdminNotification']
+  for (const helper of helpers) {
+    assert.ok(
+      ALLOWED.includes(helper),
+      `the member route imported "${helper}", which is not on the read/request allow-list ` +
+        `(${ALLOWED.join(', ')}). A member must never be able to write a verdict.`,
+    )
+  }
+  // Belt and braces: whatever the allow-list says, the decision function is never reachable.
   assert.doesNotMatch(route, /verifyKycAdmin/, 'a member must never reach the decision function')
+  assert.doesNotMatch(route, /approveKyc|rejectKyc|setKycVerified/, 'no verdict writer by any name')
   assert.doesNotMatch(route, /\.set\(|\.update\(|FieldValue/,
     'the route performs no Firestore write of its own — it delegates, so it cannot forge a verdict')
 

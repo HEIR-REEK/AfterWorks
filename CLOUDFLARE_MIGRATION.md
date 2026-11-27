@@ -18,7 +18,7 @@ called out, because the corrections change the remaining work.
 | Worker boots in workerd and serves | ✅ boots, `/api/health` → 200 |
 | Email logo no longer needs a filesystem | ✅ done, tested |
 | REST Firestore + REST ID-token verification written & tested | ✅ 31 new tests |
-| **Every page route renders on Workers** | ❌ **500 — `firebase-admin` reaches `protobufjs`, which calls `Function()` codegen, which workerd forbids** |
+| Every page route renders on Workers | ❌ **500 — `firebase-admin` reaches `protobufjs`, which calls `Function()` codegen, which workerd forbids** |
 
 The last row is the whole migration. Until `firebase-admin` is gone from the request path, the site
 does not run on Workers — regardless of how the Worker is configured.
@@ -143,7 +143,7 @@ statistics live in the lib module so they are unit-tested; the script is I/O onl
   id (otherwise they are not in the snapshot);
 - a batch over 500 writes throws before sending rather than half-applying.
 
-**Suite total: 331 tests, 327 pass, 4 fail.** The 4 failures are pre-existing on `main` and
+**Suite total: 332 tests, 332 pass.** The 4 failures are pre-existing on `main` and
 unrelated to this branch — they are listed in §6.
 
 ---
@@ -164,7 +164,8 @@ it:
    optional, and it costs a round-trip per rate-limited request.
 4. **`FieldValue` sentinels** — `arrayUnion` (6), `increment` (3), `delete` (2). These map to the
    REST `updateTransforms` / `DELETE_FIELD` machinery and are not yet implemented.
-5. **The `proctor_events` composite index** required by `tests/firestore-indexes.test.ts` (see §6).
+5. ~~**The `proctor_events` composite index**~~ — **done** (see §6). It still needs
+   `npm run deploy:indexes` to take effect.
 
 ---
 
@@ -277,22 +278,28 @@ That keeps `firebase-admin` and sidesteps §4a entirely.
 
 ---
 
-## 6. Pre-existing failures on `main` (not caused by this branch)
+## 6. The four pre-existing failures on `main` — now fixed
 
-The suite was not green before any change here: **279 pass / 4 fail** on the base commit. Recorded
-so nobody mistakes them for regressions, and fixed separately:
+The suite was **not** green before any of this work: 279 pass / 4 fail on the base commit. All four
+are resolved on this branch. They are recorded here because one was a real production bug and the
+other three were tests that had stopped testing anything.
 
-| Test | Cause |
-|---|---|
-| `every composite Firestore query has a matching declared index` | `proctor_events` query on `uid ASC, at DESC` has no index in `firestore.indexes.json` |
-| `console authority never falls back to a mutable users.isAdmin label` | source assertion on the console authority path |
-| `identity verification cannot be self-granted, and has no demo approval path` | source assertion on the KYC path |
-| `the member-facing route only stamps a review request` | source assertion on `/api/kyc/request` |
+| Test | Was | Fix |
+|---|---|---|
+| `every composite Firestore query has a matching declared index` | **Real bug.** `getLatestProctorEvent` queried `proctor_events` on `uid` + `at DESC` with no composite index. The call site wraps it in `try/catch → return null`, so the console's proctoring drawer would have failed **silently** in production. | Declared the index in `firestore.indexes.json`. **Requires `npm run deploy:indexes`** — the file alone changes nothing until deployed. |
+| `console authority never falls back to a mutable users.isAdmin label` | Asserted a *comment sentence* verbatim; rewording the comment failed a security test. | Now asserts the property: no `checkUserAdminRoleAdmin` import, and no equality/truthiness test on `isAdmin`. |
+| `identity verification cannot be self-granted…` | Asserted the exact `import { requestKycReview, getUserProfile }` string; the route legitimately gained `recordAdminNotification`. | Now parses the import list and enforces an allow-list of `requestKycReview`, `getUserProfile`, `recordAdminNotification`. |
+| `the member-facing route only stamps a review request` | Same exact-import-string problem. | Same allow-list guard, plus `approveKyc`/`rejectKyc`/`setKycVerified` by any name. |
 
-The first is a real latent bug (a query that will fail in production once a composite index is
-required); the other three are source-text assertions that have drifted from the code.
+**None of the four was a security regression** — the properties held; the assertions had drifted.
+That distinction was checked before changing them, because the tempting repair for a brittle
+assertion is to delete it, which loses the guard.
 
----
+The new parsers are themselves tested (`hardening-fixes.test.ts`), including the aliasing case: a
+`verifyKycAdmin as harmless` import must still be judged as `verifyKycAdmin`. An allow-list that
+silently parses nothing would pass forever.
+
+**Suite is now green: 332 tests, 332 pass.**
 
 ## 7. Recommended path
 
@@ -303,4 +310,4 @@ required); the other three are source-text assertions that have drifted from the
    domain at a time, starting with read-only paths (`public-jobs-server`, `external-jobs-server`),
    then wallet/referrals (transactions), then the console. Keep `firebase-admin` installed
    throughout so `next start` on Render keeps working while the Worker is proven.
-3. **Only then** delete `firebase-admin` and flip DNS.
+4. **Only then** delete `firebase-admin` and flip DNS.

@@ -20,6 +20,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { jobVisibleInRegion } from '@/lib/job-regions'
 import { seedRegionalJobs } from '@/lib/regional-jobs'
+import { findListingCard, listingCards } from '@/lib/job-cards'
 import {
   seedJobs,
   seedWorker,
@@ -334,7 +335,7 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
       authoritative,
       // The region boards are part of the sample catalogue too, or a deployment with no live
       // catalogue shows a single board and no cards on the other three.
-      sample: () => [...seedJobs(), ...seedRegionalJobs()],
+      sample: () => [...seedJobs(), ...seedRegionalJobs(), ...listingCards()],
       at: new Date().toISOString(),
     })
     if (next === catalogueRef.current) return
@@ -930,7 +931,9 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
       clearError: () => setError(null),
       // The live list is the authority (it hears about admin edits first); individually fetched
       // cards fill the gaps for deep links and cards outside the bounded list.
-      getJob: (id: string) => byId.get(id) ?? jobCards[id],
+      // A generated sample listing is not in the catalogue read (and has no document); resolve it
+      // from the same module the board and the API use, so a deep link to one still works.
+      getJob: (id: string) => byId.get(id) ?? jobCards[id] ?? findListingCard(id) ?? undefined,
       getApplicationForJob: (jobId: string) => applications.find((a) => a.jobId === jobId),
       isJobPaid: (jobId: string) => paidTrainings.includes(jobId),
       refreshJobs,

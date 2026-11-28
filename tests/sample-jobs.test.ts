@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { readFileSync } from 'node:fs'
-import { SAMPLE_JOBS, SAMPLE_JOBS_BY_REGION, SAMPLE_JOBS_DISCLOSURE, type SampleRegion } from '@/scripts/sample-jobs'
-import { validateSampleJobs, REGION_TOTALS } from '@/scripts/sample-jobs/validate'
+import { SAMPLE_JOBS, SAMPLE_JOBS_BY_REGION, SAMPLE_JOBS_DISCLOSURE, type SampleRegion } from '@/lib/sample-jobs'
+import { validateSampleJobs, REGION_TOTALS } from '@/lib/sample-jobs/validate'
 
 const REGIONS: SampleRegion[] = ['Europe', 'Africa', 'Asia', 'Americas']
 

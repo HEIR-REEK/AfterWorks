@@ -4,6 +4,7 @@ import { clientIdentity } from '@/lib/security-core'
 import { resolveRequestCountry } from '@/lib/geo-country'
 import { regionForCountry } from '@/lib/pay-regions'
 import { buildRegionalCatalogue, type JobRegion } from '@/lib/job-regions'
+import { listingCards, listingCardsByRegion, isListingCardId } from '@/lib/job-cards'
 
 /**
  * GET /api/jobs/board — the job board this member may open, decided by where they connect from.
@@ -76,7 +77,12 @@ export async function GET(req: NextRequest) {
 
     const cap = Math.min(200, Math.max(10, Number(req.nextUrl.searchParams.get('limit') ?? 120)))
     const snap = await db.collection('jobs').limit(cap).get()
-    const cards = snap.docs.map((doc) => toCard(doc.id, (doc.data() ?? {}) as Record<string, unknown>))
+    const stored = snap.docs.map((doc) => toCard(doc.id, (doc.data() ?? {}) as Record<string, unknown>))
+    // The 100 employment listings are generated cards, not documents: they are served here so the
+    // board has content without an import step. A stored card always wins on id, so publishing a
+    // listing into Firestore later replaces the generated one rather than duplicating it.
+    const storedIds = new Set(stored.map((card) => String(card.id)))
+    const cards = [...stored, ...listingCards().filter((card) => !storedIds.has(card.id))]
 
     const board = buildRegionalCatalogue(
       cards.map((card) => ({ ...card, region: card.region as string | undefined })),

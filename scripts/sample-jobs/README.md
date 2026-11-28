@@ -38,19 +38,29 @@ education, applicationDeadline, applicants, applicationRequirements, isSample`
 the board can sort and filter in one currency without a live FX call. If your platform converts at
 import time instead, ignore it and use `salary`.
 
-## How this differs from the region boards
+## They are on the board now
 
-The platform's own regional catalogue (`lib/regional-jobs.ts`) is **micro-work**: task cards with
-a training briefing and a 20-question assessment, which is what the assessment and application APIs
-expect. These 100 listings are **employment marketplace** records — employers, salaries, experience
-levels — and they are not wired into that flow.
+`lib/card-from-listing.ts` converts each listing into a board card, and `lib/job-cards.ts` groups
+them by board. They are **served, not stored**: `GET /api/jobs/board` returns them after the live
+catalogue, the provider's sample fallback includes them, and a deep link to one resolves through
+`findListingCard()`.
 
-Choose one of these before publishing them on the site:
+What that means in practice:
 
-1. **A separate listings surface** (recommended). A `/jobs/global` or employer-listing page backed by
-   its own table/collection, showing the sample banner. No assessment, no training fee.
-2. **Into the existing board** — only if each listing is given a category, an assessment and a
-   training decision, because the board's apply flow refuses a card with no assessment. Importing
-   them as-is would create cards that no member can apply for.
+| | Value | Why |
+|---|---|---|
+| Category | Derived from the title | `categoryForListing()`; drives which built-in assessment bank is served |
+| Pay | The advertised salary as an **hourly** USD figure | A monthly salary is divided by 160 hours, a weekly one by 40 (`PAY_BASIS`) |
+| Duration | 60 minutes | The pay is hourly, so the task is an hour |
+| Training | **Not required** | Demo content should be startable at once; the built-in bank is the assessment |
+| Slots | 25 | A constant: no document means no slot counter |
+| Close date | From the listing's deadline | `applicationDeadline` |
+
+The assessment is the built-in bank for the category, and **applying works**: `createListingApplication()`
+checks identity verification, the assessment pass, the deadline and duplicates, and prices the payout
+from the member's verified region — the same guarantees a stored card gets.
+
+If you later publish a listing into Firestore under the same `listing-…` id, the stored document wins
+and the generated card is replaced rather than duplicated.
 
 Nothing in this folder writes to Firestore on its own.

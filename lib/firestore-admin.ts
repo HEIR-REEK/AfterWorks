@@ -2938,7 +2938,21 @@ export async function getAssessmentSource(jobId: string): Promise<AssessmentSour
   const db = dbOrNull()
   if (!db) return null
   const snap = await db.collection('jobs').doc(jobId).get()
-  if (!snap.exists) return null
+  // A generated sample listing has no document — it is served from `lib/job-cards.ts`. Its
+  // assessment is the built-in bank for its category, so it is answered here rather than 404ing.
+  if (!snap.exists) {
+    const { findListingCard } = await import('@/lib/job-cards')
+    const card = findListingCard(jobId)
+    if (!card) return null
+    const builtIn = (await import('@/lib/assessment-bank')).builtInQuestions(card.category as never)
+    return {
+      jobTitle: card.title,
+      category: card.category,
+      questions: builtIn,
+      passMark: assessmentPassMark(builtIn.length),
+      authored: false,
+    }
+  }
   const data = (snap.data() ?? {}) as Record<string, unknown>
   const category = String(data.category ?? 'Data Entry')
   const authoredQuestions = normaliseAssessmentQuestions(data.assessmentQuestions)
@@ -3128,6 +3142,75 @@ async function resolvePayoutCountryFor(uid: string): Promise<string> {
   }
 }
 
+/**
+ * Record an application to a generated sample listing.
+ *
+ * The listing has no `jobs/{id}` document, so a transaction over `jobSnap.ref` is meaningless. What
+ * still has to be true is everything the platform guarantees a member: identity verification, a
+ * passing assessment, an open window, no duplicate, and slots that do not overfill. The slot count
+ * is the card's constant (sample listings are not raced by real workers), and the duplicate check
+ * plus the write stay in one transaction so two taps cannot create two applications.
+ *
+ * Pricing uses the member's **verified** region, exactly as for a stored card — the card's pay is
+ * the advertised hourly rate, and the member is paid their region's rate for it.
+ */
+async function createListingApplication(
+  db: FirebaseFirestore.Firestore,
+  uid: string,
+  user: Record<string, unknown>,
+  card: { id: string; title: string; category: string; payAmountUsd: number; closesAt: string },
+): Promise<CreatedApplication> {
+  const assessmentPasses = Array.isArray(user.assessmentPasses) ? (user.assessmentPasses as string[]) : []
+  if (!assessmentPasses.includes(card.id)) {
+    throw new TransitionError('Pass the assessment for this job before applying.', 403)
+  }
+  if (new Date(card.closesAt).getTime() < Date.now()) {
+    throw new TransitionError('The application window for this job has closed.', 409)
+  }
+
+  const payRegionModule = await import('@/lib/pay-regions')
+  const payoutCountry = await resolvePayoutCountryFor(uid)
+  const resolvedRegion = payRegionModule.resolveWorkerRegion({
+    verifiedCountry: user.verifiedCountry,
+    payoutCountry,
+    declaredCountry: user.country,
+  })
+  const amountUsd = payRegionModule.payForRegion({ payAmountUsd: card.payAmountUsd }, resolvedRegion.region)
+
+  const applicationId = `app-${uid.slice(-6)}-${Date.now().toString(36)}`
+  const appRef = db.collection('applications').doc(applicationId)
+
+  await db.runTransaction(async (tx) => {
+    const duplicates = await tx.get(
+      db.collection('applications').where('jobId', '==', card.id).where('workerUid', '==', uid).limit(1),
+    )
+    if (!duplicates.empty) throw new TransitionError('You have already applied to this job.', 409)
+
+    tx.set(appRef, {
+      id: applicationId,
+      jobId: card.id,
+      jobTitle: card.title,
+      category: card.category,
+      workerUid: uid,
+      workerEmail: user.email ?? '',
+      amountUsd,
+      payRegion: resolvedRegion.region,
+      payBasis: resolvedRegion.basis,
+      status: 'under_review',
+      sampleListing: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    })
+  })
+
+  return {
+    applicationId,
+    jobTitle: card.title,
+    workerName: String(user.name ?? user.displayName ?? ''),
+    workerEmail: String(user.email ?? ''),
+  }
+}
+
 export async function createApplicationServer(uid: string, jobId: string): Promise<CreatedApplication> {
   const db = adminDb()
   const [userSnap, jobSnap] = await Promise.all([db.collection('users').doc(uid).get(), db.collection('jobs').doc(jobId).get()])
@@ -3139,7 +3222,14 @@ export async function createApplicationServer(uid: string, jobId: string): Promi
   if (state === 'banned') throw new TransitionError('This account is not eligible for new applications.', 403)
   if (user.kycVerified !== true) throw new TransitionError('Complete identity verification before applying for paid work.', 403)
 
-  if (!jobSnap.exists) throw new TransitionError('That job is no longer listed.', 404)
+  if (!jobSnap.exists) {
+    // Generated sample listing: no document, but a real card the member can apply to. Business
+    // refusals below still apply — the assessment pass is checked, slots come from the card.
+    const { findListingCard } = await import('@/lib/job-cards')
+    const card = findListingCard(jobId)
+    if (!card) throw new TransitionError('That job is no longer listed.', 404)
+    return createListingApplication(db, uid, user, card)
+  }
   const job = (jobSnap.data() ?? {}) as Record<string, unknown>
   if (job.status !== 'open') throw new TransitionError('This job is no longer open.', 409)
   if (job.requiresVerified !== false && user.kycVerified !== true) throw new TransitionError('This job requires a verified profile.', 403)

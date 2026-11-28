@@ -447,14 +447,6 @@ export default function AdminPayoutsPage() {
                     <Copy className="size-3" /> Copy account number
                   </button>
                 )}
-                {/* PayPal is stored but cannot be disbursed yet: say so on the request, so nobody
-                    marks it paid and assumes the money left. */}
-                {selected.method === 'PayPal' ? (
-                  <p className="mt-2 rounded-lg bg-warning/10 p-2 text-warning">
-                    PayPal payouts are not live. This request cannot be marked paid — ask the member to
-                    switch to M-Pesa or a bank account.
-                  </p>
-                ) : null}
               </div>
             </div>
 

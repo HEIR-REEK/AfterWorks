@@ -287,8 +287,13 @@ test('every method has presentation copy, including the one that is not live', a
     // The payable flag must agree with the single source of truth.
     assert.equal(entry.payable, isPayoutMethodPayable(method), `${method} payable flag disagrees`)
   }
-  // Payne: the PayPal description must warn, because the option is selectable.
-  assert.match(PAYOUT_METHOD_PRESENTATION.PayPal.description, /not switched on yet/i)
+  // The PayPal copy reads as ordinary payout copy now. The caveat still exists — but it is the
+  // *server's* job to enforce it (see the settlement gate below), not a badge's job to advertise it.
+  assert.doesNotMatch(
+    PAYOUT_METHOD_PRESENTATION.PayPal.description,
+    /not (live|switched on)/i,
+    'the member-facing description should not carry a status caveat',
+  )
   // An unknown stored value falls back rather than rendering undefined.
   assert.equal(payoutMethodPresentation('Bitcoin').method, 'M-Pesa')
   assert.equal(payoutMethodPresentation(undefined).method, 'M-Pesa')
@@ -318,18 +323,20 @@ test('the console can copy a PayPal address, and says the request cannot be paid
   // A PayPal destination has no account number: "copy account number" would copy "".
   assert.match(admin, /Copy PayPal email/)
   assert.match(admin, /selected\.destination\.paypalEmail/)
-  // Nobody should mark a PayPal request paid and assume the money left.
-  assert.match(admin, /PayPal payouts are not live/)
+  // The warning banner is gone from the console, so the refusal has to live in the transition
+  // itself — asserted separately in the settlement-gate tests. What still has to hold here is that
+  // the console shows the PayPal address, not an empty account number.
+  assert.doesNotMatch(admin, /PayPal payouts are not live/)
 })
 
-test('the wallet shows the "not live" state as a blocker, not as an error', () => {
+test('the wallet paints no "not live" badge beside the payout method', () => {
   const panel = read('components/withdraw-panel.tsx')
-  // A saved-but-unpayable method must reach the blocker list so the member reads it before
-  // filling in an amount.
-  assert.match(panel, /payouts\.destination\.notYetPayable/)
-  assert.match(panel, /blockers\.push\(payouts\.destination\.notYetPayable\)/)
-  // And the destination row carries a badge rather than looking like a normal ready method.
-  assert.match(panel, /Not live/)
+  assert.doesNotMatch(panel, /Not live/, 'the wallet badge was removed on request')
+  assert.doesNotMatch(panel, />\s*Not live\s*</)
+  // The method is still named through the shared helper — removing the badge must not cost the
+  // member the ability to see where the money is going.
+  assert.match(panel, /<PayoutMethodIcon method=\{payouts\.destination\.method\}/)
+  assert.match(panel, /\{payouts\.destination\.label\}/)
 })
 
 test('the profile shows one description per method and a labelled summary', () => {

@@ -2,7 +2,7 @@ import { NextRequest } from 'next/server'
 import { consumeBucket, fail, json, requireVerifiedUser, routeError } from '@/lib/guards'
 import { readJsonBody, sanitizeLine } from '@/lib/security-core'
 import { publicAssessmentQuestions } from '@/lib/assessment-bank'
-import { gateJobId } from '@/lib/job-region-gate'
+import { gateJobId, requestEntitlements, unpaidCardRefusal } from '@/lib/job-region-gate'
 import { taskPayUsd, taskRateUsd, taskTimerMinutes, taskTimerState, describeRemaining, type TaskCard } from '@/lib/task-pay'
 import { resolveWorkerRegion, type RegionalPay } from '@/lib/pay-regions'
 
@@ -36,6 +36,10 @@ export async function GET(req: NextRequest) {
     // unblurred grid could read and pass its assessment they are not entitled to take.
     const gated = await gateJobId(req, jobId, guard.value.uid)
     if (!gated.gate.ok) return fail(403, gated.gate.message, { code: 'region_locked', details: { jobRegion: gated.gate.jobRegion } })
+    // A card that states a fee is not open until it is paid. The region gate above only says which
+    // board the member may reach; this says whether they have bought this card's work.
+    const unpaid = await unpaidRefusalFor(req, guard.value.uid, gated.job, gated.gate.region)
+    if (unpaid) return fail(402, unpaid.message, { code: unpaid.code, jobRegion: unpaid.jobRegion, feeUsd: unpaid.feeUsd })
 
     const firestore = await import('@/lib/firestore-admin')
     if (!firestore.isFirebaseAdminUsable()) return fail(503, 'Assessment is temporarily unavailable.', { code: 'storage_unavailable' })
@@ -78,6 +82,9 @@ export async function POST(req: NextRequest) {
     // forged submission for another region's card has to be refused here as well.
     const gated = await gateJobId(req, jobId, guard.value.uid)
     if (!gated.gate.ok) return fail(403, gated.gate.message, { code: 'region_locked', details: { jobRegion: gated.gate.jobRegion } })
+    // Scoring is the moment a task is finished, so the same paywall applies: no paid fee, no credit.
+    const unpaid = await unpaidRefusalFor(req, guard.value.uid, gated.job, gated.gate.region)
+    if (unpaid) return fail(402, unpaid.message, { code: unpaid.code, jobRegion: unpaid.jobRegion, feeUsd: unpaid.feeUsd })
 
     const firestore = await import('@/lib/firestore-admin')
     if (!firestore.isFirebaseAdminUsable()) return fail(503, 'Assessment is temporarily unavailable.', { code: 'storage_unavailable' })
@@ -255,4 +262,21 @@ async function startTaskTimer(
     console.warn('[assessments] task timer not started:', err)
     return null
   }
+}
+
+/**
+ * The unpaid-fee refusal for one card, or `null` when it may be worked.
+ *
+ * Reads the profile's two entitlements once and hands them to the pure rule, so the GET (questions),
+ * the POST (scoring) and the apply all answer with the same sentence.
+ */
+async function unpaidRefusalFor(
+  req: NextRequest,
+  uid: string,
+  job: Record<string, unknown> | null,
+  region: Parameters<typeof unpaidCardRefusal>[0]['resolvedRegion'],
+) {
+  if (!job) return null
+  const { unlockedRegions, paidCards } = await requestEntitlements(req, uid)
+  return unpaidCardRefusal({ card: job, resolvedRegion: region, paidCards, unlockedRegions })
 }

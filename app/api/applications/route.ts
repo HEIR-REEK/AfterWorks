@@ -1,7 +1,7 @@
 import { after, NextRequest } from 'next/server'
 import { consumeBucket, fail, json, maintenanceBlockForApi, requireUser, requireVerifiedUser, routeError } from '@/lib/guards'
 import { sanitizeLine } from '@/lib/security-core'
-import { gateJobId } from '@/lib/job-region-gate'
+import { gateJobId, requestEntitlements, unpaidCardRefusal } from '@/lib/job-region-gate'
 
 /**
  * /api/applications — real job applications.
@@ -98,9 +98,21 @@ export async function POST(req: NextRequest) {
     // The board only *shows* a member their region's cards; this is what actually stops them
     // applying to another region's card by pasting its id from a previous session, a shared link or
     // a friend's screen. Shared with the assessment and checkout routes so the three cannot drift.
-    const gated = await gateJobId(req, jobId)
+    const gated = await gateJobId(req, jobId, guard.value.uid)
     if (!gated.gate.ok) {
       return fail(403, gated.gate.message, { code: 'region_locked', details: { jobRegion: gated.gate.jobRegion } })
+    }
+    // And the fee: passing this card's task without paying its (or its region's) access price must not
+    // turn into an application. Without this the paywall is a hidden button and the route is the door.
+    const { unlockedRegions, paidCards } = await requestEntitlements(req, guard.value.uid)
+    const unpaid = unpaidCardRefusal({
+      card: gated.job,
+      resolvedRegion: gated.gate.region,
+      paidCards,
+      unlockedRegions,
+    })
+    if (unpaid) {
+      return fail(402, unpaid.message, { code: unpaid.code, jobRegion: unpaid.jobRegion, feeUsd: unpaid.feeUsd })
     }
 
     const application = await firestore.createApplicationServer(guard.value.uid, jobId)

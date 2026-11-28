@@ -121,3 +121,83 @@ test('the training modules were not removed with the fee', () => {
   const catalogue = readFileSync('lib/regional-jobs.ts', 'utf8')
   assert.match(catalogue, /trainingNotes/)
 })
+
+// ─── The gate itself: a priced card is not open until it is paid ────────────
+
+test('a priced card on the member’s own board is locked until its fee is paid', async () => {
+  const { unpaidCardRefusal } = await import('@/lib/job-region-gate')
+  const card = { id: 'job-ke-1', title: 'Enter supplier invoices', region: 'Africa', trainingFeeUsd: 4, trainingRequired: true }
+
+  const unpaid = unpaidCardRefusal({ card, resolvedRegion: 'Africa', paidCards: [], unlockedRegions: [] })
+  assert.ok(unpaid, 'the whole point of the fee: an unpaid card is refused')
+  assert.equal(unpaid!.code, 'payment_required')
+  assert.match(unpaid!.message, /\$4\.00/)
+  assert.match(unpaid!.message, /still locked/)
+
+  // Paid → open. Note the unlock list is irrelevant here: this is the card's own fee.
+  assert.equal(unpaidCardRefusal({ card, resolvedRegion: 'Africa', paidCards: ['job-ke-1'], unlockedRegions: [] }), null)
+})
+
+test('a card priced for another region is paid for by that region, not by the card', async () => {
+  const { unpaidCardRefusal } = await import('@/lib/job-region-gate')
+  const card = { id: 'job-us-7', title: 'Business Analyst', region: 'Americas', trainingFeeUsd: 12, trainingRequired: true }
+
+  const unpaid = unpaidCardRefusal({ card, resolvedRegion: 'Africa', paidCards: [], unlockedRegions: [] })
+  assert.ok(unpaid)
+  assert.match(unpaid!.message, /priced for Americas/)
+  assert.match(unpaid!.message, /paid once for the whole region/)
+
+  // The region unlock is what opens it — the card's own id in paidTrainings is not enough for a
+  // pre-existing member, and it must not be: they never bought the Americas tier.
+  assert.equal(unpaidCardRefusal({ card, resolvedRegion: 'Africa', paidCards: [], unlockedRegions: ['Americas'] }), null)
+})
+
+test('a free card, an untrained card, and an unresolved region are never charged', async () => {
+  const { unpaidCardRefusal } = await import('@/lib/job-region-gate')
+  assert.equal(
+    unpaidCardRefusal({ card: { id: 'a', region: 'Africa', trainingFeeUsd: 0 }, resolvedRegion: 'Africa', paidCards: [], unlockedRegions: [] }),
+    null,
+    'no fee, nothing to pay',
+  )
+  assert.equal(
+    unpaidCardRefusal({ card: { id: 'b', region: 'Africa', trainingFeeUsd: 4, trainingRequired: false }, resolvedRegion: 'Africa', paidCards: [], unlockedRegions: [] }),
+    null,
+    'an assessment-only card has no gate even if a stale fee is stored',
+  )
+  // An unresolved region must NOT make a foreign-priced card free — that is the same hole one layer
+  // up. It fails closed on the money, and still honours a member who has paid either way.
+  assert.ok(
+    unpaidCardRefusal({ card: { id: 'c', region: 'Americas', trainingFeeUsd: 12, trainingRequired: true }, resolvedRegion: null, paidCards: [], unlockedRegions: [] }),
+    'a geo outage must not open another region’s priced cards',
+  )
+  assert.equal(
+    unpaidCardRefusal({ card: { id: 'c', region: 'Americas', trainingFeeUsd: 12, trainingRequired: true }, resolvedRegion: null, paidCards: ['c'], unlockedRegions: [] }),
+    null,
+    'but a paid member is never locked out of what they bought',
+  )
+})
+
+test('every route that can start or finish a card’s work enforces the fee', () => {
+  // The bug this pins: hiding the pay block in the page left the routes open, so a priced card could
+  // be worked for free by calling the API. The gate is only a gate if the server enforces it.
+  const assessments = readFileSync('app/api/assessments/route.ts', 'utf8')
+  assert.equal(
+    (assessments.match(/unpaidCardRefusal|unpaidRefusalFor/g) ?? []).length >= 3,
+    true,
+    'the questions and the scoring are both paywalled',
+  )
+  assert.match(assessments, /code: unpaid\.code/)
+  const applications = readFileSync('app/api/applications/route.ts', 'utf8')
+  assert.match(applications, /unpaidCardRefusal\(/)
+  assert.match(applications, /402/)
+})
+
+test('the card page gates on the fee and admits it in words', () => {
+  const page = readFileSync('app/jobs/[id]/page.tsx', 'utf8')
+  assert.match(page, /needsUnlock/, 'a foreign-priced card is identified')
+  assert.match(page, /Pay \$\{trainingFee\} to Unlock \$\{cardRegion\} Prices/, 'and the button says what the money buys')
+  const training = readFileSync('app/training/[id]/page.tsx', 'utf8')
+  assert.match(training, /const isPaid = !needsUnlock && !needsTrainingPayment/, 'the training page keeps the pay gate')
+  assert.match(training, /\{!isPaid && \(/, 'and renders the checkout when it is unpaid')
+  assert.match(training, /Unlock \{priceRegion\} Job Prices/, 'the checkout is labelled as a price unlock')
+})

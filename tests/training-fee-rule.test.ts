@@ -148,7 +148,10 @@ test('the member surfaces branch on the same choice', () => {
   assert.match(training, /const hasTraining = jobHasTraining\(job\)/)
   assert.match(training, /\{!hasTraining && \(/, 'and takes the assessment-only branch')
   assert.doesNotMatch(training, /hasTraining && !isPaid/, 'the per-card paywall is retired')
-  const assessmentOnly = training.slice(training.indexOf('{!hasTraining && ('), training.indexOf('{hasTraining && ('))
+  const assessmentOnly = training.slice(
+    training.indexOf('{!hasTraining && ('),
+    training.indexOf('A PRICED CARD THE MEMBER HAS NOT PAID FOR'),
+  )
   assert.doesNotMatch(assessmentOnly, /TrainingModules/, 'no modules on an assessment-only card')
   assert.match(assessmentOnly, /AssessmentQuiz/, 'just the assessment')
   // The card that has training shows it, and the course is not behind a card-level charge.

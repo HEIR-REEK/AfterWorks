@@ -295,7 +295,7 @@ test('the board route resolves the region from the request, and reads no profile
 test('an application to another region board is refused, not just blurred', () => {
   // The card is on screen (blurred), so pasting its id is the bypass that matters.
   const route = readFileSync('app/api/applications/route.ts', 'utf8')
-  assert.match(route, /gateJobId\(req, jobId\)/)
+  assert.match(route, /gateJobId\(req, jobId, guard\.value\.uid\)/)
   assert.match(route, /code: 'region_locked'/)
   // And it must fail open when the region cannot be resolved, or a geo outage blocks all work.
   const gate = readFileSync('lib/job-region-gate.ts', 'utf8')

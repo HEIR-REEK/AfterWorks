@@ -123,22 +123,42 @@ export async function loadJobCard(jobId: string): Promise<Record<string, unknown
  * would hand the whole catalogue to everyone and quietly delete the price tiers.
  */
 export async function requestUnlockedRegions(req: NextRequest, knownUid?: string): Promise<PayRegion[]> {
+  const entitlements = await requestEntitlements(req, knownUid)
+  return entitlements.unlockedRegions
+}
+
+/**
+ * The member's price entitlements, read once: which regions they may work, and which cards on their
+ * own board they have paid for.
+ *
+ * Both come from the same profile read because every card action needs both — a foreign card is
+ * unlocked by its region, a card on the member's own board by its own fee. Splitting them into two
+ * reads would be two chances to disagree.
+ */
+export async function requestEntitlements(
+  req: NextRequest,
+  knownUid?: string,
+): Promise<{ unlockedRegions: PayRegion[]; paidCards: string[] }> {
+  const none = { unlockedRegions: [] as PayRegion[], paidCards: [] as string[] }
   try {
     let uid = knownUid ?? ''
     if (!uid) {
       const bearer = (req.headers.get('authorization') || '').replace(/^Bearer /i, '').trim()
-      if (!bearer) return []
+      if (!bearer) return none
       const { verifyIdToken } = await import('@/lib/firestore-admin')
       const decoded = await verifyIdToken(bearer)
       uid = decoded?.uid ?? ''
     }
-    if (!uid) return []
+    if (!uid) return none
     const { dbOrNull } = await import('@/lib/firestore-admin')
     const db = dbOrNull()
-    if (!db) return []
+    if (!db) return none
     const snap = await db.collection('users').doc(uid).get()
-    if (!snap.exists) return []
+    if (!snap.exists) return none
     const raw = (snap.data() ?? {}) as Record<string, unknown>
+    const paidCards = Array.isArray(raw.paidTrainings)
+      ? (raw.paidTrainings as unknown[]).filter((v): v is string => typeof v === 'string' && v !== '')
+      : []
     const list = Array.isArray(raw.unlockedPriceRegions) ? raw.unlockedPriceRegions : []
     const known: PayRegion[] = ['Africa', 'Americas', 'Europe', 'Asia']
     const out: PayRegion[] = []
@@ -146,8 +166,64 @@ export async function requestUnlockedRegions(req: NextRequest, knownUid?: string
       const region = String(value ?? '').trim() as PayRegion
       if (known.includes(region) && !out.includes(region)) out.push(region)
     }
-    return out
+    return { unlockedRegions: out, paidCards }
   } catch {
-    return []
+    return none
+  }
+}
+
+/**
+ * Refuse a card that states a fee the member has not paid.
+ *
+ * The gate that makes a fee mean something, on the server, for every entry point that can start a
+ * card's work — the assessment questions, the scoring call, and the apply. Without it the charged
+ * state is cosmetic: hiding the button in the page leaves the route open, which is exactly how a
+ * "priced" card ends up being worked for free.
+ *
+ * Two ways to be paid up, and they are deliberately different things:
+ *  • the card's own fee was bought (`paidTrainings`, the per-card charge), or
+ *   * the card's region was bought (`unlockedPriceRegions`, the price-access charge).
+ *
+ * A card with no fee, or the member's own free board, is always fine. Storage trouble fails *open*
+ * here, unlike the region list: a database blip must not lock a member out of work they have paid
+ * for, and the money question is answered by a profile the route already read.
+ */
+export function unpaidCardRefusal(input: {
+  card: { id?: unknown; title?: unknown; region?: unknown; trainingFeeUsd?: unknown; trainingRequired?: unknown } | null
+  resolvedRegion: PayRegion | null
+  paidCards: readonly string[]
+  unlockedRegions: readonly string[]
+}): { message: string; code: 'payment_required'; jobRegion: string; feeUsd: number } | null {
+  const card = input.card
+  if (!card) return null
+  const fee = Number(card.trainingFeeUsd ?? 0) || 0
+  if (fee <= 0) return null
+
+  const cardRegion = String(card.region ?? '')
+  // Unknown region is *not* the same as "mine". A geo outage must not turn every foreign card into a
+  // free one, so the card is only treated as the member's own when the regions genuinely match (or
+  // the card is global). Everything else has to clear one of the two entitlements.
+  const ownBoard = cardRegion === '' || (input.resolvedRegion !== null && cardRegion === input.resolvedRegion)
+  // A foreign card is paid for by its region's price, whatever its own fee says. When the region is
+  // unresolved, either entitlement is honoured — a member who has paid is never blocked, and one who
+  // has not is still refused.
+  if (!ownBoard) {
+    if (input.unlockedRegions.includes(cardRegion)) return null
+    if (input.resolvedRegion === null && input.paidCards.includes(String(card.id ?? ''))) return null
+    return {
+      code: 'payment_required',
+      jobRegion: cardRegion,
+      feeUsd: fee,
+      message: `“${String(card.title ?? 'This job')}” is priced for ${cardRegion}. Pay to access ${cardRegion} job prices to work it — $${fee.toFixed(2)}, paid once for the whole region.`,
+    }
+  }
+  // On the member's own board: the card's own fee is the gate, and only a training card has one.
+  if (card.trainingRequired !== true) return null
+  if (input.paidCards.includes(String(card.id ?? ''))) return null
+  return {
+    code: 'payment_required',
+    jobRegion: cardRegion,
+    feeUsd: fee,
+    message: `“${String(card.title ?? 'This job')}” has a $${fee.toFixed(2)} access fee that has not been paid, so its course and task are still locked. Pay it from the card to start.`,
   }
 }

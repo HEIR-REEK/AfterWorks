@@ -202,7 +202,14 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ refe
       })
       return fail(binding.code === 'uid_mismatch' ? 403 : 409, binding.message, { code: binding.code })
     }
-    const jobId = binding && binding.ok ? binding.jobId : stored.jobId
+    // A region charge opened from a card still *returns* that card, so the page that asked can decide
+    // whether the unlock it just bought is the one it was waiting for. This is a return value, not a
+    // grant: the entitlement is the region, and it has already been written above.
+    const jobId = isPriceAccess
+      ? stored.jobId || jobIdParam
+      : binding && binding.ok
+        ? binding.jobId
+        : stored.jobId
 
     const expectedSubunits = expectedSubunitsFor(stored, tx.metadata)
     const paidSubunits = Number(tx.amount ?? 0)

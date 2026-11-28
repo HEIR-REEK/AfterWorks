@@ -106,6 +106,10 @@ export async function POST(req: NextRequest) {
   // opened from a card page still buys the right tier.
   const requestedRegion = sanitizeLine(parsed.data.priceRegion, 20)
   const jobId = sanitizeLine(parsed.data.jobId, 80)
+  // The card the member was reading, when the checkout was opened from one. It does not bind the
+  // charge (the region does), but it is where the payer is sent back to, so they land on the card
+  // they paid for instead of a page that says nothing about it.
+  const cardId = sanitizeLine(parsed.data.cardId, 80)
   if (!requestedRegion && !jobId) return fail(400, 'Say which region’s job prices you want to unlock.', { code: 'missing_price_region' })
 
   try {
@@ -139,7 +143,10 @@ export async function POST(req: NextRequest) {
 
     const reference = `aw_px_${randomId(10)}`
     const { origin: callbackOrigin, popupMode } = browserReachableOrigin(req)
-    const callbackUrl = popupMode ? '' : `${callbackOrigin}/prices?region=${encodeURIComponent(target)}`
+    const returnPath = /^[A-Za-z0-9_-]{3,80}$/.test(cardId)
+      ? `/training/${encodeURIComponent(cardId)}?region=${encodeURIComponent(target)}`
+      : `/prices?region=${encodeURIComponent(target)}`
+    const callbackUrl = popupMode ? '' : `${callbackOrigin}${returnPath}`
 
     const upstream = await fetch('https://api.paystack.co/transaction/initialize', {
       method: 'POST',
@@ -154,7 +161,14 @@ export async function POST(req: NextRequest) {
         currency: 'KES',
         reference,
         ...(callbackUrl ? { callback_url: callbackUrl } : {}),
-        metadata: { uid, jobId, priceRegion: target, purpose: PRICE_ACCESS_PURPOSE, expectedAmountKes: amountKes },
+        metadata: {
+          uid,
+          jobId: jobId || cardId,
+          priceRegion: target,
+          purpose: PRICE_ACCESS_PURPOSE,
+          expectedAmountKes: amountKes,
+          returnPath,
+        },
       }),
       cache: 'no-store',
     })
@@ -185,6 +199,7 @@ export async function POST(req: NextRequest) {
         // The region is written on the server's row, so verification never has to trust a later
         // request to say which tier was paid for.
         priceRegion: target,
+        returnPath,
       },
     }).catch((err) => console.warn('[paystack/initialize] pending row not written:', err))
 

@@ -9,6 +9,8 @@ export type BoardRegion = {
   blurb: string
   count: number
   open: boolean
+  /** The board's cards, for the blurred preview. `locked` marks ones the server will refuse. */
+  cards?: { id: string; title: string; category: string; description: string; payAmountUsd: number; locked?: boolean }[]
 }
 
 /**
@@ -52,7 +54,6 @@ export function RegionTabs({
               type="button"
               role="tab"
               aria-selected={active}
-              aria-disabled={!entry.open}
               onClick={() => onSelect(entry.region)}
               title={entry.open ? entry.blurb : `${entry.label} board — ${entry.blurb}`}
               className={cn(
@@ -88,25 +89,68 @@ export function RegionTabs({
 /**
  * The panel shown when a locked region tab is pressed.
  *
- * Deliberately not a blurred card grid: a grid implies something is there. The honest answer is
- * that the cards belong to another board, plus how many there are so the member can see there is
- * work — just not theirs from here.
+ * The cards ARE rendered — the platform asked to see the other regions' work, prices and detail —
+ * but blurred, unclickable and inert. Nothing here is a lock in the security sense: anyone can
+ * delete the `blur` class. The real refusal is on the server (`lib/job-region-gate.ts`), so the
+ * assessment will not open, the training fee will not charge and the apply button is not rendered
+ * at all on a locked card. The blur is a courtesy; the API is the wall.
  */
-export function LockedRegionPanel({ entry, current }: { entry: BoardRegion; current: string | null }) {
+export function LockedRegionPanel({
+  entry,
+  current,
+  formatPay,
+}: {
+  entry: BoardRegion
+  current: string | null
+  /** Money formatter from the caller, so this component owns no pricing rules. */
+  formatPay: (amount: number) => string
+}) {
   return (
-    <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-border bg-muted/20 p-10 text-center">
-      <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-2.5 py-1 text-[11px] font-semibold text-muted-foreground">
-        <Lock className="size-3" aria-hidden="true" />
-        {entry.label} board
-      </span>
-      <p className="max-w-[42ch] text-sm leading-relaxed text-muted-foreground">{entry.blurb}</p>
-      <p className="text-xs text-muted-foreground">
-        {entry.count} {entry.count === 1 ? 'card is' : 'cards are'} open on this board.
-      </p>
-      <p className="inline-flex items-center gap-1 text-xs font-medium text-primary">
-        <MapPin className="size-3" aria-hidden="true" />
-        {current ? `You are on the ${current} board` : 'Connect from this region to open it'}
-      </p>
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border bg-muted/30 px-4 py-3">
+        <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
+          <Lock className="size-3.5" aria-hidden="true" />
+          {entry.label} board — {entry.count} {entry.count === 1 ? 'card' : 'cards'}
+        </span>
+        <p className="inline-flex items-center gap-1 text-[11px] font-medium text-primary">
+          <MapPin className="size-3" aria-hidden="true" />
+          {current ? `You are on the ${current} board` : 'Connect from this region to open it'}
+        </p>
+      </div>
+
+      {entry.cards && entry.cards.length > 0 ? (
+        // `inert` removes the whole subtree from Tab order, pointer events and accessibility — so
+        // even with the blur removed there is nothing to click.
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3" aria-hidden="true">
+          {entry.cards.map((card) => (
+            <div
+              key={card.id}
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              {...({ inert: '' } as any)}
+              className="pointer-events-none select-none rounded-xl border border-border bg-card p-5 blur-[3px]"
+            >
+              <div className="flex items-center justify-between gap-3">
+                <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  {card.category}
+                </span>
+                <span className="font-mono text-sm font-semibold">{formatPay(card.payAmountUsd)}</span>
+              </div>
+              <h3 className="mt-3 line-clamp-2 text-base font-semibold leading-snug text-foreground">{card.title}</h3>
+              <p className="mt-1.5 line-clamp-3 text-sm leading-relaxed text-muted-foreground">{card.description}</p>
+              <div className="mt-4 rounded-lg border border-border bg-muted/40 px-3 py-2 text-center text-xs font-medium text-muted-foreground">
+                <Lock className="mr-1 inline size-3 align-[-2px]" aria-hidden="true" />
+                Locked on the {entry.label} board
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="rounded-xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
+          No cards published on the {entry.label} board yet.
+        </p>
+      )}
+
+      <p className="text-[11px] text-muted-foreground">{entry.blurb}</p>
     </div>
   )
 }

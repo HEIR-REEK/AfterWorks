@@ -314,7 +314,15 @@ export async function updateUserWallet(uid: string, wallet: { payoutNumber?: str
  * On any failure the caller should fall back to `readCatalogue`, so a route problem degrades to
  * "shows everything" rather than "shows nothing".
  */
-export type JobBoardRegion = { region: string; label: string; blurb: string; count: number; open: boolean }
+export type JobBoardRegion = {
+  region: string
+  label: string
+  blurb: string
+  count: number
+  open: boolean
+  /** The board's cards for the blurred preview. `locked` marks the ones the server refuses. */
+  cards: (Job & { locked: boolean })[]
+}
 
 export type JobBoardResponse = {
   ok: boolean
@@ -341,7 +349,20 @@ export async function readJobBoard(max = 120): Promise<JobBoardResponse | null> 
   const jobs = (data.jobs as unknown[])
     .map((raw) => normaliseJobRecord(String((raw as Record<string, unknown>)?.id ?? ''), raw))
     .filter((job): job is Job => job !== null)
-  return { ...data, jobs }
+
+  // Locked-region cards are sent for the blurred preview only. Normalising them through the same
+  // reader keeps a hand-edited document from rendering `undefined`, and the assessment questions
+  // are dropped inside `normaliseJobRecord` regardless — the answer key never leaves the server.
+  const regions = (Array.isArray(data.regions) ? data.regions : []).map((entry) => ({
+    ...entry,
+    cards: (Array.isArray(entry.cards) ? entry.cards : [])
+      .map((raw) => {
+        const job = normaliseJobRecord(String((raw as Record<string, unknown>)?.id ?? ''), raw)
+        return job ? { ...job, locked: (raw as { locked?: boolean }).locked === true } : null
+      })
+      .filter((job): job is Job & { locked: boolean } => job !== null),
+  }))
+  return { ...data, jobs, regions }
 }
 
 /**

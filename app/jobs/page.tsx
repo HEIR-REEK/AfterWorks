@@ -10,7 +10,7 @@ import { ExternalJobsSection } from '@/components/external-jobs-section'
 import { LockedRegionPanel, RegionTabs, type BoardRegion } from '@/components/region-tabs'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
-import type { JobCategory } from '@/lib/afterworks-data'
+import { formatUsd, type JobCategory } from '@/lib/afterworks-data'
 import { formatTimestamp } from '@/lib/datetime'
 import { filterJobs } from '@/lib/admin-search'
 
@@ -64,14 +64,14 @@ function JobsPageInner() {
     }
   }
 
-  // Region tab: default to the board this member's connection resolved to. Only an OPEN board can
-  // become the selected one, so the locked panels below can never turn into a card grid.
+  // Region tab: default to the board this member's connection resolved to. Any board can be
+  // *viewed* — a locked one renders the blurred preview below — but only an open board's cards ever
+  // reach the grid, and the server refuses every action on the locked ones regardless of the CSS.
   const [pickedRegion, setPickedRegion] = useState<string | null>(null)
   const activeRegion = useMemo(() => {
-    const open = (regions ?? []).filter((entry) => entry.open)
-    if (open.length === 0) return null
-    const wanted = pickedRegion ?? jobRegion?.region ?? open[0]?.region ?? null
-    return open.some((entry) => entry.region === wanted) ? wanted : (open[0]?.region ?? null)
+    if ((regions ?? []).length === 0) return null
+    const wanted = pickedRegion ?? jobRegion?.region ?? regions?.[0]?.region ?? null
+    return (regions ?? []).some((entry) => entry.region === wanted) ? wanted : (regions?.[0]?.region ?? null)
   }, [jobRegion?.region, pickedRegion, regions])
 
   const activeRegionEntry = useMemo(
@@ -81,10 +81,12 @@ function JobsPageInner() {
 
   // The member's own board: their region's cards plus the global ones. Cards from another region
   // are already absent from `jobs` — the server removed them — so this only narrows by region.
+  const activeIsOpen = activeRegionEntry?.open !== false
+
   const onThisBoard = useMemo(() => {
-    if (!activeRegion) return jobs
+    if (!activeRegion || !activeIsOpen) return jobs
     return jobs.filter((job) => !job.region || job.region === activeRegion)
-  }, [activeRegion, jobs])
+  }, [activeIsOpen, activeRegion, jobs])
 
   const filtered = useMemo(
     () => filterJobs(onThisBoard, { category, trainingOnly, hideFull, search: query }),
@@ -220,9 +222,15 @@ function JobsPageInner() {
         </div>
       </div>
 
-      {/* A region with no cards of its own is still a board the member may open — it is never a
-          lock they cannot clear, so the panel explains the emptiness instead of looking broken. */}
-      {activeRegionEntry && activeRegionEntry.count === 0 && filtered.length === 0 ? (
+      {/* A locked board: the cards are visible, blurred and inert. Nothing in this subtree is
+          focusable, so removing the blur reveals a card that still cannot be clicked. */}
+      {activeRegionEntry && !activeRegionEntry.open ? (
+        <LockedRegionPanel
+          entry={activeRegionEntry as BoardRegion}
+          current={jobRegion?.region ?? null}
+          formatPay={formatUsd}
+        />
+      ) : activeRegionEntry && activeRegionEntry.count === 0 && filtered.length === 0 ? (
         <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed border-border bg-muted/20 p-10 text-center">
           <p className="text-sm font-medium text-foreground">No cards on the {activeRegionEntry.label} board yet</p>
           <p className="max-w-[46ch] text-sm text-muted-foreground">{activeRegionEntry.blurb}</p>
@@ -239,30 +247,6 @@ function JobsPageInner() {
           ))}
         </div>
       )}
-
-      {/* Every other region, stated honestly. Nothing here is a card the member could open. */}
-      <section className="flex flex-col gap-3" aria-label="Boards locked to other regions">
-        <h2 className="text-sm font-semibold text-foreground">Other regions</h2>
-        {(regions ?? []).filter((entry) => !entry.open).length === 0 ? (
-          <p className="text-[11px] text-muted-foreground">
-            {activeRegion
-              ? `Your connection put you on the ${activeRegion} board. The other boards open when you connect from their region.`
-              : 'Every board is open because your region could not be detected.'}
-          </p>
-        ) : (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {(regions ?? [])
-              .filter((entry) => !entry.open)
-              .map((entry) => (
-                <LockedRegionPanel
-                  key={entry.region}
-                  entry={entry as BoardRegion}
-                  current={jobRegion?.region ?? null}
-                />
-              ))}
-          </div>
-        )}
-      </section>
 
       <ExternalJobsSection />
     </div>

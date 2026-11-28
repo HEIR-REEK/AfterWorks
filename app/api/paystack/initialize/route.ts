@@ -3,6 +3,7 @@ import { consumeBucket, audit, fail, json, maintenanceBlockForApi, requireUser, 
 import { env, envInt, isHostAllowed, readJsonBody, sanitizeLine } from '@/lib/security-core'
 import { paystackSubunitsFor, trainingFeeKesFor, trainingFeeUsdFor } from '@/lib/afterworks-data'
 import { randomId } from '@/lib/session-token'
+import { gateJobId } from '@/lib/job-region-gate'
 
 export const dynamic = 'force-dynamic'
 
@@ -98,6 +99,13 @@ export async function POST(req: NextRequest) {
   try {
     // Refuse job ids that look like traversal / injection, and confirm the job actually gates on training.
     if (!/^[A-Za-z0-9_-]{3,80}$/.test(jobId)) return fail(400, 'Unknown job reference.', { code: 'bad_job_id' })
+    // Region lock before anything is charged: taking a fee for another board's card would be the
+    // worst version of this bug, because the money leaves and the work stays locked.
+    const regionGate = await gateJobId(req, jobId)
+    if (!regionGate.gate.ok) {
+      return fail(403, regionGate.gate.message, { code: 'region_locked', details: { jobRegion: regionGate.gate.jobRegion } })
+    }
+
     const gate = await jobTrainingGate(jobId)
     if (gate.missing) return fail(404, 'That job card is not on the board any more.', { code: 'job_not_found' })
     if (gate.requiresTraining === false) {

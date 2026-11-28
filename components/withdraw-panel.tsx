@@ -64,8 +64,19 @@ export function WithdrawPanel() {
         amountUsd: Number(amount) || 0,
         minWithdrawalUsd: payouts.minWithdrawalUsd || walletMeta.minWithdrawalUsd || 50,
         usdToKes: payouts.usdToKes,
+        // The board-derived threshold. Without it this panel would offer an amount the payout route
+        // refuses, which is the exact disagreement the threshold rule is meant to remove.
+        withdrawalThresholdUsd: payouts.withdrawalThresholdUsd,
       }),
-    [amount, payouts.heldUsd, payouts.minWithdrawalUsd, payouts.usdToKes, wallet.availableUsd, walletMeta.minWithdrawalUsd],
+    [
+      amount,
+      payouts.heldUsd,
+      payouts.minWithdrawalUsd,
+      payouts.usdToKes,
+      payouts.withdrawalThresholdUsd,
+      wallet.availableUsd,
+      walletMeta.minWithdrawalUsd,
+    ],
   )
 
   const minUsd = quote.minWithdrawalUsd
@@ -85,7 +96,14 @@ export function WithdrawPanel() {
   // this is so the member reads it here instead of after filling in an amount.
   if (payouts.destination.notYetPayable) blockers.push(payouts.destination.notYetPayable)
   if (openPayout) blockers.push('You already have a payout request in progress.')
-  if (quote.withdrawableUsd < minUsd && !openPayout) {
+  // The threshold, in the member's own numbers: what the board's tasks add up to, what they have
+  // saved, and what is left. A bare "minimum not reached" would hide the new rule entirely.
+  if (!quote.thresholdMet && !openPayout) {
+    blockers.push(
+      `Your earnings stay in your balance until they reach ${formatUsd(quote.withdrawalThresholdUsd)} — the total of every task price on the ${payouts.thresholdRegion || 'your'} board, plus $1. ` +
+        `You have ${formatUsd(quote.clearedUsd)} saved, so ${formatUsd(quote.thresholdShortfallUsd)} to go. Finish more tasks to get there.`,
+    )
+  } else if (quote.withdrawableUsd < minUsd && !openPayout) {
     blockers.push(
       quote.withdrawableUsd > 0
         ? `You can withdraw ${formatUsd(quote.withdrawableUsd)} — the minimum is ${formatUsd(minUsd)}.`

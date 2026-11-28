@@ -63,6 +63,8 @@ export async function GET(req: NextRequest) {
           heldUsd: wallet.heldUsd,
           minWithdrawalUsd: wallet.minWithdrawalUsd,
           usdToKes: wallet.usdToKes,
+          // Without this the profile page quotes a withdrawable figure the payout route refuses.
+          withdrawalThresholdUsd: wallet.withdrawalThresholdUsd,
         }),
       },
     })

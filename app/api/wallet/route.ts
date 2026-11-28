@@ -40,6 +40,11 @@ export async function GET(req: NextRequest) {
         totalUsd: 0,
         heldUsd: 0,
         withdrawableUsd: 0,
+        clearedUsd: 0,
+        withdrawalThresholdUsd: 0,
+        thresholdRegion: '',
+        taskTotalUsd: 0,
+        thresholdShortfallUsd: 0,
         payoutNumber: '',
         payoutHoldUsd: 0,
         entries: [],
@@ -49,15 +54,30 @@ export async function GET(req: NextRequest) {
         // Not 0: a degraded read that reports "no minimum" would make the withdraw form look
         // available. The platform's real floor is still the floor.
         minWithdrawalUsd: site.minWithdrawalUsd,
+        unlockedPriceRegions: [],
         fx: { usdToKes: 0, availableKes: 0, withdrawableKes: 0 },
         unavailable: true,
         note: 'The datastore is not reachable from this server, so balances are shown as zero rather than cached values.',
       })
     }
 
+    // The price tiers this member has paid to work, read from their own profile. The client uses it
+    // for the unlock panel; every card action is still decided on the server.
+    const { dbOrNull } = await import('@/lib/firestore-admin')
+    let unlockedPriceRegions: string[] = []
+    try {
+      const snap = await dbOrNull()?.collection('users').doc(guard.value.uid).get()
+      const raw = (snap?.data() ?? {}) as Record<string, unknown>
+      if (Array.isArray(raw.unlockedPriceRegions)) {
+        unlockedPriceRegions = (raw.unlockedPriceRegions as string[]).filter(Boolean)
+      }
+    } catch {
+      /* a profile read failing must not fail the wallet: the tiers simply read as locked */
+    }
     return json({
       ok: true,
       ...wallet,
+      unlockedPriceRegions,
       /** Legacy key kept for callers written before the hold existed. */
       payoutHoldUsd: wallet.heldUsd,
       fx: {

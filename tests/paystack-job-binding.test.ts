@@ -91,6 +91,14 @@ test('the verify route requires the requested card and grants only the bound car
   assert.match(route, /recordPaidTrainingAdmin\(uid, jobId\)/, 'only the bound job id may be granted')
   assert.match(route, /job_mismatch/)
   assert.match(route, /jobId, amountKes/, 'a successful verification must return the bound job id')
+
+  // The new purpose sits *beside* that rule without weakening it. A price-access charge unlocks one
+  // region, named by the server's own pending row first; the card binding is skipped for it and for
+  // nothing else, and the region is never taken from the request alone.
+  assert.match(route, /stored\.priceRegion \|\| metadataRegion \|\| requestedRegion/, 'the row, then the charge metadata, then the request')
+  assert.match(route, /recordPriceAccessAdmin\(uid, targetRegion/, 'the region on the charge is what gets granted')
+  assert.match(route, /const binding = isPriceAccess\s*\n\s*\? null/, 'only a price-access charge skips the card binding')
+  assert.match(route, /if \(binding && !binding\.ok\)/, 'every other charge is still bound to its card')
 })
 
 test('the webhook refuses a charge whose row and metadata disagree', () => {

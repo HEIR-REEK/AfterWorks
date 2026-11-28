@@ -19,7 +19,7 @@
  */
 
 import { FieldValue, type Firestore, type Query } from 'firebase-admin/firestore'
-import { adminDb, dbOrNull, createAuditEntry, notifyUser } from '@/lib/firestore-admin'
+import { adminDb, dbOrNull, createAuditEntry, notifyUser, resolveWorkerPayoutCountry } from '@/lib/firestore-admin'
 import { getExchangeRateUsdToKes, formatUsd } from '@/lib/afterworks-data'
 import { site } from '@/lib/site'
 import { sanitizeLine } from '@/lib/security-core'
@@ -37,6 +37,8 @@ import {
   type ProfileCompletion,
 } from '@/lib/profile-completion'
 import { PHONE_CLAIMS_COLLECTION, assertPhoneAvailable, phoneTakenError } from '@/lib/account-uniqueness'
+import { resolveWorkerRegion } from '@/lib/pay-regions'
+import { withdrawalProgress, withdrawalThresholdUsd } from '@/lib/task-pay'
 import {
   REFERRAL_BONUS_USD,
   applyStagedWrites,
@@ -299,7 +301,16 @@ export async function getMemberWallet(uid: string): Promise<WalletSnapshot | nul
   heldUsd = roundUsd(Math.min(heldUsd, availableUsd))
 
   const rate = getExchangeRateUsdToKes()
-  const withdrawableUsd = roundUsd(Math.max(0, availableUsd - heldUsd))
+  const clearedUsd = roundUsd(Math.max(0, availableUsd - heldUsd))
+
+  // ── The withdrawal threshold, from the board itself ──────────────────────
+  // The platform's rule: Africa's threshold is the sum of every card price on the Africa board, and
+  // the member must be above it. The same rule is applied per region, from the same cards the board
+  // renders (`buildRegionalCatalogue` prices them through `payForRegion`), so the number in the
+  // wallet and the number on the board cannot disagree. A storage failure falls back to the
+  // configured minimum rather than to zero: a geo or catalogue outage must not let everyone withdraw.
+  const threshold = await resolveWithdrawalThreshold(uid, data)
+  const progress = withdrawalProgress({ availableUsd, heldUsd, thresholdUsd: threshold.thresholdUsd })
   const bonusLedger = await db.collection('wallet_ledger').doc(PAYOUT_BONUS_LEDGER(uid)).get().catch(() => null)
   const granted = data.signupBonusGranted === true || Boolean(bonusLedger?.exists)
 
@@ -315,7 +326,13 @@ export async function getMemberWallet(uid: string): Promise<WalletSnapshot | nul
     availableUsd,
     totalUsd: totalWalletUsd({ availableUsd, pendingUsd }),
     heldUsd,
-    withdrawableUsd,
+    // Zero below the threshold: `withdrawableUsd` is the figure the payout route will honour.
+    withdrawableUsd: progress.met ? progress.withdrawableUsd : 0,
+    clearedUsd,
+    withdrawalThresholdUsd: threshold.thresholdUsd,
+    thresholdRegion: threshold.region,
+    taskTotalUsd: threshold.taskTotalUsd,
+    thresholdShortfallUsd: progress.met ? 0 : progress.shortfallUsd,
     payoutNumber: String(wallet.payoutNumber ?? data.phone ?? ''),
     // Third and last copy of the old two-method coercion: a PayPal member's wallet summary would
     // have reported "M-Pesa", disagreeing with the destination panel on the same page.
@@ -327,7 +344,7 @@ export async function getMemberWallet(uid: string): Promise<WalletSnapshot | nul
     nextClearingAt,
     usdToKes: rate,
     availableKes: Math.round(availableUsd * rate),
-    withdrawableKes: Math.round(withdrawableUsd * rate),
+    withdrawableKes: Math.round((progress.met ? progress.withdrawableUsd : 0) * rate),
     pendingKes: Math.round(pendingUsd * rate),
     entries: entriesWithWithdrawals,
     paidTrainings: Array.isArray(data.paidTrainings) ? (data.paidTrainings as string[]).filter((v) => typeof v === 'string') : [],
@@ -345,6 +362,42 @@ export async function getMemberWallet(uid: string): Promise<WalletSnapshot | nul
       pendingFromStaff: data.welcomeBonusPending === true && !granted,
     },
     asOf: new Date().toISOString(),
+  }
+}
+
+/**
+ * The withdrawal threshold for one member, from their own region's board.
+ *
+ * Deliberately computed, not configured: the platform asked for the sum of the board's card prices,
+ * so the board is the source. The region comes from the same resolution the payout uses
+ * (`verifiedCountry`, then the payout destination, then the declared country) — not from the request
+ * IP, because a member must not be able to lower their own threshold by changing where they connect.
+ *
+ * Every failure path returns the configured minimum. Raising a threshold wrongly would trap a
+ * member's money; but returning 0 would pay out on an empty catalogue, which is the worse mistake.
+ */
+async function resolveWithdrawalThreshold(
+  uid: string,
+  data: Record<string, unknown>,
+): Promise<{ thresholdUsd: number; region: string; taskTotalUsd: number }> {
+  const fallback = site.minWithdrawalUsd
+  try {
+    const region = resolveWorkerRegion({
+      verifiedCountry: data.verifiedCountry,
+      // Exported from the same module that owns the region tables, so there is one resolution path.
+      payoutCountry: await resolveWorkerPayoutCountry(uid),
+      declaredCountry: data.country,
+    }).region
+    const { seedRegionalJobs } = await import('@/lib/regional-jobs')
+    const { listingCards } = await import('@/lib/job-cards')
+    const cards = [...seedRegionalJobs(), ...listingCards()].filter(
+      (card) => (card as { region?: unknown }).region === region,
+    )
+    const result = withdrawalThresholdUsd(cards as never, region as never, fallback)
+    return { thresholdUsd: result.thresholdUsd, region, taskTotalUsd: result.taskTotalUsd }
+  } catch (err) {
+    console.warn('[wallet] withdrawal threshold fell back to the configured minimum:', err)
+    return { thresholdUsd: fallback, region: 'Africa', taskTotalUsd: 0 }
   }
 }
 
@@ -798,8 +851,19 @@ export async function submitPayoutRequest(input: { uid: string; amountUsd: numbe
 
     const availableUsd = roundUsd(Number(wallet.availableUsd ?? 0) || 0)
     const heldUsd = roundUsd(Number(wallet.payoutHoldUsd ?? 0) || 0)
-    const withdrawableUsd = roundUsd(Math.max(0, availableUsd - heldUsd))
-    const amountCheck = validateWithdrawalAmount(Number(input.amountUsd), withdrawableUsd, site.minWithdrawalUsd)
+    // Two gates, checked in the order the member meets them: the board-derived threshold first (their
+    // earnings are not withdrawable at all until they clear it), then the per-request minimum.
+    const threshold = await resolveWithdrawalThreshold(uid, data)
+    const progress = withdrawalProgress({ availableUsd, heldUsd, thresholdUsd: threshold.thresholdUsd })
+    if (!progress.met) {
+      throw new WalletError(
+        `Your earnings stay in your balance until they reach $${threshold.thresholdUsd.toFixed(2)} — the total of the ${threshold.region} board’s task prices, plus $1. ` +
+          `You have $${progress.withdrawableUsd.toFixed(2)} saved, so $${progress.shortfallUsd.toFixed(2)} to go.`,
+        400,
+        'below_withdrawal_threshold',
+      )
+    }
+    const amountCheck = validateWithdrawalAmount(Number(input.amountUsd), progress.withdrawableUsd, site.minWithdrawalUsd)
     if (!amountCheck.ok) throw new WalletError(amountCheck.error, 400, 'invalid_amount')
 
     const amountUsd = amountCheck.amountUsd

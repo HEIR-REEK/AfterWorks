@@ -288,15 +288,26 @@ export function regionPhrase(region: JobRegion): string {
  */
 export function jobActionRefusal(
   card: { region?: unknown; title?: unknown },
-  resolved: { region: JobRegion | null },
-): { message: string; jobRegion: string } | null {
+  resolved: { region: JobRegion | null; unlockedRegions?: readonly string[] },
+): { message: string; jobRegion: string; priceUnlockUsd?: number | null } | null {
   const audience = jobAudienceOf(card.region)
   if (audience.kind === 'global') return null
   if (resolved.region === null) return null
   if (audience.region === resolved.region) return null
+
+  // A paid price unlock is the one way across a board boundary. It answers the platform's new rule:
+  // a member may work another region's cards — at *that* region's prices — once they have paid to
+  // access those prices. The unlock is read from the profile by the caller (`gateJobId`), never from
+  // the request, and it is scoped to the region the charge was made for.
+  const unlocked = Array.isArray(resolved.unlockedRegions) ? resolved.unlockedRegions : []
+  if (unlocked.includes(audience.region)) return null
+
   return {
     jobRegion: audience.region,
-    message: `“${String(card.title ?? 'This job')}” is part of the ${JOB_REGION_LABELS[audience.region]} board, and you are connecting from ${JOB_REGION_LABELS[resolved.region]}. Connect from ${regionPhrase(audience.region)} to take its assessment, pay its training fee or apply.`,
+    // What it would cost, so the refusal can be an offer rather than a wall. The caller prices it;
+    // `null` means this route cannot sell an unlock and should say so plainly.
+    priceUnlockUsd: null,
+    message: `“${String(card.title ?? 'This job')}” is part of the ${JOB_REGION_LABELS[audience.region]} board, priced for ${JOB_REGION_LABELS[audience.region]}. You are connecting from ${JOB_REGION_LABELS[resolved.region]}. Unlock ${JOB_REGION_LABELS[audience.region]} job prices to work it at those rates. Connect from ${regionPhrase(audience.region)} to open it without paying.`,
   }
 }
 

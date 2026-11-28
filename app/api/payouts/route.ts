@@ -60,6 +60,12 @@ export async function GET(req: NextRequest) {
         destinationProblem: wallet.destination.problem,
         minWithdrawalUsd: wallet.minWithdrawalUsd,
         withdrawableUsd: wallet.withdrawableUsd,
+        // The board-derived threshold and how far the member still is from it, so the panel can
+        // explain the wait instead of just disabling the button.
+        withdrawalThresholdUsd: wallet.withdrawalThresholdUsd,
+        thresholdShortfallUsd: wallet.thresholdShortfallUsd,
+        clearedUsd: wallet.clearedUsd,
+        thresholdMet: wallet.withdrawalThresholdUsd <= 0 || wallet.withdrawableUsd > 0,
         heldUsd: wallet.heldUsd,
         openPayoutId: wallet.openPayout?.id ?? null,
         openPayoutStatus: wallet.openPayout?.status ?? null,

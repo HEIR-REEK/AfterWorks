@@ -60,6 +60,7 @@ type PayState =
  */
 function PaystackCheckoutSection({
   jobId,
+  priceRegion,
   feeUsd,
   userEmail,
   onVerifySuccess,
@@ -69,7 +70,9 @@ function PaystackCheckoutSection({
   setErrorMsg,
 }: {
   jobId: string
-  /** The admin-set training price for this job card; falls back to the global fee when unset. */
+  /** The region whose prices this charge unlocks. */
+  priceRegion: string
+  /** The tier's price; falls back to the region ceiling when the card states no fee. */
   feeUsd?: number
   userEmail: string
   onVerifySuccess: (ref: string) => Promise<boolean>
@@ -118,7 +121,9 @@ function PaystackCheckoutSection({
     try {
       const data = await authedFetch<{ authorizationUrl: string; reference: string; amountKes: number; popupMode?: boolean }>(
         '/api/paystack/initialize',
-        { method: 'POST', body: { jobId }, timeoutMs: 20_000 },
+        // The charge buys a *region's* prices, so the region is what is named. The server decides
+        // whether that tier may be sold at all (not the member's own board, not one already held).
+        { method: 'POST', body: { priceRegion, jobId }, timeoutMs: 20_000 },
       )
       rememberReference(jobId, data.reference)
       setPayState('awaiting_payment')
@@ -370,8 +375,8 @@ function VerificationGate({ paid }: { paid: boolean }) {
       </Button>
       <p className="mt-3 text-xs text-muted-foreground">
         {paid
-          ? 'The training and assessment unlock once your review is approved; reload this page if it has just been approved. You will not be charged again.'
-          : 'The course and assessment unlock once your review is approved; reload this page if it has just been approved. There is no training fee for this job card.'}
+          ? 'The course and task unlock once your review is approved; reload this page if it has just been approved.'
+          : 'The course and task unlock once your review is approved; reload this page if it has just been approved. There is no fee for this job card.'}
       </p>
     </div>
   )
@@ -381,7 +386,7 @@ function TrainingPageInner({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
   const router = useRouter()
   const searchParams = useSearchParams()
-  const { worker, applyToJob, getApplicationForJob, isJobPaid, verifyTrainingPayment, profileLoaded } = useAfterWorks()
+  const { worker, applyToJob, getApplicationForJob, isJobPaid, verifyTrainingPayment, profileLoaded, unlockedPriceRegions } = useAfterWorks()
   const { user } = useAuth()
   const kycVerified = worker.kycVerified
 
@@ -591,10 +596,13 @@ function TrainingPageInner({ params }: { params: Promise<{ id: string }> }) {
     )
   }
 
-  // Training is what carries the fee. A card with no authored training sections is assessment-only:
-  // free, and there is nothing to pay for.
+  // Training is free now: the charge moved from the card to the *region's price tier*. So the
+  // modules and the assessment are open to a verified member on their own board without paying
+  // anything, and a member who has paid to work another region's prices gets its cards' training
+  // too. What money buys today is the right to earn that region's rates.
   const hasTraining = jobHasTraining(job)
-  const isPaid = !hasTraining || payState === 'paid' || isJobPaid(job.id)
+  const cardRegion = String((job as { region?: string }).region ?? '')
+  const unlockedRegion = cardRegion !== '' && unlockedPriceRegions.includes(cardRegion)
 
   return (
     <div className="mx-auto flex min-w-0 w-full max-w-3xl flex-col gap-6">
@@ -617,8 +625,10 @@ function TrainingPageInner({ params }: { params: Promise<{ id: string }> }) {
         
         <p className="mt-4 text-sm leading-relaxed text-muted-foreground">
           {hasTraining
-            ? `Follow the required sequence: each job card with training requires its own independent payment, and paying for one does not open another. You can pay before identity verification; the training and assessment unlock once your ID check is approved.`
-            : `This job card has no training — it is assessment and application only, so there is nothing to pay. Identity verification must be approved before the assessment unlocks.`}
+            ? unlockedRegion
+              ? `The training course and the task are open: you have unlocked this region’s job prices, so this card pays its ${cardRegion} rate. Work through the course, then the task — its timer and what it pays are shown on the card.`
+              : `The training course and the task are free — money no longer buys a lesson, it buys a region’s prices. Every card on your own board pays its rate already; a card priced for another region asks you to unlock that region first.`
+            : `This job card has no training — it is assessment and application only. The assessment is a paid task: it runs on a timer, and finishing it credits your balance. Identity verification must be approved before it unlocks.`}
         </p>
 
         {/* ── ASSESSMENT-ONLY CARD (no training, no fee) ── */}
@@ -645,40 +655,18 @@ function TrainingPageInner({ params }: { params: Promise<{ id: string }> }) {
           </div>
         )}
 
-        {/* ── PAID JOB (Unpaid State - Locked Gate) ── */}
-        {hasTraining && !isPaid && (
-          isMounted ? (
-            <PaystackCheckoutSection
-              jobId={job.id}
-              feeUsd={job.trainingFeeUsd}
-              userEmail={userEmail}
-              onVerifySuccess={verifyReference}
-              payState={payState}
-              setPayState={setPayState}
-              errorMsg={errorMsg}
-              setErrorMsg={setErrorMsg}
-            />
-          ) : (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="size-6 animate-spin text-muted-foreground" />
-            </div>
-          )
-        )}
-
-        {/* ── PAID JOB (Paid State - Verify, then Training -> Assessment -> Apply) ── */}
-        {hasTraining && isPaid && (
+        {/* ── A CARD WITH TRAINING: verify, then course → task → apply ── */}
+        {hasTraining && (
           <div className="mt-8 flex flex-col gap-8">
-            <div className="flex items-center gap-2 rounded-xl bg-success/15 p-4 text-sm font-medium text-success border border-success/30">
-              <CheckCircle2 className="size-5 shrink-0" />
-              <span>
-                {kycVerified
-                  ? 'Payment Detected & Confirmed — Training & Assessment Unlocked!'
-                  : 'Payment Confirmed — Verify Your Identity to Unlock Training'}
-              </span>
-            </div>
+            {unlockedRegion && (
+              <div className="flex items-center gap-2 rounded-xl bg-success/15 p-4 text-sm font-medium text-success border border-success/30">
+                <CheckCircle2 className="size-5 shrink-0" />
+                <span>{cardRegion} job prices unlocked — this card pays the {cardRegion} rate.</span>
+              </div>
+            )}
 
             {!kycVerified ? (
-              <VerificationGate paid />
+              <VerificationGate paid={false} />
             ) : (
               <>
             {/* Step 2: Training — one section at a time, next unlocks as each is completed */}

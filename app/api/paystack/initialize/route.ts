@@ -2,9 +2,10 @@ import { NextRequest } from 'next/server'
 import { consumeBucket, audit, fail, json, maintenanceBlockForApi, requireUser, routeError } from '@/lib/guards'
 import { env, envInt, isHostAllowed, readJsonBody, sanitizeLine } from '@/lib/security-core'
 import { paystackSubunitsFor, trainingFeeKesFor, trainingFeeUsdFor } from '@/lib/afterworks-data'
-import { trainingFeeForRegion } from '@/lib/pay-regions'
+import { priceAccessFeeUsd, PRICE_ACCESS_PURPOSE } from '@/lib/price-access'
+import type { PayRegion } from '@/lib/pay-regions'
 import { randomId } from '@/lib/session-token'
-import { gateJobId } from '@/lib/job-region-gate'
+import { loadJobCard, requestRegion, requestUnlockedRegions } from '@/lib/job-region-gate'
 
 export const dynamic = 'force-dynamic'
 
@@ -57,7 +58,7 @@ function browserReachableOrigin(req: NextRequest): { origin: string; popupMode: 
 }
 
 /**
- * POST /api/paystack/initialize — start a training payment.
+ * POST /api/paystack/initialize — buy access to one region's job prices.
  *
  * The previous version took `amount`, `email` and `metadata` from the request body and passed them
  * straight to Paystack. Anyone could therefore buy a KES 13,000 training for KES 10, or start a
@@ -66,6 +67,12 @@ function browserReachableOrigin(req: NextRequest): { origin: string; popupMode: 
  *
  * Now: the amount is derived from server config, the payer email is the authenticated user's, the
  * reference is minted here so it can be reconciled, and the pending row is written from the server.
+ *
+ * What the charge buys changed with the price-access rule: not a training place on one card, but the
+ * right to work one **region's price tier**. The body says which region (`priceRegion`); the price is
+ * computed here from that tier, capped by its own ceiling; the reference is stamped with the region,
+ * so verifying it later unlocks exactly that region and nothing else. The training modules are
+ * untouched — this route no longer sells them.
  */
 
 export async function POST(req: NextRequest) {
@@ -94,35 +101,45 @@ export async function POST(req: NextRequest) {
 
   const parsed = await readJsonBody<Record<string, unknown>>(req, 8_000)
   if (!parsed.ok) return fail(400, parsed.error, { code: 'bad_request' })
+  // Two shapes are accepted. `priceRegion` is the new one — the region whose prices are being
+  // unlocked. `jobId` is kept for older clients and resolves to that card's own region, so a checkout
+  // opened from a card page still buys the right tier.
+  const requestedRegion = sanitizeLine(parsed.data.priceRegion, 20)
   const jobId = sanitizeLine(parsed.data.jobId, 80)
-  if (!jobId) return fail(400, 'Which job card is this for?', { code: 'missing_job_id' })
+  if (!requestedRegion && !jobId) return fail(400, 'Say which region’s job prices you want to unlock.', { code: 'missing_price_region' })
 
   try {
-    // Refuse job ids that look like traversal / injection, and confirm the job actually gates on training.
-    if (!/^[A-Za-z0-9_-]{3,80}$/.test(jobId)) return fail(400, 'Unknown job reference.', { code: 'bad_job_id' })
-    // Region lock before anything is charged: taking a fee for another board's card would be the
-    // worst version of this bug, because the money leaves and the work stays locked.
-    const regionGate = await gateJobId(req, jobId)
-    if (!regionGate.gate.ok) {
-      return fail(403, regionGate.gate.message, { code: 'region_locked', details: { jobRegion: regionGate.gate.jobRegion } })
+    const KNOWN: PayRegion[] = ['Africa', 'Americas', 'Europe', 'Asia']
+    const job = jobId ? await loadJobCard(jobId) : null
+    if (jobId) {
+      if (!/^[A-Za-z0-9_-]{3,80}$/.test(jobId)) return fail(400, 'Unknown job reference.', { code: 'bad_job_id' })
+      if (!job) return fail(404, 'That job card is not on the board any more.', { code: 'job_not_found' })
     }
 
-    const gate = await jobTrainingGate(jobId)
-    if (gate.missing) return fail(404, 'That job card is not on the board any more.', { code: 'job_not_found' })
-    if (gate.requiresTraining === false) {
-      return fail(409, 'This job card does not require paid training — no charge is needed.', { code: 'training_not_required' })
+    // The region being *bought* is not a locked board — it is the thing on sale. So this route does
+    // not gate on it. What it does refuse is selling a tier the member is already standing in: their
+    // own board is included, free, and charging for it would take money for nothing.
+    const target = (requestedRegion || String(job?.region ?? '')) as PayRegion
+    if (!KNOWN.includes(target)) return fail(400, 'That is not a price region.', { code: 'bad_price_region' })
+    const ownRegion = await requestRegion(req)
+    if (ownRegion === target) {
+      return fail(409, 'That region’s board is already open to you — there is nothing to pay for.', { code: 'price_already_open' })
+    }
+    const unlocked = await requestUnlockedRegions(req, uid)
+    if (unlocked.includes(target)) {
+      return fail(409, 'You have already unlocked those prices.', { code: 'price_already_unlocked' })
     }
 
-    // The fee is money taken from the member, so it obeys the same region ceiling as the pay: a
-    // card worth $14 on the Africa board must not charge a fee written for the Americas. The region
-    // is the one this request resolved to, from the same helper the region lock used.
-    const feeUsd = trainingFeeForRegion({ trainingFeeUsd: gate.feeUsd }, regionGate.gate.region ?? 'Africa')
+    // Priced from the tier, never from the request: a stated per-card fee if one exists for that
+    // region, otherwise the tier's ceiling. Capped by the same rule as the pay it unlocks.
+    const statedFee = job ? Number(job.trainingFeeUsd ?? 0) || 0 : 0
+    const feeUsd = priceAccessFeeUsd({ trainingFeeUsd: statedFee }, target)
     const amountKes = trainingFeeKesFor(feeUsd)
     const subunits = paystackSubunitsFor(feeUsd)
 
-    const reference = `aw_tr_${randomId(10)}`
+    const reference = `aw_px_${randomId(10)}`
     const { origin: callbackOrigin, popupMode } = browserReachableOrigin(req)
-    const callbackUrl = popupMode ? '' : `${callbackOrigin}/training/${encodeURIComponent(jobId)}`
+    const callbackUrl = popupMode ? '' : `${callbackOrigin}/prices?region=${encodeURIComponent(target)}`
 
     const upstream = await fetch('https://api.paystack.co/transaction/initialize', {
       method: 'POST',
@@ -137,7 +154,7 @@ export async function POST(req: NextRequest) {
         currency: 'KES',
         reference,
         ...(callbackUrl ? { callback_url: callbackUrl } : {}),
-        metadata: { uid, jobId, purpose: 'training_access', expectedAmountKes: amountKes },
+        metadata: { uid, jobId, priceRegion: target, purpose: PRICE_ACCESS_PURPOSE, expectedAmountKes: amountKes },
       }),
       cache: 'no-store',
     })
@@ -161,7 +178,14 @@ export async function POST(req: NextRequest) {
       currency: 'KES',
       status: 'pending',
       jobId,
-      metadata: { accessCode: data.data.access_code ?? '', expectedSubunits: subunits },
+      metadata: {
+        accessCode: data.data.access_code ?? '',
+        expectedSubunits: subunits,
+        purpose: PRICE_ACCESS_PURPOSE,
+        // The region is written on the server's row, so verification never has to trust a later
+        // request to say which tier was paid for.
+        priceRegion: target,
+      },
     }).catch((err) => console.warn('[paystack/initialize] pending row not written:', err))
 
     await audit({ action: 'PAYMENT_INIT', actorEmail: email, details: { jobId, reference: data.data.reference || reference, amountKes }, req })
@@ -180,32 +204,5 @@ export async function POST(req: NextRequest) {
     })
   } catch (err) {
     return routeError('paystack/initialize', err)
-  }
-}
-
-/** Reads just enough of the job document to price the charge honestly. */
-async function jobTrainingGate(jobId: string): Promise<{ missing: boolean; requiresTraining?: boolean; feeUsd?: number }> {
-  const { dbOrNull } = await import('@/lib/firestore-admin')
-  const db = dbOrNull()
-  if (!db) return { missing: false, requiresTraining: true } // storage unavailable → keep the fee as configured
-  try {
-    const snap = await db.collection('jobs').doc(jobId).get()
-    if (!snap.exists) {
-      // A sample card is a first-run preview, not a sellable product. Once storage is configured,
-      // a job that is not in `jobs/` has no slot to reserve, no assessment to unlock and no owner
-      // to answer for the charge — so refuse the checkout instead of taking money for a ghost.
-      return { missing: true }
-    }
-    const data = snap.data() as Record<string, unknown> | undefined
-    // The admin-set per-job fee; absent/invalid → undefined so the global configured fee applies.
-    const fee = Number(data?.trainingFeeUsd)
-    return {
-      missing: false,
-      // A training card is the kind that charges; an assessment-only card has nothing to charge for.
-      requiresTraining: data?.trainingRequired === true,
-      feeUsd: Number.isFinite(fee) && fee > 0 ? fee : undefined,
-    }
-  } catch {
-    return { missing: false, requiresTraining: true }
   }
 }

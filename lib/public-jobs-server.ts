@@ -64,6 +64,10 @@ export function toPublicJob(id: string, raw: unknown, now = Date.now()): PublicJ
   if (!id || id.length > 200 || id.includes('/')) return null
   const data = (raw ?? {}) as Record<string, unknown>
   if (data.status !== 'open') return null
+  // A board-locked card is member content for one region. The public listing has no idea where the
+  // reader is, so it must not publish the card at all — otherwise every region's work is indexed
+  // and every region's price is public.
+  if (String(data.region ?? '').trim()) return null
 
   const title = text(data.title, 120)
   if (!title) return null

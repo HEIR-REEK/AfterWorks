@@ -19,6 +19,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { jobVisibleInRegion } from '@/lib/job-regions'
+import { seedRegionalJobs } from '@/lib/regional-jobs'
 import {
   seedJobs,
   seedWorker,
@@ -331,7 +332,9 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
     const next = applyCatalogueSnapshot(catalogueRef.current, {
       jobs: scoped,
       authoritative,
-      sample: seedJobs,
+      // The region boards are part of the sample catalogue too, or a deployment with no live
+      // catalogue shows a single board and no cards on the other three.
+      sample: () => [...seedJobs(), ...seedRegionalJobs()],
       at: new Date().toISOString(),
     })
     if (next === catalogueRef.current) return

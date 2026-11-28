@@ -27,7 +27,12 @@
 
 import { PAY_REGIONS, countriesInRegion, type PayRegion } from '@/lib/pay-regions'
 
-export type JobRegion = PayRegion
+/**
+ * The region names are type-only here; the union itself lives in `lib/afterworks-data.ts` next to
+ * `Job.region`, so the sample catalogue can be region-typed without importing this module (which
+ * imports it for the label tables — a cycle).
+ */
+export type JobRegion = import('@/lib/afterworks-data').JobRegion
 
 /** How a card is scoped. `global` means every region, and is what legacy cards become. */
 export type JobAudience = { kind: 'global' } | { kind: 'region'; region: JobRegion }

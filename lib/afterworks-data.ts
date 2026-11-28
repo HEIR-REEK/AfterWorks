@@ -109,6 +109,13 @@ export function safeImageSrc(value: unknown): string | undefined {
   return undefined
 }
 
+/**
+ * The four boards. Declared here, beside `Job.region`, because the sample catalogue below has to be
+ * region-typed — and it cannot import `lib/job-regions.ts`, which imports *this* module for the
+ * label tables. `lib/job-regions.ts` re-exports this type, so callers still reach it from there.
+ */
+export type JobRegion = 'Africa' | 'Americas' | 'Europe' | 'Asia'
+
 export type Job = {
   id: string
   title: string
@@ -498,7 +505,7 @@ export const ASSESSMENT_ONLY_CATALOGUE_JOB_IDS = [
 export const CODE_REVIEW_CATALOGUE_JOB_IDS = ['job-code-diff-review'] as const
 
 /**
- * The region-scoped batch: three cards in each of the four regions.
+ * The region-scoped batch: six cards in each of the four regions.
  *
  * Its own batch, again, because it is the only set whose cards are *locked to a board* — see
  * `lib/job-regions.ts`. Kept out of the other batches so their frozen shapes (two cards per
@@ -509,10 +516,17 @@ export const CODE_REVIEW_CATALOGUE_JOB_IDS = ['job-code-diff-review'] as const
  * test that asserts the ids match exactly.
  */
 export const REGIONAL_CATALOGUE_JOB_IDS = [
+  // Six per board — one card in every category on the platform. A board that only carried three
+  // categories left a member of that region with no Transcription, Image Labeling or Translation
+  // work at all, which is not what "each region has its own catalogue" meant.
   'job-africa-invoice-entry', 'job-africa-content-review', 'job-africa-market-research',
+  'job-africa-call-transcription', 'job-africa-shelf-labels', 'job-africa-support-translation',
   'job-americas-invoice-entry', 'job-americas-content-review', 'job-americas-market-research',
+  'job-americas-call-transcription', 'job-americas-shelf-labels', 'job-americas-support-translation',
   'job-europe-invoice-entry', 'job-europe-content-review', 'job-europe-market-research',
+  'job-europe-call-transcription', 'job-europe-shelf-labels', 'job-europe-support-translation',
   'job-asia-invoice-entry', 'job-asia-content-review', 'job-asia-market-research',
+  'job-asia-call-transcription', 'job-asia-shelf-labels', 'job-asia-support-translation',
 ] as const
 
 /** Every id either import path is allowed to publish. */

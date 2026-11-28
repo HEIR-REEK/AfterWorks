@@ -31,6 +31,7 @@ import {
   TRAINING_LESSON_KINDS,
   safeImageSrc,
 } from '@/lib/afterworks-data'
+import { JOB_REGION_LIST } from '@/lib/job-regions'
 
 /** How many cards the bounded public read fetches. Kept in step with the Firestore helper. */
 export const CATALOGUE_PAGE_SIZE = 60
@@ -181,6 +182,10 @@ export function normaliseJobRecord(docId: string, raw: unknown, now: number = Da
     // is the card type rather than a guess about the content.
     trainingRequired: data.trainingRequired === true,
     ...(data.trainingRequired === true && fee > 0 ? { trainingFeeUsd: Math.round(fee * 10_000) / 10_000 } : {}),
+    // Which board the card belongs to. This was being dropped on the way back out of Firestore, so
+    // every card the client read looked global — the boards rendered empty and the locked preview
+    // had nothing to blur, even though the documents were stored with their region.
+    ...(regionOf(data.region) ? { region: regionOf(data.region)! } : {}),
     trainingNotes: trainingSections,
     // The answer key is server-only. The browser asks /api/assessments for questions without
     // `correctIndex`/`explanation` and receives the review only after the server scores it.
@@ -190,6 +195,14 @@ export function normaliseJobRecord(docId: string, raw: unknown, now: number = Da
     closesAt,
     postedAgo: text(data.postedAgo, 40) || 'just now',
   }
+}
+
+/** The board a stored document names, or null when it names none we recognise. */
+function regionOf(raw: unknown): string | null {
+  const value = String(raw ?? '').trim()
+  if (!value) return null
+  const match = JOB_REGION_LIST.find((region) => region.toLowerCase() === value.toLowerCase())
+  return match ?? null
 }
 
 /**

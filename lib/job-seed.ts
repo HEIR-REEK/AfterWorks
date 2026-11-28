@@ -11,12 +11,26 @@
  * through `upsertJob()`, which sanitises the payload and records an audit entry.
  */
 
-import { jobHasTraining,
+import {
+  jobHasTraining,
   IMPORTABLE_CATALOGUE_JOB_IDS,
   seedJobs,
   type Job,
 } from '@/lib/afterworks-data'
 import { dbOrNull, upsertJob, type AdminJobInput } from '@/lib/firestore-admin'
+import { seedRegionalJobs } from '@/lib/regional-jobs'
+
+/**
+ * Every card the importer is allowed to write.
+ *
+ * The regional batch is its **own** module (`lib/regional-jobs.ts`, which imports the types from
+ * `afterworks-data`), so it is not in `seedJobs()`. That was the bug behind empty boards: the
+ * regional ids were importable in name only, and `byId` was built from `seedJobs()`, so every
+ * regional import failed as "seed missing" and no board ever received a card.
+ */
+function importableCards(): Job[] {
+  return [...seedJobs(), ...seedRegionalJobs()]
+}
 
 export const STARTER_IMPORT_ACTOR = 'catalogue-2026'
 
@@ -82,7 +96,7 @@ export async function importStarterJobs(opts: {
     )
   }
 
-  const byId = new Map(seedJobs().map((job) => [job.id, job]))
+  const byId = new Map(importableCards().map((job) => [job.id, job]))
   const missing = ids.filter((id) => !byId.has(id))
   if (missing.length > 0) {
     throw new StarterImportError(`Seed data is missing: ${missing.join(', ')}`, 'seed_missing')

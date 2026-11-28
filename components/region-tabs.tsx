@@ -65,7 +65,7 @@ export function RegionTabs({
                     : 'border-border/60 bg-muted/40 text-muted-foreground/70',
               )}
             >
-              <span className={cn('inline-flex items-center gap-1.5', !entry.open && 'blur-[2px]')}>
+              <span className={cn('inline-flex items-center gap-1.5', !entry.open && 'blur-[1px]')}>
                 {!entry.open ? <Lock className="size-3" aria-hidden="true" /> : null}
                 {entry.label}
                 <span className="text-[11px] opacity-70">{entry.count}</span>
@@ -127,7 +127,7 @@ export function LockedRegionPanel({
               key={card.id}
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
               {...({ inert: '' } as any)}
-              className="pointer-events-none select-none rounded-xl border border-border bg-card p-5 blur-[3px]"
+              className="pointer-events-none select-none rounded-xl border border-border bg-card p-5 blur-[1.5px]"
             >
               <div className="flex items-center justify-between gap-3">
                 <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">

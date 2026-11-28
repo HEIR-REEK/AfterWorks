@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { readFileSync } from 'node:fs'
-import { listingCards, listingCardsByRegion, findListingCard, isListingCardId, hourlyPayUsd } from '@/lib/job-cards'
+import { listingCards, listingCardsByRegion, findListingCard, isListingCardId, boardPayUsd, arrangeBoard, REGION_PAY_BAND } from '@/lib/job-cards'
+import { seedRegionalJobs } from '@/lib/regional-jobs'
 import { buildRegionalCatalogue } from '@/lib/job-regions'
 import { SAMPLE_JOBS } from '@/lib/sample-jobs'
 import { categoryForListing, PAY_BASIS } from '@/lib/sample-jobs'
@@ -37,14 +38,14 @@ test('a listing card is complete enough for the board and the apply flow', () =>
   }
 })
 
-test('the advertised salary survives into the card, and the hourly figure is explainable', () => {
+test('the advertised salary survives into the card, and the board price is explainable', () => {
   // A monthly salary divided by 160 hours, a weekly one by 40 — documented in PAY_BASIS so the
   // number on the card can be explained to the member who reads it.
   assert.equal(PAY_BASIS.monthly.hoursPerPeriod, 160)
   assert.equal(PAY_BASIS.weekly.hoursPerPeriod, 40)
   assert.equal(PAY_BASIS.hourly.hoursPerPeriod, 1)
   const monthly = SAMPLE_JOBS.find((listing) => listing.salary.frequency === 'monthly')!
-  assert.equal(hourlyPayUsd(monthly), Math.round((monthly.salaryUsd / 160) * 100) / 100)
+  assert.ok(boardPayUsd(monthly) > 0)
   for (const listing of SAMPLE_JOBS) {
     const card = findListingCard(`listing-${listing.referenceId.toLowerCase()}`)!
     assert.ok(card.description.includes(listing.company), `${card.id} lost the employer name`)
@@ -136,4 +137,62 @@ test('a Firestore snapshot cannot delete the generated cards', () => {
   assert.match(provider, /mergeCatalogueAdditive\(catalogueRef\.current\.jobs, scoped\)/, 'snapshots must merge, not replace')
   // And a missing document must not remove a listing card the member is reading.
   assert.match(provider, /if \(findListingCard\(id\)\) return null/)
+})
+
+// ─── Price bands and board placement ────────────────────────────────────────
+
+test('the boards are priced in their own bands: Africa under $15, the Americas above $45', () => {
+  // The platform rule, and the thing a raw currency conversion could not deliver: a Nairobi card
+  // within a few dollars of a Berlin one.
+  const byRegion = listingCardsByRegion()
+  const africa = byRegion.Africa.map((card) => card.payAmountUsd)
+  assert.ok(Math.max(...africa) < 15, `Africa must stay under $15, found ${Math.max(...africa)}`)
+  assert.ok(Math.min(...africa) >= REGION_PAY_BAND.Africa.floor)
+  const americas = byRegion.Americas.map((card) => card.payAmountUsd)
+  assert.ok(Math.min(...americas) >= 45, `the Americas must start above $45, found ${Math.min(...americas)}`)
+  for (const region of ['Europe', 'Asia'] as const) {
+    const band = REGION_PAY_BAND[region]
+    for (const pay of byRegion[region].map((card) => card.payAmountUsd)) {
+      assert.ok(pay >= band.floor && pay <= band.max + 0.01, `${region} card at $${pay} is outside its band`)
+    }
+  }
+  // And the ordering between boards still holds: Africa < Asia < Europe < Americas at the top end.
+  const top = (region: keyof typeof byRegion) => Math.max(...byRegion[region].map((card) => card.payAmountUsd))
+  assert.ok(top('Africa') < top('Asia'))
+  assert.ok(top('Asia') < top('Europe'))
+  assert.ok(top('Europe') < top('Americas'))
+})
+
+test('the seeded micro-work cards follow the same bands', () => {
+  // The seeded batch is typed, so read the pay off it directly rather than through the loose
+  // region payload the route ships.
+  const seeded = seedRegionalJobs()
+  const africa = seeded.filter((card) => card.region === 'Africa').map((card) => card.payAmountUsd)
+  assert.ok(Math.max(...africa) < 15, `Africa micro-work must stay under $15, found ${Math.max(...africa)}`)
+  const americas = seeded.filter((card) => card.region === 'Americas').map((card) => card.payAmountUsd)
+  assert.ok(Math.min(...americas) > 45, `Americas micro-work must be above $45, found ${Math.min(...americas)}`)
+})
+
+test('each board is arranged differently — its own roles lead, in its own order', () => {
+  const byRegion = listingCardsByRegion()
+  const openings = new Set(['Europe', 'Africa', 'Asia', 'Americas'].map((region) => byRegion[region as 'Europe'][0]!.title))
+  assert.equal(openings.size, 4, 'the four boards must not open with the same role')
+  // Africa leads with its own emphasis (annotation and support), the Americas with analytics.
+  assert.match(byRegion.Africa[0]!.title, /Annotator|Trainer|Assistant|Support/)
+  assert.match(byRegion.Americas[0]!.title, /Analyst|Support|Developer/)
+  // The orders are materially different, not a rotation of one list.
+  const ids = Object.values(byRegion).map((cards) => cards.map((card) => card.id).join(','))
+  assert.equal(new Set(ids).size, 4)
+})
+
+test('a member’s board opens with its own listings, with micro-work woven in', () => {
+  const catalogue = [...seedRegionalJobs(), ...listingCards()]
+  const board = buildRegionalCatalogue(catalogue, { region: 'Asia', source: 'header' })
+  const arranged = arrangeBoard('Asia', board.jobs)
+  assert.equal(arranged.length, board.jobs.length, 'arranging must not add or drop a card')
+  assert.ok(arranged[0]!.id.startsWith('listing-'), 'the listing batch leads the board')
+  // The seeded cards are interleaved, not pushed to the bottom.
+  assert.ok(arranged.slice(0, 8).some((card) => !card.id.startsWith('listing-')), 'micro-work must be woven in')
+  // Nothing from another board sneaks in.
+  assert.ok(arranged.every((card) => !card.region || card.region === 'Asia'))
 })

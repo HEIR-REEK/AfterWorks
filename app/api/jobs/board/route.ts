@@ -4,7 +4,7 @@ import { clientIdentity } from '@/lib/security-core'
 import { resolveRequestCountry } from '@/lib/geo-country'
 import { regionForCountry } from '@/lib/pay-regions'
 import { buildRegionalCatalogue, type JobRegion } from '@/lib/job-regions'
-import { listingCards, listingCardsByRegion, isListingCardId } from '@/lib/job-cards'
+import { arrangeBoard, listingCards } from '@/lib/job-cards'
 
 /**
  * GET /api/jobs/board — the job board this member may open, decided by where they connect from.
@@ -84,10 +84,18 @@ export async function GET(req: NextRequest) {
     const storedIds = new Set(stored.map((card) => String(card.id)))
     const cards = [...stored, ...listingCards().filter((card) => !storedIds.has(card.id))]
 
-    const board = buildRegionalCatalogue(
-      cards.map((card) => ({ ...card, region: card.region as string | undefined })),
-      { region, source: resolved.source },
-    )
+    // Every board is arranged for the region it belongs to, so a member on Europe and a member on
+    // Asia get their own order out of the same catalogue — not the same list four times.
+    const normalised = cards.map((card) => ({ ...card, region: card.region as string | undefined }))
+    const board = buildRegionalCatalogue(normalised, { region, source: resolved.source })
+    const arranged = {
+      ...board,
+      jobs: region ? arrangeBoard(region, board.jobs) : board.jobs,
+      regions: board.regions.map((entry) => ({
+        ...entry,
+        cards: arrangeBoard(entry.region, entry.cards),
+      })),
+    }
 
     return json(
       {
@@ -95,9 +103,9 @@ export async function GET(req: NextRequest) {
         region: board.region,
         source: board.source,
         wholeCatalogue: board.wholeCatalogue,
-        jobs: board.jobs,
-        regions: board.regions,
-        lockedRegions: board.lockedRegions,
+        jobs: arranged.jobs,
+        regions: arranged.regions,
+        lockedRegions: arranged.lockedRegions,
       },
       {
         headers: {

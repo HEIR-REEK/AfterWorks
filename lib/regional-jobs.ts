@@ -530,17 +530,19 @@ function translationQuestions(region: JobRegion): AssessmentQuestion[] {
  */
 export function seedRegionalJobs(): Job[] {
   return [
+    // The bands the platform asked for: Africa stays under $15 a card, the Americas start above
+    // $45, Europe sits between Asia and the Americas, and Asia between Africa and Europe.
     ...cardsForRegion('Africa', {
       data: 9, review: 11, research: 13, transcription: 10, labels: 8, translation: 12,
     }),
     ...cardsForRegion('Americas', {
-      data: 34, review: 42, research: 48, transcription: 36, labels: 31, translation: 38,
+      data: 52, review: 64, research: 72, transcription: 56, labels: 46, translation: 60,
     }),
     ...cardsForRegion('Europe', {
-      data: 30, review: 37, research: 43, transcription: 32, labels: 27, translation: 34,
+      data: 38, review: 46, research: 54, transcription: 41, labels: 33, translation: 44,
     }),
     ...cardsForRegion('Asia', {
-      data: 20, review: 25, research: 29, transcription: 22, labels: 18, translation: 24,
+      data: 22, review: 28, research: 33, transcription: 24, labels: 18, translation: 27,
     }),
   ]
 }

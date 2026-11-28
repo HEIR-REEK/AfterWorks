@@ -33,4 +33,4 @@ export const SAMPLE_JOBS: SampleJob[] = [
 export const SAMPLE_JOBS_DISCLOSURE =
   'Sample listings: employers are fictional, salaries are illustrative and these are not verified vacancies.'
 
-export { categoryForListing, PAY_BASIS } from './category'
+export { categoryForListing, PAY_BASIS, laneForListing, laneRank, REGION_LANES } from './category'

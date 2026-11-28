@@ -529,15 +529,16 @@ export type AdminPayoutRow = {
   amountUsd: number
   amountKes: number
   status: 'pending' | 'approved' | 'processing' | 'paid' | 'rejected' | 'failed' | 'cancelled'
-  method: 'M-Pesa' | 'Bank Transfer'
+  method: 'M-Pesa' | 'Bank Transfer' | 'PayPal'
   destinationLabel: string
   destination: {
-    method: 'M-Pesa' | 'Bank Transfer'
+    method: 'M-Pesa' | 'Bank Transfer' | 'PayPal'
     accountName: string
     accountNumber: string
     bankName: string
     bankBranch: string
     bankAccountNumber: string
+    paypalEmail?: string
   }
   requestedAt: string
   updatedAt: string

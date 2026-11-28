@@ -40,11 +40,13 @@ import {
   PAYOUT_REASON_REQUIRED,
   PAYOUT_STATUS_SHORT,
   PAYOUT_STATUS_TONE,
+  availablePayoutStatuses,
   type PayoutQueueSummary,
   type PayoutRequestRow,
   type PayoutRequestStatus,
 } from '@/lib/payouts'
 import type { AdminPayoutRow } from '@/lib/admin'
+import { PayoutMethodIcon } from '@/components/payout-method-icon'
 
 /** Same rows, but the console transport types `history[].status` loosely (it is server text). */
 type Transitions = Record<string, { next: PayoutRequestStatus[]; needsReason: boolean; needsReference: boolean }>
@@ -279,7 +281,13 @@ export default function AdminPayoutsPage() {
               </thead>
               <tbody>
                 {rows.map((row) => {
-                  const moves = (transitions[row.status]?.next ?? []).filter((to) => to !== 'paid' || isOwner)
+                  // The legal moves come from the server; the *possible* ones depend on the
+                  // destination, and a method with no disbursement integration must not offer a
+                  // button that would claim the money was sent.
+                  const moves = availablePayoutStatuses(
+                    row.status,
+                    row.method,
+                  ).filter((to) => to !== 'paid' || isOwner)
                   return (
                     <tr key={row.id} className="border-t border-border/60 align-top hover:bg-muted/40">
                       <td className="whitespace-nowrap px-2 py-2">
@@ -393,27 +401,60 @@ export default function AdminPayoutsPage() {
               </div>
               <div className="rounded-xl border border-border bg-muted/25 p-3.5 text-xs">
                 <p className="flex items-center gap-1.5 font-semibold">
-                  {selected.method === 'Bank Transfer' ? <CreditCard className="size-3.5" /> : <ShieldCheck className="size-3.5" />}
+                  <PayoutMethodIcon method={selected.method} className="size-3.5" />
                   Destination
                 </p>
                 <p className="mt-1.5">{selected.destinationLabel}</p>
                 <p className="text-muted-foreground">Account name: {selected.destination.accountName || '—'}</p>
+                {/* Bank specifics only exist for a bank transfer. */}
                 {selected.method === 'Bank Transfer' ? (
                   <p className="text-muted-foreground">
                     {selected.destination.bankName} · {selected.destination.bankBranch}
                   </p>
                 ) : null}
-                <button
-                  type="button"
-                  className="mt-2 inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline"
-                  onClick={() => {
-                    const value = selected.method === 'Bank Transfer' ? selected.destination.bankAccountNumber : selected.destination.accountNumber
-                    void navigator.clipboard?.writeText(value)
-                    push('info', 'Account number copied for the provider portal.')
-                  }}
-                >
-                  <Copy className="size-3" /> Copy account number
-                </button>
+                {/* What the operator actually needs to type into the provider portal. PayPal has no
+                    account number at all, so a "copy account number" button would have copied "". */}
+                {selected.method === 'PayPal' ? (
+                  <p className="text-muted-foreground">
+                    PayPal email:{' '}
+                    <span className="font-mono text-foreground">{selected.destination.paypalEmail || 'not on file'}</span>
+                  </p>
+                ) : null}
+                {selected.method === 'PayPal' ? (
+                  <button
+                    type="button"
+                    className="mt-2 inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline"
+                    onClick={() => {
+                      void navigator.clipboard?.writeText(selected.destination.paypalEmail || '')
+                      push('info', 'PayPal email copied.')
+                    }}
+                  >
+                    <Copy className="size-3" /> Copy PayPal email
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="mt-2 inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline"
+                    onClick={() => {
+                      const value =
+                        selected.method === 'Bank Transfer'
+                          ? selected.destination.bankAccountNumber
+                          : selected.destination.accountNumber
+                      void navigator.clipboard?.writeText(value)
+                      push('info', 'Account number copied for the provider portal.')
+                    }}
+                  >
+                    <Copy className="size-3" /> Copy account number
+                  </button>
+                )}
+                {/* PayPal is stored but cannot be disbursed yet: say so on the request, so nobody
+                    marks it paid and assumes the money left. */}
+                {selected.method === 'PayPal' ? (
+                  <p className="mt-2 rounded-lg bg-warning/10 p-2 text-warning">
+                    PayPal payouts are not live. This request cannot be marked paid — ask the member to
+                    switch to M-Pesa or a bank account.
+                  </p>
+                ) : null}
               </div>
             </div>
 
@@ -445,7 +486,7 @@ export default function AdminPayoutsPage() {
             </div>
 
             <div className="mt-5 flex flex-wrap items-center justify-end gap-2 border-t border-border pt-4">
-              {(transitions[selected.status]?.next ?? []).map((to) => (
+              {availablePayoutStatuses(selected.status, selected.method).map((to) => (
                 <Button
                   key={to}
                   type="button"
@@ -527,6 +568,9 @@ function normaliseRow(row: AdminPayoutRow): PayoutRequestRow {
   const known: PayoutRequestStatus[] = ['pending', 'approved', 'processing', 'paid', 'rejected', 'failed', 'cancelled']
   return {
     ...row,
+    // `paypalEmail` is optional on the console transport (older documents predate it) but the
+    // domain type requires the field, so it is defaulted here once instead of at every use site.
+    destination: { ...row.destination, paypalEmail: row.destination.paypalEmail ?? '' },
     history: (row.history ?? []).map((entry) => ({
       ...entry,
       status: (known as string[]).includes(entry.status) ? (entry.status as PayoutRequestStatus) : 'pending',

@@ -6,12 +6,40 @@ import test from 'node:test'
 const ROOT = process.cwd()
 const read = (path: string) => readFileSync(join(ROOT, path), 'utf8')
 
+/**
+ * Named imports a module takes from one specifier.
+ *
+ * These tests used to pin whole import strings and comment wording, which breaks on any unrelated
+ * edit — and the usual repair is to delete the assertion, losing the guard. Parsing the import list
+ * lets a test state the capability it actually cares about.
+ */
+function importsFrom(source: string, specifier: string): string[] {
+  const pattern = new RegExp(`import\\s*\\{([^}]*)\\}\\s*from\\s*['"]${specifier.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}['"]`, 'g')
+  const names: string[] = []
+  for (const match of source.matchAll(pattern)) {
+    for (const part of match[1]!.split(',')) {
+      const name = part.trim().split(/\s+as\s+/)[0]?.trim()
+      if (name) names.push(name)
+    }
+  }
+  return names
+}
+
 test('console authority never falls back to a mutable users.isAdmin label', () => {
   const auth = read('app/api/admin/auth/route.ts')
   const guards = read('lib/guards.ts')
+  // The property is the absence of the fallback, in code and reachable imports — not the presence
+  // of particular words in a comment. (This suite used to grep for a comment sentence, so rewording
+  // an explanation made a security test fail.)
   assert.doesNotMatch(auth, /checkUserAdminRoleAdmin/)
   assert.doesNotMatch(guards, /checkUserAdminRoleAdmin/)
-  assert.match(auth, /No `users\.isAdmin` fallback/)
+  assert.ok(
+    !importsFrom(auth, '@/lib/firestore-admin').includes('checkUserAdminRoleAdmin'),
+    'the console sign-in must not import the mutable-label check',
+  )
+  // The label may be named in an explanatory comment; what must not exist is a read of it.
+  assert.doesNotMatch(auth, /\bisAdmin\b\s*(?:===|==|\)|&&|\|\|)/, 'no truthiness/equality test on users.isAdmin')
+  assert.doesNotMatch(auth, /doc\([^)]*\)\.get\(\).*\bisAdmin\b/s, 'no fetch whose result decides authority via isAdmin')
   assert.match(guards, /ALLOW_ADMIN_BEARER_AUTH/)
 })
 
@@ -59,11 +87,15 @@ test('identity verification cannot be self-granted, and has no demo approval pat
   // The route may echo `kycVerified` back to the client as state, but the only server function it
   // can reach is the one that stamps a request — it has no import through which it could write a
   // verdict, and the rules would refuse it anyway.
-  assert.match(
-    requestRoute,
-    /import \{ requestKycReview, getUserProfile \} from '@\/lib\/firestore-admin'/,
-    'the member route reaches exactly two server helpers, neither of which can verify anyone',
-  )
+  const helpers = importsFrom(requestRoute, '@/lib/firestore-admin')
+  const ALLOWED = ['requestKycReview', 'getUserProfile', 'recordAdminNotification']
+  for (const helper of helpers) {
+    assert.ok(
+      ALLOWED.includes(helper),
+      `the member route imported "${helper}", outside the read/request allow-list`,
+    )
+  }
+  assert.doesNotMatch(requestRoute, /verifyKycAdmin/)
 
   // The one writer, and it is server-side only.
   assert.match(admin, /export async function verifyKycAdmin/)
@@ -166,4 +198,34 @@ test('a verification request is rate limited and cannot pin a worker', () => {
   assert.match(route, /rateLimit\(req, 'kyc-request'/, 'a burst of requests must be shed at the edge')
   assert.match(route, /consumeBucket\('kyc-request-write'/, 'the write itself needs its own per-member budget')
   assert.match(route, /getUserProfile/, 'an already-verified member is told so instead of queueing a no-op review')
+})
+
+/**
+ * The guards above are only worth having if they still fail on a violation. An allow-list that
+ * silently parses nothing would pass forever, so the parser itself is pinned here — including the
+ * aliasing case, where an attacker-friendly `verifyKycAdmin as harmless` must still be judged as
+ * `verifyKycAdmin`.
+ */
+test('the import allow-list parser cannot be fooled by formatting or aliasing', () => {
+  const source = [
+    "import { requestKycReview, getUserProfile, recordAdminNotification } from '@/lib/firestore-admin'",
+    "import { fail, json } from '@/lib/guards'",
+    'import {',
+    '  verifyKycAdmin,',
+    '  someOther as renamed,',
+    "} from '@/lib/firestore-admin'",
+  ].join('\n')
+
+  const names = importsFrom(source, '@/lib/firestore-admin')
+  assert.deepEqual(names.sort(), [
+    'getUserProfile',
+    'recordAdminNotification',
+    'requestKycReview',
+    'someOther',
+    'verifyKycAdmin',
+  ])
+  // The local alias must not mask the exported capability.
+  assert.ok(!names.includes('renamed'))
+  // A different specifier must not leak into the result.
+  assert.deepEqual(importsFrom(source, '@/lib/guards').sort(), ['fail', 'json'])
 })

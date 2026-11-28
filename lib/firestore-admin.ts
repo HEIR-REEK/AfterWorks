@@ -6,6 +6,7 @@ import {
   type Firestore,
   type Query,
   type QueryDocumentSnapshot,
+  type QuerySnapshot,
   type DocumentSnapshot,
   type WriteBatch,
   type CollectionReference,
@@ -45,6 +46,16 @@ import {
 import { jobHasTraining, assessmentPassMark, type AssessmentQuestion, type TrainingSection, TRAINING_LESSON_KINDS } from '@/lib/afterworks-data'
 import { safeImageSrc } from '@/lib/afterworks-data'
 import { normaliseAssessmentQuestions, normaliseTrainingSections } from '@/lib/job-catalogue'
+import {
+  ADMIN_NOTIFICATION_BATCH_SIZE,
+  ADMIN_NOTIFICATION_MAX_PAGES,
+  chunk,
+  foldPages,
+  selectToMark,
+  shouldFetchAnotherPage,
+  type MarkReadOutcome,
+  type MarkReadRequest,
+} from '@/lib/admin-notifications-shared'
 
 // ─── Admin SDK initialisation (singleton) ────────────────────────────────────
 
@@ -3830,34 +3841,101 @@ export async function listAdminNotifications(limit = 30): Promise<AdminNotificat
   }
 }
 
+/**
+ * Unread console notifications.
+ *
+ * Counts with an aggregation query so the badge is the *real* number. This previously read a page
+ * of 100 documents and returned that page's size, so a backlog above 100 reported "100" forever —
+ * and the "mark all read" button, which is disabled at zero, could never look finished.
+ */
 export async function countUnreadAdminNotifications(): Promise<number> {
   const db = dbOrNull()
   if (!db) return 0
   try {
-    const snap = await db.collection('admin_notifications').where('read', '==', false).limit(100).get()
-    return snap.size
+    const snap = await db.collection('admin_notifications').where('read', '==', false).count().get()
+    return snap.data().count
   } catch (err) {
-    console.warn('[FirestoreAdmin] countUnreadAdminNotifications failed:', err)
-    return 0
+    // Aggregation needs the same composite index machinery; fall back to a capped page read so a
+    // missing index degrades the number instead of blanking the console.
+    console.warn('[FirestoreAdmin] countUnreadAdminNotifications aggregation failed, falling back:', err)
+    try {
+      const snap = await db.collection('admin_notifications').where('read', '==', false).limit(1000).get()
+      return snap.size
+    } catch {
+      return 0
+    }
   }
 }
 
-export async function markAdminNotificationsRead(ids?: string[]): Promise<number> {
+/**
+ * Marks console notifications read.
+ *
+ * Takes an explicit instruction rather than an optional array, because the old signature could not
+ * distinguish "all" from "none": the UI sent `ids: []` for "all", the route passed `[]` through as
+ * a truthy empty array, and the helper ran `where(documentId(), 'in', [])` — which Firestore
+ * rejects with INVALID_ARGUMENT. The button reported failure and nothing was ever marked. See
+ * `lib/admin-notifications-shared.ts` for the parsing that prevents that ambiguity returning.
+ *
+ * Writes are paged and chunked: a page of unread items is read, marked in commits of at most
+ * `ADMIN_NOTIFICATION_BATCH_SIZE` (Firestore caps a commit at 500), then the next page is fetched
+ * only while pages keep coming back full. The returned count is what actually changed.
+ */
+export async function markAdminNotificationsRead(request: MarkReadRequest): Promise<MarkReadOutcome> {
   const db = adminDb()
-  const clean = Array.isArray(ids) ? ids.map((v) => String(v).slice(0, 64)).filter(Boolean).slice(0, 100) : null
-  const snap = clean
-    ? await db.collection('admin_notifications').where(FieldPath.documentId(), 'in', clean).get()
-    : await db.collection('admin_notifications').where('read', '==', false).limit(100).get()
-  const batch = db.batch()
-  let n = 0
-  snap.docs.forEach((d) => {
-    if (d.get('read') !== true) {
-      batch.update(d.ref, { read: true })
-      n += 1
+  const collection = db.collection('admin_notifications')
+  const pageLimit = request.kind === 'ids' ? Math.min(request.ids.length, 500) : ADMIN_NOTIFICATION_BATCH_SIZE
+
+  const pageCounts: number[] = []
+  let pagesFetched = 0
+  // Ids already handled, so a document that somehow keeps coming back unread cannot loop forever.
+  const done = new Set<string>()
+
+  while (pagesFetched < ADMIN_NOTIFICATION_MAX_PAGES) {
+    let page: QuerySnapshot
+    if (request.kind === 'ids') {
+      const remaining = request.ids.filter((id) => !done.has(id)).slice(0, 500)
+      if (!remaining.length) break
+      page = await collection.where(FieldPath.documentId(), 'in', remaining).get()
+    } else {
+      page = await collection.where('read', '==', false).limit(pageLimit).get()
     }
-  })
-  if (n > 0) await batch.commit()
-  return n
+
+    pagesFetched += 1
+    const docs = page.docs.map((d) => ({ id: d.id, read: d.get('read') === true }))
+    const toMark = selectToMark(docs, request).filter((id) => !done.has(id))
+    if (!toMark.length) break
+    // Only documents whose value would actually change count, so the reported number is honest.
+    const byId = new Map(page.docs.map((d) => [d.id, d]))
+    let markedThisPage = 0
+    for (const ids of chunk(toMark)) {
+      const batch = db.batch()
+      for (const id of ids) {
+        const ref = byId.get(id)?.ref
+        if (!ref) continue
+        batch.update(ref, { read: true })
+        done.add(id)
+        markedThisPage += 1
+      }
+      await batch.commit()
+    }
+    pageCounts.push(markedThisPage)
+
+    if (request.kind === 'ids') {
+      // A named set is handled in one pass; there is nothing more to page through.
+      if (request.ids.every((id) => done.has(id))) break
+      continue
+    }
+    if (!shouldFetchAnotherPage({ pageSize: page.size, pageLimit, pagesFetched })) break
+  }
+
+  const outcome = foldPages(pageCounts, pagesFetched)
+  if (outcome.truncated) {
+    console.warn(
+      `[FirestoreAdmin] markAdminNotificationsRead stopped at ${ADMIN_NOTIFICATION_MAX_PAGES} pages; ` +
+        'unread notifications may remain.',
+    )
+  }
+  return outcome
 }
 
 export type NotificationRow = {

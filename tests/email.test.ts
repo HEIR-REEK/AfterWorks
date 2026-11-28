@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import fs from 'node:fs/promises'
 import test, { type TestContext } from 'node:test'
 import { EMAIL_BRAND_LOGO_HTML, EMAIL_LOGO_CONTENT_ID, prepareEmailBranding } from '@/lib/email-brand'
+import { EMAIL_LOGO_BASE64, EMAIL_LOGO_BYTES } from '@/lib/email-logo-data'
 import {
   applicationReceiptEmailHtml,
   applicationReceiptEmailSubject,
@@ -143,20 +145,38 @@ test('Resend receives the inline attachment with the REST content_id field for a
   }
 })
 
-test('a missing image falls back to readable branding without preventing recovery email delivery', async (t) => {
+test('sending a mail with a logo works on a host with no filesystem, so recovery mail cannot fail on a missing asset', async (t) => {
   mockEmailConfig(t)
-  t.mock.method(fs, 'readFile', async () => { throw new Error('Simulated missing deploy asset') })
-  t.mock.method(console, 'warn', () => {})
+  // Cloudflare Workers have no `public/` directory and no `process.cwd()` to resolve one against.
+  // The branding used to be a disk read, so on Workers every email silently lost its wordmark and
+  // this path was the reason. The logo is now part of the bundle: make any filesystem read fatal
+  // and the attachment still arrives intact.
+  t.mock.method(fs, 'readFile', async () => { throw new Error('No filesystem on this host') })
+  t.mock.method(fs, 'access', async () => { throw new Error('No filesystem on this host') })
   const fetch = t.mock.method(globalThis, 'fetch', async (_url: string, init: RequestInit) => {
     const payload = JSON.parse(String(init.body))
-    assert.equal(payload.attachments, undefined)
-    assert.doesNotMatch(payload.html, /cid:|<img/)
-    assert.match(payload.html, /AfterWorks/)
+    assert.equal(payload.attachments.length, 1)
+    assert.equal(payload.attachments[0].content_id, EMAIL_LOGO_CONTENT_ID)
+    assert.match(payload.html, /cid:afterworks-logo/)
     assert.match(payload.html, /004 213/)
-    return new Response(JSON.stringify({ id: 'test-only-fallback-id' }), { status: 200 })
+    return new Response(JSON.stringify({ id: 'test-only-bundled-logo-id' }), { status: 200 })
   })
-  assert.deepEqual(await sendEmail({ to: 'member@example.com', subject: 'Reset', html: passwordResetEmailHtml(reset), text: passwordResetEmailText(reset) }), { ok: true, id: 'test-only-fallback-id' })
+  assert.deepEqual(await sendEmail({ to: 'member@example.com', subject: 'Reset', html: passwordResetEmailHtml(reset), text: passwordResetEmailText(reset) }), { ok: true, id: 'test-only-bundled-logo-id' })
   assert.equal(fetch.mock.callCount(), 1)
+})
+
+test('the committed logo module matches public/brand/email-logo.png byte for byte', () => {
+  // lib/email-logo-data.ts is generated and committed, so it can silently drift from the PNG when
+  // someone runs `npm run brand:build` and forgets `npm run brand:embed`. Pin them together here
+  // instead of relying on the build pipeline to remember.
+  const onDisk = readFileSync('public/brand/email-logo.png')
+  assert.deepEqual(Buffer.from(EMAIL_LOGO_BASE64, 'base64'), onDisk)
+  assert.equal(EMAIL_LOGO_BYTES, onDisk.length)
+  // Guard the regression this change removed: the branding path must not import a filesystem or
+  // path module. (The explanatory comment above mentions `process.cwd()`, so match imports only.)
+  const source = readFileSync('lib/email-brand.ts', 'utf8')
+  assert.doesNotMatch(source, /from '(?:node:)?(?:fs|fs\/promises|path)'/)
+  assert.doesNotMatch(source, /require\('(?:node:)?(?:fs|path)'\)/)
 })
 
 test('emails without a logo do not read or attach any asset', async (t) => {

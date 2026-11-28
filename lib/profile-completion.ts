@@ -47,6 +47,8 @@ export const MEMBER_PROFILE_FIELDS = [
   'bankName',
   'bankBranch',
   'bankAccountNumber',
+  // PayPal is identified by the account's email address; there is no account number.
+  'paypalEmail',
   'school',
   'course',
   'jobExperience',
@@ -134,13 +136,18 @@ export function sanitiseProfilePatch(
     patch[key as MemberProfileField] = sanitizeLine(raw, max)
   }
 
-  // "M-Pesa" members must not carry bank details around: a payout that reads a stale account
-  // number after a method switch is a support ticket at best and a mis-payment at worst.
+  // Members must not carry the details of a method they are not using: a payout that reads a
+  // stale account number after a method switch is a support ticket at best and a mis-payment at
+  // worst. Each switch clears the fields that belong to the *other* methods, so a document can only
+  // ever describe one destination.
   const nextMethod = typeof method === 'string' ? method : (patch.preferredPayoutMethod as string | undefined)
   if (nextMethod && nextMethod !== 'Bank Transfer') {
     patch.bankName = ''
     patch.bankBranch = ''
     patch.bankAccountNumber = ''
+  }
+  if (nextMethod && nextMethod !== 'PayPal') {
+    patch.paypalEmail = ''
   }
   // The reverse is deliberately NOT done. A bank payer still has a phone number: it is a required
   // profile field, it is the account's contact detail, and it is the identifier "one phone number,

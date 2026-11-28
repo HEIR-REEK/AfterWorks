@@ -126,6 +126,44 @@ export function nextPayoutStatuses(from: string): PayoutRequestStatus[] {
   return [...(PAYOUT_TRANSITIONS[from as PayoutRequestStatus] ?? [])]
 }
 
+/**
+ * Statuses a request may *finish* in without money moving.
+ *
+ * Starting from `pending`, these are the only moves that close a request while leaving the held
+ * amount intact: everything else either sends money (`paid`) or releases the hold.
+ */
+const PAYOUT_NON_MOVING_STATUSES: readonly PayoutRequestStatus[] = ['rejected', 'failed', 'cancelled']
+
+/**
+ * The status moves an operator may take on one request, method included.
+ *
+ * The state machine above answers "is this move legal?", which is only half the question: a
+ * request for a method with no disbursement integration (PayPal, today) must never be *sent*, but
+ * it must still be closable, or the member's money stays held forever with no way out short of a
+ * hand-written refund. So `paid` is dropped for methods that cannot be paid, and every move that
+ * returns the hold is kept.
+ *
+ * This lives beside the state machine so the console buttons, the API guard and the regression
+ * tests all read one table instead of three opinions.
+ */
+export function availablePayoutStatuses(from: string, method: PayoutMethod): PayoutRequestStatus[] {
+  const legal = nextPayoutStatuses(from)
+  if (isPayoutMethodPayable(method)) return legal
+  // Keep closures; drop anything that would record the money as sent.
+  return legal.filter((to) => PAYOUT_NON_MOVING_STATUSES.includes(to))
+}
+
+/**
+ * The refusal an operator sees when they try to send a payout that has no way of being sent.
+ *
+ * Returns null when the move is fine. Deliberately says what *did* happen to the money, because
+ * the alternative reading of this message is "your request is stuck".
+ */
+export function payoutSettlementRefusal(to: PayoutRequestStatus, method: PayoutMethod): string | null {
+  if (!requiresPayoutReference(to) || isPayoutMethodPayable(method)) return null
+  return `${payoutMethodPresentation(method).label} payouts are not switched on yet, so this request cannot be marked paid. Refund it instead — that returns the held amount to the member straight away.`
+}
+
 export const PAYOUT_ACTION_LABELS: Record<PayoutRequestStatus, string> = {
   pending: 'Return to review',
   approved: 'Approve request',
@@ -155,9 +193,31 @@ export function requiresPayoutReference(to: PayoutRequestStatus): boolean {
 
 // ─── Destination (where the money goes) ──────────────────────────────────────
 
-export const PAYOUT_METHODS = ['M-Pesa', 'Bank Transfer'] as const
+export const PAYOUT_METHODS = ['M-Pesa', 'Bank Transfer', 'PayPal'] as const
 
 export type PayoutMethod = (typeof PAYOUT_METHODS)[number]
+
+/**
+ * Methods that can actually be *paid* today.
+ *
+ * PayPal is offered in the wallet and on the profile so members can record where the money should
+ * go, but no disbursement integration is wired yet. `PAYOUT_METHODS` drives what may be stored;
+ * this list drives what the console may mark as sent. Keeping them separate is what lets the UI be
+ * shipped before the logic, without ever letting a PayPal request be quietly marked "paid" by hand.
+ */
+export const PAYABLE_PAYOUT_METHODS: readonly PayoutMethod[] = ['M-Pesa', 'Bank Transfer']
+
+/** True when this method can be disbursed right now. */
+export function isPayoutMethodPayable(method: PayoutMethod): boolean {
+  return PAYABLE_PAYOUT_METHODS.includes(method)
+}
+
+/** Member-facing explanation for a method that is saved but not yet payable. */
+export function payoutMethodPendingNote(method: PayoutMethod): string | null {
+  return isPayoutMethodPayable(method)
+    ? null
+    : 'We have your details saved. PayPal withdrawals are not switched on yet — request a payout to M-Pesa or a bank account, and we will email you when PayPal is live.'
+}
 
 export type PayoutDestination = {
   method: PayoutMethod
@@ -169,6 +229,8 @@ export type PayoutDestination = {
   bankName: string
   bankBranch: string
   bankAccountNumber: string
+  /** PayPal account email. Empty for M-Pesa and bank payouts. */
+  paypalEmail: string
 }
 
 export type DestinationValidation =
@@ -189,6 +251,19 @@ export function isValidBankAccountNumber(raw: unknown): boolean {
   return /^\d{6,20}$/.test(value)
 }
 
+/**
+ * A PayPal account is identified by an email address, so the address *is* the account — a typo
+ * means the money lands in a stranger's balance. Deliberately strict: one `@`, a dotted domain, no
+ * whitespace, and a bounded length. `isEmailLike` in security-core is the general-purpose check used
+ * for form fields; this one is narrower because it protects a payment.
+ */
+export function isValidPayPalEmail(raw: unknown): boolean {
+  const value = String(raw ?? '').trim()
+  if (value.length < 6 || value.length > 254) return false
+  if (/\s/.test(value)) return false
+  return /^[^@]{1,64}@[^@.]+(?:\.[^@.]+)+$/.test(value)
+}
+
 /** `+254 7•• ••• 678` — enough for the member to recognise their own number, useless to a stranger. */
 export function maskAccountNumber(raw: unknown): string {
   const value = String(raw ?? '').trim()
@@ -198,6 +273,19 @@ export function maskAccountNumber(raw: unknown): string {
   const head = value.slice(0, Math.min(5, value.length - 4))
   const tail = value.slice(-3)
   return `${head}${'•'.repeat(Math.max(3, value.length - head.length - tail.length))}${tail}`
+}
+
+/**
+ * `a•••••@example.com` — keeps the domain (so the member recognises the account) and reduces the
+ * local part to its first character. A one-character local part still yields one bullet.
+ */
+export function maskEmail(raw: unknown): string {
+  const value = String(raw ?? '').trim()
+  const at = value.lastIndexOf('@')
+  if (at <= 0) return value
+  const local = value.slice(0, at)
+  const domain = value.slice(at)
+  return `${local.slice(0, 1)}${'•'.repeat(Math.max(3, local.length - 1))}${domain}`
 }
 
 /**
@@ -213,12 +301,52 @@ export function validatePayoutDestination(input: {
   bankName?: unknown
   bankBranch?: unknown
   bankAccountNumber?: unknown
+  paypalEmail?: unknown
 }): DestinationValidation {
   const methodValue = String(input.method ?? '').trim()
-  const method: PayoutMethod = methodValue === 'Bank Transfer' ? 'Bank Transfer' : 'M-Pesa'
+  // An unrecognised method must never be coerced to a default. This used to read
+  // `methodValue === 'Bank Transfer' ? 'Bank Transfer' : 'M-Pesa'`, which would have silently
+  // turned every PayPal withdrawal into an M-Pesa transfer to whatever phone number was on file —
+  // the member asks for PayPal and the money goes to mobile money instead. Unknown is an error.
+  const method = (PAYOUT_METHODS as readonly string[]).includes(methodValue)
+    ? (methodValue as PayoutMethod)
+    : null
+  if (!method) {
+    return {
+      ok: false,
+      error: methodValue
+        ? 'Choose how you want to be paid (M-Pesa, bank transfer or PayPal).'
+        : 'Choose how you want to be paid before requesting a payout.',
+      field: 'method',
+    }
+  }
   const accountName = String(input.accountName ?? '').trim().slice(0, 120)
   if (accountName.length < 3) {
     return { ok: false, error: 'Add the account holder’s full name (it must match your verified ID).', field: 'accountName' }
+  }
+
+  if (method === 'PayPal') {
+    const paypalEmail = String(input.paypalEmail ?? '').trim().slice(0, 254)
+    if (!paypalEmail) {
+      return { ok: false, error: 'Add the email address on your PayPal account.', field: 'paypalEmail' }
+    }
+    if (!isValidPayPalEmail(paypalEmail)) {
+      return { ok: false, error: 'Enter a valid PayPal email, e.g. you@example.com.', field: 'paypalEmail' }
+    }
+    // Everything else is cleared so a request cannot carry two destinations at once — a stale
+    // bank account or M-Pesa number next to a PayPal address is how a payout reaches the wrong place.
+    return {
+      ok: true,
+      destination: {
+        method,
+        accountName,
+        accountNumber: '',
+        bankName: '',
+        bankBranch: '',
+        bankAccountNumber: '',
+        paypalEmail: paypalEmail.toLowerCase(),
+      },
+    }
   }
 
   if (method === 'Bank Transfer') {
@@ -232,7 +360,15 @@ export function validatePayoutDestination(input: {
     }
     return {
       ok: true,
-      destination: { method, accountName, accountNumber: bankAccountNumber, bankName, bankBranch, bankAccountNumber },
+      destination: {
+        method,
+        accountName,
+        accountNumber: bankAccountNumber,
+        bankName,
+        bankBranch,
+        bankAccountNumber,
+        paypalEmail: '',
+      },
     }
   }
 
@@ -242,12 +378,72 @@ export function validatePayoutDestination(input: {
   }
   return {
     ok: true,
-    destination: { method, accountName, accountNumber: phone, bankName: '', bankBranch: '', bankAccountNumber: '' },
+    destination: { method, accountName, accountNumber: phone, bankName: '', bankBranch: '', bankAccountNumber: '', paypalEmail: '' },
   }
+}
+
+// ─── Presentation (client-safe) ─────────────────────────────────────────────
+
+/**
+ * Everything the UI needs to *name* a payout method, in one place.
+ *
+ * The pages used to branch on `method === 'Bank Transfer' ? … : …` in four different files, which
+ * worked while there were two methods and silently mislabels a third (PayPal rendered as M-Pesa).
+ * One helper means a fourth method is a one-line change here rather than a hunt.
+ */
+export type PayoutMethodPresentation = {
+  method: PayoutMethod
+  /** Short label for a badge or a select option. */
+  label: string
+  /** Noun for "paid to your …": bank account / M-Pesa number / PayPal account. */
+  destinationNoun: string
+  /** One line of member-facing copy. */
+  description: string
+  /** True when money can actually be sent this way today. */
+  payable: boolean
+}
+
+export const PAYOUT_METHOD_PRESENTATION: Record<PayoutMethod, PayoutMethodPresentation> = {
+  'M-Pesa': {
+    method: 'M-Pesa',
+    label: 'M-Pesa',
+    destinationNoun: 'M-Pesa number',
+    description: 'Sent to your mobile-money number. It must match the name on your verified ID.',
+    payable: true,
+  },
+  'Bank Transfer': {
+    method: 'Bank Transfer',
+    label: 'Bank transfer',
+    destinationNoun: 'bank account',
+    description: 'Sent to your bank account. Transfers can take one working day to appear.',
+    payable: true,
+  },
+  PayPal: {
+    method: 'PayPal',
+    label: 'PayPal',
+    destinationNoun: 'PayPal account',
+    description:
+      'Sent to the email address on your PayPal account. Withdrawals are not switched on yet — your details are saved and we will email you when they are live.',
+    payable: false,
+  },
+}
+
+/** Presentation for a method value that may have come from a document (so: string). */
+export function payoutMethodPresentation(method: unknown): PayoutMethodPresentation {
+  const value = String(method ?? '')
+  return (PAYOUT_METHOD_PRESENTATION as Record<string, PayoutMethodPresentation>)[value] ??
+    PAYOUT_METHOD_PRESENTATION['M-Pesa']
 }
 
 /** One-line human description of where a payout is going. */
 export function describeDestination(destination: PayoutDestination, { masked = true }: { masked?: boolean } = {}): string {
+  if (destination.method === 'PayPal') {
+    // Mask the local part: the console and the request receipt both show this string, and a PayPal
+    // address is an identifier as well as a contact detail. `maskAccountNumber` is digit-based and
+    // would print a short local part in full, so this needs its own reducer.
+    const email = destination.paypalEmail || ''
+    return `PayPal · ${masked ? maskEmail(email) : email || 'no address saved'}`
+  }
   if (destination.method === 'Bank Transfer') {
     const account = masked ? maskAccountNumber(destination.bankAccountNumber) : destination.bankAccountNumber
     return `Bank transfer · ${destination.bankName}${destination.bankBranch ? ` (${destination.bankBranch})` : ''} · ${account}`
@@ -388,13 +584,19 @@ export function mapPayoutRequest(id: string, data: Record<string, unknown>): Pay
   const status = (PAYOUT_STATUSES as readonly string[]).includes(String(data.status))
     ? (String(data.status) as PayoutRequestStatus)
     : 'pending'
+  // Same coercion trap as the validator: this used to map everything except "Bank Transfer" to
+  // M-Pesa, so a stored PayPal request would have been displayed as a mobile-money transfer.
+  const rawMethod = String(data.method ?? data.payoutMethod ?? 'M-Pesa')
   const destination: PayoutDestination = {
-    method: String(data.method ?? data.payoutMethod ?? 'M-Pesa') === 'Bank Transfer' ? 'Bank Transfer' : 'M-Pesa',
+    method: (PAYOUT_METHODS as readonly string[]).includes(rawMethod)
+      ? (rawMethod as PayoutMethod)
+      : 'M-Pesa',
     accountName: String(data.accountName ?? ''),
     accountNumber: String(data.accountNumber ?? ''),
     bankName: String(data.bankName ?? ''),
     bankBranch: String(data.bankBranch ?? ''),
     bankAccountNumber: String(data.bankAccountNumber ?? ''),
+    paypalEmail: String(data.paypalEmail ?? ''),
   }
   const history = Array.isArray(data.history)
     ? (data.history as Record<string, unknown>[]).map((entry) => ({
@@ -478,6 +680,12 @@ export type PayoutDestinationState = {
   accountName: string
   /** What is missing, phrased for the member (null when ready). */
   problem: string | null
+  /**
+   * Set when the destination is saved and valid but the method cannot be disbursed yet (PayPal,
+   * today). The wallet shows this instead of a Request button, so a member is told what is
+   * happening rather than discovering it when a request is refused.
+   */
+  notYetPayable?: string | null
 }
 
 export type WelcomeBonusState = {

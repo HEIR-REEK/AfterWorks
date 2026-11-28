@@ -1,0 +1,50 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "afterworks",
+  "main": ".open-next/worker.js",
+
+  // nodejs_compat is what makes `node:crypto` (createHmac / timingSafeEqual / randomBytes) and
+  // `node:async_hooks` available to the session + CSRF code. Compatibility dates from 2026-08-04
+  // on enable this implicitly; it is asserted explicitly so a `wrangler` downgrade cannot
+  // silently take crypto with it.
+  //
+  // scrypt is NOT a blocker: workerd implements `node:crypto` scrypt natively, and this app only
+  // verifies a passcode on console sign-in — not per request. Its CPU cost is listed as a
+  // benchmark item in CLOUDFLARE_MIGRATION.md rather than pre-optimised away.
+  "compatibility_date": "2026-11-01",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+
+  // Static assets are uploaded with the Worker; `/api/*` and RSC are served by `main`.
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+
+  // `main` points at a generated file, so the Worker cannot be deployed from a clean checkout:
+  // `.open-next/` is gitignored and `npm run build` is plain `next build`, which never writes it.
+  // Cloudflare's Workers Builds ran `npm run build` and then failed here with "The entry-point
+  // file at .open-next/worker.js was not found" on every commit of this branch, because it only
+  // exists if `cf:build` ran first.
+  //
+  // Declaring it here makes the config self-sufficient: `wrangler deploy` builds what it is about
+  // to upload, whatever the dashboard happens to be configured to do. It costs a second
+  // `next build` when CI has already run one, which is a fair trade for a deploy that cannot be
+  // half-configured.
+  "build": {
+    "command": "npm run cf:build",
+  },
+
+  "observability": {
+    "enabled": true
+  },
+
+  // Non-secret configuration only. Everything in `.env.example` that is a credential must be
+  // pushed with `wrangler secret put` — never committed here. See CLOUDFLARE_MIGRATION.md.
+  "vars": {
+    "NODE_ENV": "production",
+    "TRUST_PROXY_HEADERS": "true",
+    "FORCE_SECURE_COOKIES": "true",
+    "REQUIRE_HOST_ALLOW_LIST": "true",
+    "ALLOW_ADMIN_BEARER_AUTH": "false"
+  }
+}

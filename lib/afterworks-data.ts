@@ -208,6 +208,8 @@ export type WorkerProfile = {
   bankName?: string
   bankBranch?: string
   bankAccountNumber?: string
+  /** PayPal account email; only meaningful when `preferredPayoutMethod` is 'PayPal'. */
+  paypalEmail?: string
   school?: string
   course?: string
   jobExperience?: string
@@ -465,10 +467,24 @@ export const ASSESSMENT_ONLY_CATALOGUE_JOB_IDS = [
   'job-app-onboarding-sheng',
 ] as const
 
+/**
+ * The code-review card, kept in its own batch.
+ *
+ * It is a Content Review card with a training fee, so it cannot join `ASSESSMENT_ONLY_CATALOGUE_JOB_IDS`
+ * (that batch means "free by design"). It cannot join `EXPANDED_CATALOGUE_JOB_IDS` either: that batch
+ * is the frozen 2026 expansion, whose shape — exactly two cards added to each of the six categories —
+ * is asserted in `tests/seed-jobs.test.ts` and is worth keeping true.
+ *
+ * A named batch of its own keeps it importable (so a live board can publish it) without pretending
+ * it was part of an earlier content drop.
+ */
+export const CODE_REVIEW_CATALOGUE_JOB_IDS = ['job-code-diff-review'] as const
+
 /** Every id either import path is allowed to publish. */
 export const IMPORTABLE_CATALOGUE_JOB_IDS = [
   ...EXPANDED_CATALOGUE_JOB_IDS,
   ...ASSESSMENT_ONLY_CATALOGUE_JOB_IDS,
+  ...CODE_REVIEW_CATALOGUE_JOB_IDS,
 ] as const
 
 export function seedJobs(): Job[] {
@@ -1729,6 +1745,56 @@ export function seedJobs(): Job[] {
       status: 'open',
       closesAt: daysFromNow(8),
       postedAgo: '1 day ago',
+    },
+    // ── Content Review: code review (training card) ──────────────────────────
+    // Content Review rather than a "Coding" category on purpose. A new category would need a full
+    // built-in assessment bank (twenty authored items) and a coursebook before any card could be
+    // assessed — `builtInQuestions` deliberately returns an empty bank rather than an easy quiz
+    // when a category has none. This card is what the platform can actually pay for today: reading
+    // a pull request against a written brief and writing findings, not writing the fix.
+    {
+      id: 'job-code-diff-review',
+      title: 'Review pull request diffs against a coding brief',
+      category: 'Content Review',
+      description:
+        'Read small pull request diffs (10–40 changed lines, one or two files) beside the written brief that asked for the change, and decide whether the diff does what the brief asked — plus what it breaks. You are reviewing, not rewriting: the deliverable is a short findings list a maintainer can act on.',
+      responsibilities: [
+        'Review 12 pull request diffs against their briefs',
+        'Record the verdict (ready to merge / needs changes) with a reason for each',
+        'Cite the file and line for every finding, and quote the line you mean',
+        'Flag any diff that touches tests, migrations or authentication for a second look',
+        'Never push code, never comment on the pull request yourself — findings stay in the task',
+      ],
+      payAmountUsd: 32,
+      estimatedMinutes: 210,
+      capacity: 45,
+      slotsRemaining: 38,
+      trainingRequired: true,
+      // Matches the other review-tier cards (the medical and legal transcription cards sit at
+      // $15/$20); the assess-and-reason work here is closer to those than to a formatting task.
+      trainingFeeUsd: 16,
+      trainingNotes: [
+        {
+          title: 'Reading a diff without being able to run it',
+          content:
+            'You will not have a working repository, a debugger or a test runner — you get the brief, the diff and the file it changed. So read in three passes:\n\n1. The brief first, alone. Write down what a correct change would have to do, before you look at what was submitted.\n2. The diff second. Check every added line against your list. A diff can be perfectly readable and still not do what was asked.\n3. The surrounding file third. Most real defects live in the lines the diff did *not* touch — a render path that now gets an extra argument, an early return that skips new validation, an error path that has no test.',
+        },
+        {
+          title: 'Edge cases that actually matter here',
+          content:
+            'Score the usual suspects on every diff, in this order:\n\n- **Empty and absent input.** An empty list, an empty string, a field that is missing rather than null. Most crash reports start here.\n- **Off-by-one and boundary.** "First" and "last", a limit of zero, a range whose endpoints are inclusive when the reader assumes exclusive.\n- **Partial failure.** If the diff writes two things, what happens when the second write fails? A change that leaves a record half-updated is a defect even when the happy path is correct.\n- **Money and permissions.** Any diff touching a balance, a volume, a timestamp or a role check gets read twice — once for what it does, once for what a malicious or mistyped input could make it do.\n- **Tests.** If behaviour changed and no test changed, say so. That is a finding, not a nitpick.',
+        },
+        {
+          title: 'Writing a finding a maintainer can act on',
+          content:
+            'A finding that says "this looks wrong" costs the maintainer another review. Use one shape every time:\n\n`file:line — what the code does — why that is a problem — what you expected`\n\nExample: `orders.ts:42 — the total is summed before the discount is subtracted — a discount larger than the subtotal returns a negative balance — clamp at zero or subtract first.`\n\nKeep severity honest: **blocking** (wrong result, data loss, security), **should-fix** (works today, will break), **nit** (style). Do not pad a review with nits to look thorough — a diff with one blocking defect and no nits is a normal, complete review.\n\nBefore you submit, re-read your own findings against the quote you cited. A finding pointing at the wrong line wastes the maintainer\'s trust in every other finding on the list.',
+        },
+      ],
+      // Sample cards use the category bank. Answers live only in lib/assessment-bank.ts.
+      requiresVerified: true,
+      status: 'open',
+      closesAt: daysFromNow(9),
+      postedAgo: '3 hours ago',
     },
   ]
 }

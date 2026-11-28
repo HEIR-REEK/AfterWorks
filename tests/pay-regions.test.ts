@@ -9,6 +9,9 @@ import {
   isRegionalPayComplete,
   payForRegion,
   payRangeForCard,
+  REGION_PAY_CEILING,
+  REGION_PAY_FLOOR,
+  trainingFeeForRegion,
   regionForCountry,
   resolveWorkerRegion,
   validateRegionalPay,
@@ -137,10 +140,34 @@ test('the pricing path never reads the request IP', () => {
 
 const card = (payAmountUsd: number, payByRegion?: RegionalPay) => ({ payAmountUsd, payByRegion })
 
-test('a card with no regional table pays its scalar everywhere, exactly as before', () => {
-  for (const region of PAY_REGIONS) {
-    assert.equal(payForRegion(card(18), region), 18, `${region} should be unchanged for a legacy card`)
-  }
+test('a legacy card pays its scalar, but never more than the region’s ceiling', () => {
+  // A card with no regional table was authored with one global number. Paying its full value to a
+  // member in a lower-cost region is what left $70 cards on the Africa board, so the scalar is now
+  // a ceiling by region: unchanged where it fits, capped where it does not.
+  // The Americas has a floor as well as a ceiling: a cheap global card is raised to that board's band.
+  assert.equal(payForRegion(card(18), 'Americas'), REGION_PAY_FLOOR.Americas!, 'raised into the Americas band')
+  assert.equal(payForRegion(card(60), 'Americas'), 60, 'inside the Americas band, unchanged')
+  assert.equal(payForRegion(card(18), 'Europe'), 18, 'inside the Europe ceiling, unchanged')
+  assert.equal(payForRegion(card(18), 'Africa'), REGION_PAY_CEILING.Africa, 'capped in Africa')
+  assert.equal(payForRegion(card(70), 'Africa'), REGION_PAY_CEILING.Africa, 'a $70 card cannot pay $70 in Africa')
+  assert.equal(payForRegion(card(40), 'Asia'), REGION_PAY_CEILING.Asia)
+})
+
+test('the ceilings are the bands the platform asked for, and they rise', () => {
+  assert.ok(REGION_PAY_CEILING.Africa < 15, 'Africa stays under $15')
+  assert.ok(REGION_PAY_CEILING.Africa < REGION_PAY_CEILING.Asia)
+  assert.ok(REGION_PAY_CEILING.Asia < REGION_PAY_CEILING.Europe)
+  assert.ok(REGION_PAY_CEILING.Europe < REGION_PAY_CEILING.Americas)
+  assert.ok(REGION_PAY_CEILING.Americas > 45, 'the Americas sit above $45 as asked')
+})
+
+test('a training fee obeys the same ceiling as the pay', () => {
+  // A fee is money taken from the member: a $14 card must not charge a fee written for the Americas.
+  assert.equal(trainingFeeForRegion({ trainingFeeUsd: 25 }, 'Africa'), REGION_PAY_CEILING.Africa)
+  assert.equal(trainingFeeForRegion({ trainingFeeUsd: 4 }, 'Africa'), 4, 'a fee under the ceiling is untouched')
+  assert.equal(trainingFeeForRegion({ trainingFeeUsd: 10 }, 'Europe'), 10)
+  assert.equal(trainingFeeForRegion({ trainingFeeUsd: 0 }, 'Africa'), 0)
+  assert.equal(trainingFeeForRegion({}, 'Africa'), 0)
 })
 
 test('a regional table prices each region from its own number', () => {
@@ -162,13 +189,20 @@ test('a missing region falls back to the default, never to zero', () => {
 
 test('a zero or negative regional price is ignored rather than paid', () => {
   const broken = card(18, { Africa: 0, Americas: -5, default: -1 } as RegionalPay)
-  assert.equal(payForRegion(broken, 'Africa'), 18)
-  assert.equal(payForRegion(broken, 'Americas'), 18)
+  // Falls back to the scalar, then through the ceiling — never to zero, never above it.
+  assert.equal(payForRegion(broken, 'Africa'), Math.min(18, REGION_PAY_CEILING.Africa))
+  assert.equal(payForRegion(broken, 'Americas'), REGION_PAY_FLOOR.Americas!)
 })
 
 test('the console can show the spread on a card', () => {
   assert.deepEqual(payRangeForCard(card(18, { Africa: 6, Americas: 34, Europe: 30, Asia: 14 })), { min: 6, max: 34 })
-  assert.deepEqual(payRangeForCard(card(18)), { min: 18, max: 18 })
+  // A flat $18 scalar is capped to $14 in Africa, so the spread is $14–$18, not $18–$18.
+  assert.deepEqual(payRangeForCard(card(18)), { min: REGION_PAY_CEILING.Africa, max: REGION_PAY_FLOOR.Americas! })
+  // A legacy scalar above a ceiling shows the spread it actually pays: $70 capped to $14 in Africa.
+  assert.deepEqual(payRangeForCard(card(70)), { min: REGION_PAY_CEILING.Africa, max: 70 })
+  // And the floor is only the Americas: Africa has a ceiling and no floor, so nothing is raised to
+  // a price the card never stated.
+  assert.equal(REGION_PAY_FLOOR.Africa, undefined)
 })
 
 // ─── Validating what an admin types ─────────────────────────────────────────

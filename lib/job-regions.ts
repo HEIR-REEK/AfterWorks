@@ -25,7 +25,7 @@
  * apart is what stops one from quietly overwriting the other.
  */
 
-import { PAY_REGIONS, countriesInRegion, type PayRegion } from '@/lib/pay-regions'
+import { PAY_REGIONS, boardPayForRegion, countriesInRegion, trainingFeeForRegion, type PayRegion } from '@/lib/pay-regions'
 
 /**
  * The region names are type-only here; the union itself lives in `lib/afterworks-data.ts` next to
@@ -171,16 +171,36 @@ export function partitionCatalogue<T extends { region?: unknown }>(
  * those members would look like the site is broken. Locking is a pricing decision, not a security
  * boundary, so failing open here costs money at worst.
  */
-export function buildRegionalCatalogue<T extends { region?: unknown }>(
+export function buildRegionalCatalogue<T extends { region?: unknown; payAmountUsd?: unknown }>(
   cards: T[],
   resolved: { region: JobRegion | null; source: 'header' | 'lookup' | 'none' },
 ): RegionalCatalogue<T> {
-  const { visible, locked } = partitionCatalogue(cards, resolved.region)
+  // The price a card shows has to be the price it pays. The payout is decided server-side by
+  // `payForRegion()` — which caps a legacy card's scalar at its region's ceiling — so the board is
+  // priced through the same function here. Without this the board showed one number and credited
+  // another, and the Africa board displayed $70 cards for work that would have been credited at $14.
+  const priced = resolved.region
+    ? cards.map((card) => {
+        const source = card as { payByRegion?: never; trainingFeeUsd?: number | null; payAmountUsd?: unknown }
+        const feeRaw = Number(source.trainingFeeUsd ?? 0) || 0
+        return {
+          ...card,
+          payAmountUsd: boardPayForRegion(
+            { payAmountUsd: Number(card.payAmountUsd ?? 0) || 0, payByRegion: source.payByRegion },
+            resolved.region as PayRegion,
+          ),
+          // A fee is money the member pays, so the board must show the capped figure the checkout
+          // will charge — not the raw value written for another region's economy.
+          ...(feeRaw > 0 ? { trainingFeeUsd: trainingFeeForRegion({ trainingFeeUsd: feeRaw }, resolved.region as PayRegion) } : {}),
+        }
+      })
+    : cards
+  const { visible, locked } = partitionCatalogue(priced, resolved.region)
 
   // How many cards each board holds. Global cards are excluded: they appear on every board, so
   // counting them here would make each region look bigger than its own content.
   const counts = new Map<JobRegion, number>()
-  for (const card of cards) {
+  for (const card of priced) {
     const audience = jobAudienceOf(card.region)
     if (audience.kind !== 'region') continue
     counts.set(audience.region, (counts.get(audience.region) ?? 0) + 1)
@@ -194,7 +214,7 @@ export function buildRegionalCatalogue<T extends { region?: unknown }>(
     open: resolved.region === null || resolved.region === region,
     // Cards for the blurred preview. `region` is stamped on each so the client can tell a locked
     // card from an open one, and `locked` states it outright for the UI to key on.
-    cards: cards
+    cards: priced
       .filter((card) => {
         const audience = jobAudienceOf(card.region)
         return audience.kind === 'region' && audience.region === region

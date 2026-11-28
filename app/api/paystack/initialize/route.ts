@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server'
 import { consumeBucket, audit, fail, json, maintenanceBlockForApi, requireUser, routeError } from '@/lib/guards'
 import { env, envInt, isHostAllowed, readJsonBody, sanitizeLine } from '@/lib/security-core'
 import { paystackSubunitsFor, trainingFeeKesFor, trainingFeeUsdFor } from '@/lib/afterworks-data'
+import { trainingFeeForRegion } from '@/lib/pay-regions'
 import { randomId } from '@/lib/session-token'
 import { gateJobId } from '@/lib/job-region-gate'
 
@@ -112,8 +113,12 @@ export async function POST(req: NextRequest) {
       return fail(409, 'This job card does not require paid training — no charge is needed.', { code: 'training_not_required' })
     }
 
-    const amountKes = trainingFeeKesFor(gate.feeUsd)
-    const subunits = paystackSubunitsFor(gate.feeUsd)
+    // The fee is money taken from the member, so it obeys the same region ceiling as the pay: a
+    // card worth $14 on the Africa board must not charge a fee written for the Americas. The region
+    // is the one this request resolved to, from the same helper the region lock used.
+    const feeUsd = trainingFeeForRegion({ trainingFeeUsd: gate.feeUsd }, regionGate.gate.region ?? 'Africa')
+    const amountKes = trainingFeeKesFor(feeUsd)
+    const subunits = paystackSubunitsFor(feeUsd)
 
     const reference = `aw_tr_${randomId(10)}`
     const { origin: callbackOrigin, popupMode } = browserReachableOrigin(req)
@@ -152,7 +157,7 @@ export async function POST(req: NextRequest) {
       email,
       userId: uid,
       amountKes,
-      amountUsd: trainingFeeUsdFor(gate.feeUsd),
+      amountUsd: trainingFeeUsdFor(feeUsd),
       currency: 'KES',
       status: 'pending',
       jobId,

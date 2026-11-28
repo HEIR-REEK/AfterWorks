@@ -18,6 +18,7 @@
  */
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { jobVisibleInRegion } from '@/lib/job-regions'
 import {
   seedJobs,
   seedWorker,
@@ -30,6 +31,7 @@ import {
   getUserDocument,
   subscribeToUserDocument,
   readCatalogue,
+  readJobBoard,
   subscribeToJobs,
   getJobSnapshot,
 } from '@/lib/firestore'
@@ -123,6 +125,14 @@ type AfterWorksContextValue = {
   catalogueLive: boolean
   /** When the worker-side catalogue last matched Firestore (ISO). null until the first live read. */
   catalogueSyncedAt: string | null
+  /**
+   * The board this member may open, as decided by the *server* from where their request comes
+   * from — not from anything the browser could change. `null` region means the server could not
+   * tell, in which case every card is open.
+   */
+  jobRegion: { region: string | null; wholeCatalogue: boolean; source: string } | null
+  /** Regions this member cannot open: name, one-line blurb and card count. Never card payload. */
+  lockedRegions: { region: string; label: string; blurb: string; count: number }[]
   /** True while a mutation is in flight, keyed by `job:<id>` / `app:<id>` — drives per-card spinners. */
   pending: Record<string, boolean>
   error: string | null
@@ -301,9 +311,20 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
   // The rules for folding a snapshot into the board (which read may remove a card, when sample
   // cards are allowed) live in `applyCatalogueSnapshot`; the ref mirrors the state so the callbacks
   // below — which do not re-create on every render — always read the current board.
+  /**
+   * Fold a catalogue read into the board.
+   *
+   * When the server has told us this member's region, a Firestore snapshot is filtered through it
+   * as well: the listener reads the whole collection and would otherwise put another region's cards
+   * back on screen a second after the board route removed them.
+   */
   const applyLiveJobs = useCallback((incoming: Job[], authoritative: boolean) => {
+    // A snapshot of the whole collection must not put another region's cards back on screen. The
+    // region comes from the server; `null` means it could not tell, and then nothing is filtered.
+    const region = boardRef.current?.region ?? null
+    const scoped = region ? incoming.filter((job) => jobVisibleInRegion(job, region as never)) : incoming
     const next = applyCatalogueSnapshot(catalogueRef.current, {
-      jobs: incoming,
+      jobs: scoped,
       authoritative,
       sample: seedJobs,
       at: new Date().toISOString(),
@@ -313,8 +334,29 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
     setCatalogue(next)
   }, [])
 
+  // The region-scoped board arrives from the server route, which is the only place that can see
+  // where the request came from. It is applied first and on every refresh, because it is the
+  // authoritative answer to "which cards may this member open"; the Firestore listener below keeps
+  // the *contents* of those cards current. Locking is therefore never undone by a snapshot.
+  const [boardMeta, setBoardMeta] = useState<{ region: string | null; wholeCatalogue: boolean; source: string } | null>(null)
+  const boardRef = useRef<{ region: string | null; wholeCatalogue: boolean; source: string } | null>(null)
+  const [lockedRegions, setLockedRegions] = useState<{ region: string; label: string; blurb: string; count: number }[]>([])
+
   const refreshJobs = useCallback(async () => {
     if (!configured || !uid) return
+    // The board route first: it decides which cards exist for this member. If it fails (signed out,
+    // network, a deployment with no geo source), fall back to the plain catalogue read and keep
+    // today's behaviour rather than blanking the board.
+    const board = await readJobBoard(CATALOGUE_PAGE_SIZE)
+    if (!mounted.current) return
+    if (board) {
+      const meta = { region: board.region, wholeCatalogue: board.wholeCatalogue, source: board.source }
+      boardRef.current = meta
+      setBoardMeta(meta)
+      setLockedRegions(board.lockedRegions ?? [])
+      applyLiveJobs(board.jobs, true)
+      return
+    }
     const { jobs: live, ok } = await readCatalogue(CATALOGUE_PAGE_SIZE)
     if (!mounted.current || !ok) return
     applyLiveJobs(live, true)
@@ -870,6 +912,8 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
       mode: configured && user ? 'live' : 'demo',
       catalogueLive: catalogue.live,
       catalogueSyncedAt: catalogue.syncedAt,
+      jobRegion: boardMeta,
+      lockedRegions,
       pending,
       error,
       clearError: () => setError(null),

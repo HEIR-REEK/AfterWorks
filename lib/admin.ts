@@ -642,6 +642,8 @@ export type AdminJobRow = {
   id: string
   title: string
   category: string
+  /** Board this card belongs to. Blank = every region (the pre-region behaviour). */
+  region?: string
   description: string
   responsibilities: string[]
   payAmountUsd: number

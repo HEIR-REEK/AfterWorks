@@ -25,6 +25,7 @@ import {
   phoneTakenError,
 } from '@/lib/account-uniqueness'
 import { isKnownCountry, normalisePhone } from '@/lib/countries'
+import { validateJobRegion } from '@/lib/job-regions'
 import {
   adminUserDetailFromDoc,
   adminUserRowFromDoc,
@@ -2773,6 +2774,8 @@ export type AdminJobInput = {
   trainingNotes?: TrainingSection[]
   /** Admin-authored assessment questions. Empty list → built-in category bank. */
   assessmentQuestions?: AssessmentQuestion[]
+  /** Board this card belongs to. Blank = every region (the pre-region behaviour). */
+  region?: string
   requiresVerified: boolean
   status: string
   closesAt?: string
@@ -2884,7 +2887,12 @@ export function sanitizeJob(input: AdminJobInput, existing?: Record<string, unkn
     .filter((question) => question.question && question.options.length >= 2)
     .slice(0, 50)
 
+  // A region we do not recognise would make the card invisible on every board rather than visible
+  // on the wrong one, so an invalid value is refused at the door instead of stored.
+  const regionCheck = validateJobRegion(input.region)
+
   return {
+    region: regionCheck.ok ? regionCheck.value : '',
     title,
     category: (JOB_CATEGORIES as readonly string[]).includes(input.category) ? input.category : 'Data Entry',
     description: String(input.description ?? '').trim().slice(0, 4000),
@@ -3732,6 +3740,7 @@ export async function listJobsServer(opts: { status?: string; pageSize?: number;
         id: d.id,
         title: String(data.title ?? ''),
         category: String(data.category ?? 'Data Entry'),
+        region: String(data.region ?? ''),
         description: String(data.description ?? ''),
         responsibilities: Array.isArray(data.responsibilities) ? (data.responsibilities as string[]).map(String) : [],
         payAmountUsd: Number(data.payAmountUsd ?? 0) || 0,

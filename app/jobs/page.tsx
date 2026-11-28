@@ -7,6 +7,7 @@ import { useSearchParams } from 'next/navigation'
 import { AlertCircle, ChevronRight, GraduationCap, RefreshCw, Search } from 'lucide-react'
 import { JobCard } from '@/components/job-card'
 import { ExternalJobsSection } from '@/components/external-jobs-section'
+import { LockedRegionStrip } from '@/components/locked-region-card'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import type { JobCategory } from '@/lib/afterworks-data'
@@ -32,7 +33,8 @@ export default function JobsPage() {
 }
 
 function JobsPageInner() {
-  const { jobs, worker, profileLoaded, mode, catalogueLive, catalogueSyncedAt, refreshJobs } = useAfterWorks()
+  const { jobs, worker, profileLoaded, mode, catalogueLive, catalogueSyncedAt, refreshJobs, jobRegion, lockedRegions } =
+    useAfterWorks()
   const searchParams = useSearchParams()
   const trainingParam = searchParams.get('training') === '1'
   // The training upsell links here with `?training=1`. Keep the toggle in state so the worker can
@@ -73,8 +75,8 @@ function JobsPageInner() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Browse jobs</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            {filtered.length} {filtered.length === 1 ? 'job' : 'jobs'} available. Applying is
-            always free.
+            {filtered.length} {filtered.length === 1 ? 'job' : 'jobs'} available
+            {jobRegion?.region ? ` on the ${jobRegion.region} board` : ''}. Applying is always free.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -200,6 +202,8 @@ function JobsPageInner() {
           ))}
         </div>
       )}
+
+      <LockedRegionStrip regions={lockedRegions} currentRegion={jobRegion?.region ?? null} />
 
       <ExternalJobsSection />
     </div>

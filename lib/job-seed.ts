@@ -52,9 +52,12 @@ export function starterJobInput(job: Job): AdminJobInput {
     trainingRequired: job.trainingRequired,
     trainingFeeUsd: job.trainingRequired ? job.trainingFeeUsd : undefined,
     trainingNotes: job.trainingNotes ?? [],
-    // Empty means the built-in category bank is used. Keeping it explicit makes the document
-    // shape identical to one saved from the console, where an empty list is also meaningful.
-    assessmentQuestions: [],
+    // The seeded cards carry their own assessments; the older batches carry none, which means the
+    // built-in category bank is used. Both are meaningful, so both are written explicitly.
+    assessmentQuestions: job.assessmentQuestions ?? [],
+    // Which board the card belongs to. Blank on the older batches → visible everywhere, exactly as
+    // before regions existed. Set on the regional batch → locked to that board.
+    region: job.region ?? '',
     requiresVerified: job.requiresVerified,
     status: job.status,
     closesAt: job.closesAt,

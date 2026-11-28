@@ -37,6 +37,7 @@ import { jobHasTraining,
   type TrainingLessonKind,
 } from '@/lib/afterworks-data'
 import { getBuiltInTrainingCourse } from '@/lib/training-curriculum'
+import { JOB_REGION_LIST } from '@/lib/job-regions'
 import { cn } from '@/lib/utils'
 
 /**
@@ -89,6 +90,7 @@ type DraftQuestion = {
 const EMPTY: Draft = {
   title: '',
   category: 'Data Entry',
+  region: '',
   description: '',
   responsibilities: '',
   payAmountUsd: 40,
@@ -143,6 +145,8 @@ type Draft = {
   id?: string
   title: string
   category: string
+  /** Which region's board this card belongs to. Blank = every region. */
+  region: string
   description: string
   responsibilities: string
   payAmountUsd: number
@@ -231,6 +235,7 @@ export default function AdminJobsPage() {
       id: job.id,
       title: job.title,
       category: job.category,
+      region: job.region ?? '',
       description: job.description,
       responsibilities: (job.responsibilities ?? []).join('\n'),
       payAmountUsd: job.payAmountUsd,
@@ -435,6 +440,7 @@ export default function AdminJobsPage() {
         id: editing.id,
         title: editing.title,
         category: editing.category,
+        region: editing.region,
         description: editing.description,
         responsibilities: editing.responsibilities.split('\n').map((line) => line.trim()).filter(Boolean),
         payAmountUsd: Number(editing.payAmountUsd),
@@ -587,6 +593,7 @@ export default function AdminJobsPage() {
                   </div>
                   <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted-foreground">{job.description}</p>
                   <p className="mt-1 font-mono text-[11px] text-muted-foreground">
+                    {job.region ? <span className="font-semibold text-primary">{job.region} board</span> : 'All regions'} ·{' '}
                     {formatUsd(job.payAmountUsd)} · {job.estimatedMinutes} min · {job.slotsRemaining}/{job.capacity} slots open · closes{' '}
                     {job.closesAt ? new Date(job.closesAt).toLocaleDateString() : '—'}
                     {(job.trainingNotes?.length ?? 0) > 0 && (() => {
@@ -674,6 +681,23 @@ export default function AdminJobsPage() {
                     {STATUSES.map((value) => (
                       <option key={value} value={value}>
                         {value}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Field
+                  label="Region board"
+                  hint="Which board this card appears on. Members only see the board for the region they connect from. Leave blank for every region."
+                >
+                  <select
+                    value={editing.region}
+                    onChange={(e) => setEditing({ ...editing, region: e.target.value })}
+                    className={inputClass}
+                  >
+                    <option value="">Every region (open to all)</option>
+                    {JOB_REGION_LIST.map((region) => (
+                      <option key={region} value={region}>
+                        {region} only
                       </option>
                     ))}
                   </select>

@@ -305,6 +305,42 @@ export async function updateUserWallet(uid: string, wallet: { payoutNumber?: str
 }
 
 /**
+ * The region-scoped board: the cards this member may open, plus the regions they may not.
+ *
+ * Goes through the server route rather than the Firestore SDK, because the value that decides the
+ * region is the request IP — which the browser holds. Filtering here would be a suggestion; the
+ * route is the rule. The locked regions arrive as names and counts only, never as cards.
+ *
+ * On any failure the caller should fall back to `readCatalogue`, so a route problem degrades to
+ * "shows everything" rather than "shows nothing".
+ */
+export type JobBoardResponse = {
+  ok: boolean
+  region: string | null
+  source: 'header' | 'lookup' | 'none'
+  wholeCatalogue: boolean
+  jobs: Job[]
+  lockedRegions: { region: string; label: string; blurb: string; count: number }[]
+}
+
+export async function readJobBoard(max = 120): Promise<JobBoardResponse | null> {
+  let data: JobBoardResponse
+  try {
+    data = await authedFetch<JobBoardResponse>(`/api/jobs/board?limit=${max}`)
+  } catch {
+    // Signed out, offline or the route failed: the caller falls back to the plain catalogue read.
+    return null
+  }
+  if (!data || data.ok !== true || !Array.isArray(data.jobs)) return null
+  // The route sends the card projection; `payByRegion` is not part of it, so normalise what came
+  // back rather than trusting the wire shape.
+  const jobs = (data.jobs as unknown[])
+    .map((raw) => normaliseJobRecord(String((raw as Record<string, unknown>)?.id ?? ''), raw))
+    .filter((job): job is Job => job !== null)
+  return { ...data, jobs }
+}
+
+/**
  * Wallet snapshot for the signed-in member. Route returns the same numbers the ledger produced, so
  * "pending clears at 09:14 tomorrow" is a real timestamp and not copy.
  */

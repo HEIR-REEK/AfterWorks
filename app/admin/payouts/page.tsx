@@ -40,6 +40,7 @@ import {
   PAYOUT_REASON_REQUIRED,
   PAYOUT_STATUS_SHORT,
   PAYOUT_STATUS_TONE,
+  availablePayoutStatuses,
   type PayoutQueueSummary,
   type PayoutRequestRow,
   type PayoutRequestStatus,
@@ -280,7 +281,13 @@ export default function AdminPayoutsPage() {
               </thead>
               <tbody>
                 {rows.map((row) => {
-                  const moves = (transitions[row.status]?.next ?? []).filter((to) => to !== 'paid' || isOwner)
+                  // The legal moves come from the server; the *possible* ones depend on the
+                  // destination, and a method with no disbursement integration must not offer a
+                  // button that would claim the money was sent.
+                  const moves = availablePayoutStatuses(
+                    row.status,
+                    row.method,
+                  ).filter((to) => to !== 'paid' || isOwner)
                   return (
                     <tr key={row.id} className="border-t border-border/60 align-top hover:bg-muted/40">
                       <td className="whitespace-nowrap px-2 py-2">
@@ -479,7 +486,7 @@ export default function AdminPayoutsPage() {
             </div>
 
             <div className="mt-5 flex flex-wrap items-center justify-end gap-2 border-t border-border pt-4">
-              {(transitions[selected.status]?.next ?? []).map((to) => (
+              {availablePayoutStatuses(selected.status, selected.method).map((to) => (
                 <Button
                   key={to}
                   type="button"

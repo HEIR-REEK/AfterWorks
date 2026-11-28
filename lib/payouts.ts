@@ -126,6 +126,44 @@ export function nextPayoutStatuses(from: string): PayoutRequestStatus[] {
   return [...(PAYOUT_TRANSITIONS[from as PayoutRequestStatus] ?? [])]
 }
 
+/**
+ * Statuses a request may *finish* in without money moving.
+ *
+ * Starting from `pending`, these are the only moves that close a request while leaving the held
+ * amount intact: everything else either sends money (`paid`) or releases the hold.
+ */
+const PAYOUT_NON_MOVING_STATUSES: readonly PayoutRequestStatus[] = ['rejected', 'failed', 'cancelled']
+
+/**
+ * The status moves an operator may take on one request, method included.
+ *
+ * The state machine above answers "is this move legal?", which is only half the question: a
+ * request for a method with no disbursement integration (PayPal, today) must never be *sent*, but
+ * it must still be closable, or the member's money stays held forever with no way out short of a
+ * hand-written refund. So `paid` is dropped for methods that cannot be paid, and every move that
+ * returns the hold is kept.
+ *
+ * This lives beside the state machine so the console buttons, the API guard and the regression
+ * tests all read one table instead of three opinions.
+ */
+export function availablePayoutStatuses(from: string, method: PayoutMethod): PayoutRequestStatus[] {
+  const legal = nextPayoutStatuses(from)
+  if (isPayoutMethodPayable(method)) return legal
+  // Keep closures; drop anything that would record the money as sent.
+  return legal.filter((to) => PAYOUT_NON_MOVING_STATUSES.includes(to))
+}
+
+/**
+ * The refusal an operator sees when they try to send a payout that has no way of being sent.
+ *
+ * Returns null when the move is fine. Deliberately says what *did* happen to the money, because
+ * the alternative reading of this message is "your request is stuck".
+ */
+export function payoutSettlementRefusal(to: PayoutRequestStatus, method: PayoutMethod): string | null {
+  if (!requiresPayoutReference(to) || isPayoutMethodPayable(method)) return null
+  return `${payoutMethodPresentation(method).label} payouts are not switched on yet, so this request cannot be marked paid. Refund it instead — that returns the held amount to the member straight away.`
+}
+
 export const PAYOUT_ACTION_LABELS: Record<PayoutRequestStatus, string> = {
   pending: 'Return to review',
   approved: 'Approve request',

@@ -354,3 +354,75 @@ test('the wallet summary agrees with the destination panel about the method', ()
   )
   assert.match(line, /PAYOUT_METHODS/)
 })
+
+// ─── The settlement gate (server, not just the button) ──────────────────────
+
+test('a method that cannot be paid is never offered the "paid" move', async () => {
+  const { availablePayoutStatuses, PAYOUT_STATUSES } = await import('@/lib/payouts')
+  for (const from of PAYOUT_STATUSES) {
+    const moves = availablePayoutStatuses(from, 'PayPal')
+    assert.ok(!moves.includes('paid'), `a PayPal request in ${from} must not offer "paid"`)
+    // But the escapes stay open: a request that cannot be sent must still be closable, or the
+    // member's money is held forever with no route back through the console.
+    const payable = availablePayoutStatuses(from, 'M-Pesa')
+    for (const to of moves) {
+      assert.ok(payable.includes(to), `${to} should stay legal for PayPal, since it does not send money`)
+    }
+  }
+})
+
+test('a closed request offers nothing at all, whatever the method', async () => {
+  const { availablePayoutStatuses } = await import('@/lib/payouts')
+  for (const method of PAYOUT_METHODS) {
+    assert.deepEqual(availablePayoutStatuses('paid', method), [], `${method} after paid`)
+    assert.deepEqual(availablePayoutStatuses('rejected', method), [], `${method} after rejected`)
+    assert.deepEqual(availablePayoutStatuses('cancelled', method), [], `${method} after cancelled`)
+  }
+})
+
+test('payable methods keep the full state machine, unchanged', async () => {
+  const { availablePayoutStatuses, nextPayoutStatuses, PAYOUT_STATUSES } = await import('@/lib/payouts')
+  for (const from of PAYOUT_STATUSES) {
+    assert.deepEqual(availablePayoutStatuses(from, 'M-Pesa'), nextPayoutStatuses(from))
+    assert.deepEqual(availablePayoutStatuses(from, 'Bank Transfer'), nextPayoutStatuses(from))
+  }
+})
+
+test('the refusal explains what to do instead, and only fires for unpayable methods', async () => {
+  const { payoutSettlementRefusal } = await import('@/lib/payouts')
+  // `paid` is the only move that claims the money left.
+  assert.match(String(payoutSettlementRefusal('paid', 'PayPal')), /Refund it instead/)
+  assert.equal(payoutSettlementRefusal('paid', 'M-Pesa'), null)
+  assert.equal(payoutSettlementRefusal('paid', 'Bank Transfer'), null)
+  // Everything that releases the hold is allowed for every method.
+  for (const to of ['rejected', 'failed', 'cancelled', 'approved', 'processing'] as const) {
+    assert.equal(payoutSettlementRefusal(to, 'PayPal'), null, `${to} must not be refused`)
+  }
+})
+
+test('the transition itself is refused on the server, not just hidden in the UI', () => {
+  // Hiding a button is a courtesy. The money path is `settlePayoutRequest`, so the refusal has to
+  // live inside it, before the ledger write, or a hand-rolled POST can still mark PayPal paid.
+  const source = read('lib/wallet-server.ts')
+  const start = source.indexOf('export async function settlePayoutRequest(')
+  assert.ok(start > 0, 'settlePayoutRequest should exist')
+  const body = source.slice(start, start + 4000)
+
+  const refusal = body.indexOf('payoutSettlementRefusal(')
+  assert.ok(refusal > 0, 'settlePayoutRequest must consult the settlement gate')
+  const paidWrite = body.indexOf("if (input.to === 'paid')")
+  assert.ok(paidWrite > 0, 'the paid branch should be visible in this window')
+  assert.ok(refusal < paidWrite, 'the refusal must precede the ledger write, not follow it')
+
+  // The gate is applied to the *stored* method (read back from the document), not to anything the
+  // caller sent, so it cannot be bypassed by omitting or spoofing a field.
+  assert.match(body.slice(refusal - 200, refusal + 120), /row\.method/)
+})
+
+test('the console derives its buttons from the same gate as the server', () => {
+  const admin = read('app/admin/payouts/page.tsx')
+  assert.match(admin, /availablePayoutStatuses\([\s\S]{0,80}?row\.status,[\s\S]{0,80}?row\.method,/)
+  assert.match(admin, /availablePayoutStatuses\([\s\S]{0,80}?selected\.status,[\s\S]{0,80}?selected\.method[,)]/)
+  // The old two-line filter that only dropped the owner check would have offered "paid" here.
+  assert.doesNotMatch(admin, /const moves = \(transitions\[row\.status\]\?\.next \?\? \[\]\)\.filter\(/)
+})

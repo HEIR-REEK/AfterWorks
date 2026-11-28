@@ -56,6 +56,7 @@ import {
   validatePayoutDestination,
   validateWithdrawalAmount,
   canTransitionPayout,
+  payoutSettlementRefusal,
   requiresPayoutReference,
   PAYOUT_REASON_REQUIRED,
   type PayoutDestination,
@@ -1105,6 +1106,13 @@ export async function settlePayoutRequest(input: PayoutTransitionInput): Promise
         'invalid_transition',
       )
     }
+    // A legal transition is not necessarily a *possible* one. PayPal is stored on the wallet but
+    // has no disbursement integration, and the console only hides the button — the API has to
+    // refuse too, or a request could be marked paid by hand-carried JSON and the member's USD
+    // would never leave the building. Refused before the ledger is touched, inside the same
+    // transaction, so no partial write survives.
+    const settlementRefusal = payoutSettlementRefusal(input.to, row.method)
+    if (settlementRefusal) throw new WalletError(settlementRefusal, 409, 'method_not_payable')
     if (input.expectUid && !isCancellablePayoutStatus(row.status)) {
       throw new WalletError('This payout is already being sent and can no longer be cancelled.', 409, 'payout_not_cancellable')
     }

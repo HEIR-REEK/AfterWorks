@@ -243,6 +243,17 @@ export function regionalJobId(region: JobRegion, slug: string): string {
 export const REGION_DETECTION_USES_IP_BY_DESIGN = true
 
 /**
+ * How to describe the region a member has to connect from, in a sentence.
+ *
+ * "Connect from the Europe" is wrong, "a European connection" breaks for the Americas, and "an
+ * Africa connection" is not English. Naming a country in the region reads correctly for all four,
+ * and a refusal a member can parse is a refusal they can act on.
+ */
+export function regionPhrase(region: JobRegion): string {
+  return `a country in ${JOB_REGION_LABELS[region]}`
+}
+
+/**
  * The rule every card action must pass: is the member allowed to act on this card?
  *
  * Called by the assessment route, the training checkout and the application route. It exists as one
@@ -265,7 +276,7 @@ export function jobActionRefusal(
   if (audience.region === resolved.region) return null
   return {
     jobRegion: audience.region,
-    message: `“${String(card.title ?? 'This job')}” is part of the ${JOB_REGION_LABELS[audience.region]} board, and you are connecting from ${JOB_REGION_LABELS[resolved.region]}. Connect from the ${JOB_REGION_LABELS[audience.region]} to take its assessment, pay its training fee or apply.`,
+    message: `“${String(card.title ?? 'This job')}” is part of the ${JOB_REGION_LABELS[audience.region]} board, and you are connecting from ${JOB_REGION_LABELS[resolved.region]}. Connect from ${regionPhrase(audience.region)} to take its assessment, pay its training fee or apply.`,
   }
 }
 

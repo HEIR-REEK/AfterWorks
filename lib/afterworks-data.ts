@@ -116,6 +116,11 @@ export type Job = {
   description: string
   responsibilities: string[]
   payAmountUsd: number
+  /**
+   * Per-region pricing. Absent → the card pays `payAmountUsd` everywhere, exactly as before this
+   * existed. Present → the member's *verified* region picks the number (see `lib/pay-regions.ts`).
+   */
+  payByRegion?: import('./pay-regions').RegionalPay
   estimatedMinutes: number
   capacity: number
   slotsRemaining: number
@@ -204,6 +209,12 @@ export type WorkerProfile = {
   languages?: string[]
   preferredPayoutMethod?: string
   country?: string
+  /**
+   * The ISO code an owner confirmed against the member's identity document when approving KYC.
+   * Server-written, never editable by the member. This — not the request IP — decides which regional
+   * rate they are paid, because it is the only country value that was actually checked.
+   */
+  verifiedCountry?: string
   zipCode?: string
   bankName?: string
   bankBranch?: string

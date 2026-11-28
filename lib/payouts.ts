@@ -238,6 +238,16 @@ export type PayoutDestination = {
   bankAccountNumber: string
   /** PayPal account email. Empty for M-Pesa and bank payouts. */
   paypalEmail: string
+  /**
+   * ISO country the destination is *held in*, where that is knowable.
+   *
+   * `M-Pesa` is Kenyan by construction — the payout rule in this module only accepts Kenyan
+   * mobile-money numbers — so a member being paid by M-Pesa is operating in Kenya whatever their
+   * profile's free-text country says. Bank and PayPal carry no country in their stored fields, so
+   * they leave this empty and the member's verified country decides instead. Read only when
+   * choosing a regional rate (`lib/pay-regions.ts`); never anything a member gains by editing.
+   */
+  country?: string
 }
 
 export type DestinationValidation =
@@ -385,7 +395,10 @@ export function validatePayoutDestination(input: {
   }
   return {
     ok: true,
-    destination: { method, accountName, accountNumber: phone, bankName: '', bankBranch: '', bankAccountNumber: '', paypalEmail: '' },
+    // M-Pesa is Kenyan by construction — `isValidMobileNumber` above only accepts +254 — so this
+    // destination is *held in Kenya* regardless of what the profile's country field says. It is the
+    // only country a payout destination can attest without the member typing anything.
+    destination: { method, accountName, accountNumber: phone, bankName: '', bankBranch: '', bankAccountNumber: '', paypalEmail: '', country: 'KE' },
   }
 }
 
@@ -603,6 +616,9 @@ export function mapPayoutRequest(id: string, data: Record<string, unknown>): Pay
     bankBranch: String(data.bankBranch ?? ''),
     bankAccountNumber: String(data.bankAccountNumber ?? ''),
     paypalEmail: String(data.paypalEmail ?? ''),
+    // Stored on the request when it was created, so a withdrawn-and-reissued destination does not
+    // retroactively change which rate an old application was priced at.
+    ...(data.destinationCountry ? { country: String(data.destinationCountry) } : {}),
   }
   const history = Array.isArray(data.history)
     ? (data.history as Record<string, unknown>[]).map((entry) => ({

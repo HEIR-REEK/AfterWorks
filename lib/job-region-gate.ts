@@ -68,16 +68,34 @@ export async function gateJobId(
   req: NextRequest,
   jobId: string,
 ): Promise<{ gate: JobGate; job: Record<string, unknown> | null }> {
+  let job: Record<string, unknown> | null = null
   try {
     const { dbOrNull } = await import('@/lib/firestore-admin')
     const db = dbOrNull()
-    if (!db) return { gate: { ok: true, region: null }, job: null }
-    const snap = await db.collection('jobs').doc(jobId).get()
-    if (!snap.exists) return { gate: { ok: true, region: null }, job: null }
-    const job = (snap.data() ?? {}) as Record<string, unknown>
-    return { gate: await checkJobRegion(req, job), job }
+    if (db) {
+      const snap = await db.collection('jobs').doc(jobId).get()
+      if (snap.exists) job = (snap.data() ?? {}) as Record<string, unknown>
+    }
   } catch {
-    // Storage trouble is not a region problem: let the route report it in its own words.
-    return { gate: { ok: true, region: null }, job: null }
+    // Storage trouble is not a region problem: let the route report it in its own words. The
+    // listing lookup below may still identify the card, so fall through rather than returning.
   }
+
+  // The generated sample listings are served from a module, not from Firestore, so a missing
+  // document is expected for them. Resolve the card here, or a member could take another board's
+  // assessment and apply to it simply because no document exists to check.
+  if (!job) {
+    try {
+      const { findListingCard } = await import('@/lib/job-cards')
+      const card = findListingCard(jobId)
+      if (card) job = card as unknown as Record<string, unknown>
+    } catch {
+      /* a broken import must not turn into a region refusal */
+    }
+  }
+
+  // No card anywhere: the caller's own "no such job" handling gives a better message than a region
+  // error for a job that does not exist.
+  if (!job) return { gate: { ok: true, region: null }, job: null }
+  return { gate: await checkJobRegion(req, job), job }
 }

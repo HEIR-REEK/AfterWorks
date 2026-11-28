@@ -90,3 +90,50 @@ test('the board, the assessment route and the apply path all know about listing 
   const provider = readFileSync('components/afterworks-provider.tsx', 'utf8')
   assert.match(provider, /findListingCard\(id\)/)
 })
+
+// ─── The region lock has to cover the generated cards too ────────────────────
+
+test('the server gate refuses another board’s listing card, document or not', async () => {
+  // A generated listing has no `jobs/{id}` document. When the gate only read Firestore it saw
+  // "missing" and waved the action through, so a member could take the Europe board's assessment
+  // and apply to it from Kenya. The gate must resolve the card before deciding.
+  const { NextRequest } = await import('next/server')
+  const { gateJobId } = await import('@/lib/job-region-gate')
+  const id = 'listing-sample-eu-001'
+
+  const fromKenya = new NextRequest(`https://example.test/api/assessments?jobId=${id}`, {
+    headers: { 'cf-ipcountry': 'KE' },
+  })
+  const refused = await gateJobId(fromKenya, id)
+  assert.equal(refused.gate.ok, false, 'a Europe card must be refused to an African connection')
+  if (!refused.gate.ok) assert.equal(refused.gate.jobRegion, 'Europe')
+
+  const fromGermany = new NextRequest(`https://example.test/api/assessments?jobId=${id}`, {
+    headers: { 'cf-ipcountry': 'DE' },
+  })
+  assert.equal((await gateJobId(fromGermany, id)).gate.ok, true, 'the same card is open on its own board')
+
+  // An id that is neither stored nor generated keeps the route's own "not found" path.
+  const unknown = new NextRequest('https://example.test/api/assessments?jobId=nope', { headers: { 'cf-ipcountry': 'KE' } })
+  assert.equal((await gateJobId(unknown, 'nope')).gate.ok, true)
+})
+
+test('the refusal message reads like a sentence', async () => {
+  const { jobActionRefusal } = await import('@/lib/job-regions')
+  const europe = jobActionRefusal({ region: 'Europe', title: 'Virtual Assistant' }, { region: 'Africa' })
+  assert.match(europe!.message, /Connect from a country in Europe/)
+  const africa = jobActionRefusal({ region: 'Africa', title: 'AI Data Annotator' }, { region: 'Asia' })
+  assert.match(africa!.message, /Connect from a country in Africa/, 'the phrase must read correctly for every board')
+  const americas = jobActionRefusal({ region: 'Americas', title: 'Software Developer' }, { region: 'Europe' })
+  assert.match(americas!.message, /Connect from a country in Americas/)
+  assert.doesNotMatch(africa!.message, /from the Africa/)
+})
+
+test('a Firestore snapshot cannot delete the generated cards', () => {
+  // The listener reads stored documents only. Replacing the board with a snapshot removed the 100
+  // listing cards a second after the route served them, which is why they appeared to vanish.
+  const provider = readFileSync('components/afterworks-provider.tsx', 'utf8')
+  assert.match(provider, /mergeCatalogueAdditive\(catalogueRef\.current\.jobs, scoped\)/, 'snapshots must merge, not replace')
+  // And a missing document must not remove a listing card the member is reading.
+  assert.match(provider, /if \(findListingCard\(id\)\) return null/)
+})

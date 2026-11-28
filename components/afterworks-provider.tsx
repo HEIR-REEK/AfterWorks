@@ -21,6 +21,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { jobVisibleInRegion } from '@/lib/job-regions'
 import { seedRegionalJobs } from '@/lib/regional-jobs'
 import { findListingCard, listingCards } from '@/lib/job-cards'
+import { mergeCatalogueAdditive } from '@/lib/job-catalogue'
 import {
   seedJobs,
   seedWorker,
@@ -330,8 +331,12 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
     // region comes from the server; `null` means it could not tell, and then nothing is filtered.
     const region = boardRef.current?.region ?? null
     const scoped = region ? incoming.filter((job) => jobVisibleInRegion(job, region as never)) : incoming
+    // The Firestore listener reads only *stored* documents, while the board route also serves the
+    // generated sample listings. Replacing the list with a snapshot would delete those a second
+    // after the board loaded them — so every snapshot is folded into what is already on screen.
+    const merged = mergeCatalogueAdditive(catalogueRef.current.jobs, scoped)
     const next = applyCatalogueSnapshot(catalogueRef.current, {
-      jobs: scoped,
+      jobs: merged,
       authoritative,
       // The region boards are part of the sample catalogue too, or a deployment with no live
       // catalogue shows a single board and no cards on the other three.
@@ -450,9 +455,11 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
       }
 
       // A failed read reports `missing: false`: keep whatever is on screen rather than dropping a
-      // card the worker is reading because the network hiccuped. Sample cards are excluded too —
-      // they do not exist in Firestore and must not disappear as workers click them.
+      // card the worker is reading because the network hiccuped. A card that genuinely has no
+      // document is kept as well — the generated sample listings are served from a module, and the
+      // board route's answer for them is authoritative, so a missing document here proves nothing.
       if (!missing || !catalogueRef.current.live) return null
+      if (findListingCard(id)) return null
 
       setJobCards((prev) => {
         if (!(id in prev)) return prev

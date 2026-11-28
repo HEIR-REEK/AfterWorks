@@ -314,12 +314,16 @@ export async function updateUserWallet(uid: string, wallet: { payoutNumber?: str
  * On any failure the caller should fall back to `readCatalogue`, so a route problem degrades to
  * "shows everything" rather than "shows nothing".
  */
+export type JobBoardRegion = { region: string; label: string; blurb: string; count: number; open: boolean }
+
 export type JobBoardResponse = {
   ok: boolean
   region: string | null
   source: 'header' | 'lookup' | 'none'
   wholeCatalogue: boolean
   jobs: Job[]
+  /** All four boards with their card counts; `open` when this member may view that board. */
+  regions: JobBoardRegion[]
   lockedRegions: { region: string; label: string; blurb: string; count: number }[]
 }
 

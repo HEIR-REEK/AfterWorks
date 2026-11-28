@@ -133,6 +133,11 @@ type AfterWorksContextValue = {
   jobRegion: { region: string | null; wholeCatalogue: boolean; source: string } | null
   /** Regions this member cannot open: name, one-line blurb and card count. Never card payload. */
   lockedRegions: { region: string; label: string; blurb: string; count: number }[]
+  /**
+   * All four boards, with card counts and whether each is open to this member. Drives the region
+   * tabs on Browse jobs; a locked tab switches to a blurred panel instead of a card grid.
+   */
+  regions: { region: string; label: string; blurb: string; count: number; open: boolean }[]
   /** True while a mutation is in flight, keyed by `job:<id>` / `app:<id>` — drives per-card spinners. */
   pending: Record<string, boolean>
   error: string | null
@@ -341,6 +346,7 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
   const [boardMeta, setBoardMeta] = useState<{ region: string | null; wholeCatalogue: boolean; source: string } | null>(null)
   const boardRef = useRef<{ region: string | null; wholeCatalogue: boolean; source: string } | null>(null)
   const [lockedRegions, setLockedRegions] = useState<{ region: string; label: string; blurb: string; count: number }[]>([])
+  const [regions, setRegions] = useState<{ region: string; label: string; blurb: string; count: number; open: boolean }[]>([])
 
   const refreshJobs = useCallback(async () => {
     if (!configured || !uid) return
@@ -354,6 +360,7 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
       boardRef.current = meta
       setBoardMeta(meta)
       setLockedRegions(board.lockedRegions ?? [])
+      setRegions(board.regions ?? [])
       applyLiveJobs(board.jobs, true)
       return
     }
@@ -914,6 +921,7 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
       catalogueSyncedAt: catalogue.syncedAt,
       jobRegion: boardMeta,
       lockedRegions,
+      regions,
       pending,
       error,
       clearError: () => setError(null),

@@ -31,5 +31,9 @@ test('the dashboard surfaces the training banner with live board numbers', () =>
 test('the training CTA lands on a board that can actually filter for training jobs', () => {
   assert.match(component, /\/jobs\?training=1/)
   assert.match(jobs, /searchParams\.get\('training'\) === '1'/)
-  assert.match(jobs, /filterJobs\(jobs, \{ category, trainingOnly, hideFull, search: query \}\)/)
+  // Assert the wiring, not the exact argument name: the board now filters a region-scoped list
+  // rather than the raw catalogue, and pinning the sentence made an unrelated refactor fail.
+  assert.match(jobs, /filterJobs\(\w+, \{ category, trainingOnly, hideFull, search: query \}\)/)
+  assert.match(jobs, /const \[trainingOnly, setTrainingOnly\]/, 'trainingOnly still drives the filter')
+  assert.match(jobs, /trainingOnly,/, 'and is still passed through')
 })

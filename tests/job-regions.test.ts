@@ -232,3 +232,73 @@ test('the console can set a card’s region, and refuses one it does not know', 
   assert.match(page, /label="Region board"/)
   assert.match(page, /region: editing\.region/)
 })
+
+// ─── Region tabs on Browse jobs ─────────────────────────────────────────────
+
+test('every region is sent to the board, with its own card count and open flag', () => {
+  const cards = [
+    { id: 'us-1', region: 'Americas' },
+    { id: 'us-2', region: 'Americas' },
+    { id: 'ke-1', region: 'Africa' },
+    { id: 'global' },
+  ]
+  const board = buildRegionalCatalogue(cards, { region: 'Americas', source: 'header' })
+  assert.equal(board.regions.length, PAY_REGIONS.length, 'all four tabs must exist')
+  const byRegion = new Map(board.regions.map((r) => [r.region, r]))
+  assert.equal(byRegion.get('Americas')?.open, true)
+  assert.equal(byRegion.get('Americas')?.count, 2)
+  // Every other board is present and locked — a member should see the work exists, not a missing tab.
+  assert.equal(byRegion.get('Africa')?.open, false)
+  assert.equal(byRegion.get('Africa')?.count, 1)
+  assert.equal(byRegion.get('Europe')?.open, false)
+  assert.equal(byRegion.get('Asia')?.open, false)
+  // Global cards are not counted as any region's own content.
+  assert.equal(byRegion.get('Europe')?.count, 0)
+})
+
+test('a region with no cards of its own is still open, not a lock the member cannot clear', () => {
+  // A country whose board has not been seeded yet must see an honest empty board.
+  const board = buildRegionalCatalogue([{ id: 'ke-1', region: 'Africa' }], { region: 'Europe', source: 'header' })
+  const europe = board.regions.find((r) => r.region === 'Europe')
+  assert.equal(europe?.open, true)
+  assert.equal(europe?.count, 0)
+})
+
+test('with no resolved region every board is open and the tabs are not locked', () => {
+  const board = buildRegionalCatalogue([{ id: 'us-1', region: 'Americas' }], { region: null, source: 'none' })
+  assert.equal(board.regions.every((r) => r.open), true)
+  assert.deepEqual(board.lockedRegions, [])
+})
+
+test('the locked region payload still carries no card bodies', () => {
+  const board = buildRegionalCatalogue(
+    [{ id: 'us-1', title: 'Secret US work', payAmountUsd: 48, region: 'Americas' }],
+    { region: 'Africa', source: 'header' },
+  )
+  const serialised = JSON.stringify({ locked: board.lockedRegions, regions: board.regions })
+  assert.doesNotMatch(serialised, /Secret US work/)
+  assert.doesNotMatch(serialised, /us-1/)
+})
+
+test('the board can only select a region that is open to it', () => {
+  // The selected tab is derived, not stored freely: a locked region can never become the active
+  // board, so its panel can never turn into a card grid.
+  const page = readFileSync('app/jobs/page.tsx', 'utf8')
+  assert.match(page, /const open = \(regions \?\? \[\]\)\.filter\(\(entry\) => entry\.open\)/)
+  assert.match(page, /open\.some\(\(entry\) => entry\.region === wanted\)/)
+  assert.match(page, /LockedRegionPanel/, 'a locked board renders an explanation, not cards')
+  assert.match(page, /onThisBoard/, 'the grid is filtered to the active board')
+  // Assert the predicate, not the identifier: renaming the variable would otherwise pass while
+  // dropping the filter. The server already removes other regions' cards, so this is the second
+  // line — it matters when a snapshot or a cached read puts them back.
+  assert.match(page, /jobs\.filter\(\(job\) => !job\.region \|\| job\.region === activeRegion\)/)
+})
+
+test('a locked tab is labelled as locked and cannot look like an open one', () => {
+  const tabs = readFileSync('components/region-tabs.tsx', 'utf8')
+  assert.match(tabs, /aria-disabled=\{!entry\.open\}/)
+  assert.match(tabs, /blur-\[2px\]/, 'the locked tabs are blurred as asked')
+  assert.match(tabs, /<Lock/, 'and marked with a lock')
+  // Pressing a locked tab must not render a grid.
+  assert.doesNotMatch(tabs, /JobCard/)
+})

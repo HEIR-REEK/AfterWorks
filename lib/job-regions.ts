@@ -93,6 +93,10 @@ export function jobVisibleInRegion(card: { region?: unknown }, region: JobRegion
  * description — and shipping it so the UI can blur it would defeat the entire point of locking it.
  * The UI shows "Americas — 4 job cards, connect from the Americas to open them", which is true,
  * useful and reveals nothing.
+ *
+ * The *open* region's cards, by contrast, are sent in full, because they are the member's own work.
+ * One consequence worth stating: a region with no cards of its own is still open — the member sees
+ * the global cards and an honest "no cards on this board yet", rather than a lock they cannot clear.
  */
 export type RegionalCatalogue<T = unknown> = {
   /** The region the request was resolved to. `null` means we could not tell, so nothing is locked. */
@@ -101,6 +105,11 @@ export type RegionalCatalogue<T = unknown> = {
   source: 'header' | 'lookup' | 'none'
   /** Cards this member may open. Global cards are included. */
   jobs: T[]
+  /**
+   * Every region, with how many cards its board holds. The open one is carried so the board can
+   * render all four tabs from one source; only the locked entries carry no card bodies.
+   */
+  regions: { region: JobRegion; label: string; blurb: string; count: number; open: boolean }[]
   /** Regions this member may not open, with a count only. */
   lockedRegions: { region: JobRegion; label: string; blurb: string; count: number }[]
   /** True when the member is seeing every card, i.e. we could not resolve a region. */
@@ -142,10 +151,29 @@ export function buildRegionalCatalogue<T extends { region?: unknown }>(
   resolved: { region: JobRegion | null; source: 'header' | 'lookup' | 'none' },
 ): RegionalCatalogue<T> {
   const { visible, locked } = partitionCatalogue(cards, resolved.region)
+
+  // How many cards each board holds. Global cards are excluded: they appear on every board, so
+  // counting them here would make each region look bigger than its own content.
+  const counts = new Map<JobRegion, number>()
+  for (const card of cards) {
+    const audience = jobAudienceOf(card.region)
+    if (audience.kind !== 'region') continue
+    counts.set(audience.region, (counts.get(audience.region) ?? 0) + 1)
+  }
+  const regions = PAY_REGIONS.map((region) => ({
+    region,
+    label: JOB_REGION_LABELS[region],
+    blurb: JOB_REGION_BLURBS[region],
+    count: counts.get(region) ?? 0,
+    // With no resolved region every board is open; with one, only that one is.
+    open: resolved.region === null || resolved.region === region,
+  }))
+
   return {
     region: resolved.region,
     source: resolved.source,
     jobs: visible,
+    regions,
     lockedRegions: locked.map((entry) => ({
       region: entry.region,
       label: JOB_REGION_LABELS[entry.region],

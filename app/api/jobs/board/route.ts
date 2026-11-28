@@ -90,6 +90,7 @@ export async function GET(req: NextRequest) {
         source: board.source,
         wholeCatalogue: board.wholeCatalogue,
         jobs: board.jobs,
+        regions: board.regions,
         lockedRegions: board.lockedRegions,
       },
       {

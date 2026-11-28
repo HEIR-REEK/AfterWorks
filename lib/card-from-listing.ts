@@ -20,7 +20,7 @@
  */
 
 import type { Job } from '@/lib/afterworks-data'
-import { PAY_BASIS, categoryForListing, type SampleJob, type SampleRegion } from '@/lib/sample-jobs'
+import { PAY_BASIS, SAMPLE_JOBS, categoryForListing, type SampleJob, type SampleRegion } from '@/lib/sample-jobs'
 
 export const LISTING_ID_PREFIX = 'listing'
 
@@ -41,15 +41,51 @@ export function isListingCardId(id: string): boolean {
 }
 
 /**
- * The hourly figure a listing pays on the board, in USD.
+ * The board prices each region on its own scale, and the band is the platform rule.
  *
- * The advertised salary is normalised to an hour first — a monthly figure is divided by the hours a
- * month covers — so a card can be compared with the next card regardless of how the employer quoted
- * it. `PAY_BASIS` documents the divisors.
+ * The platform asked for two things that a raw currency conversion cannot both satisfy: Africa
+ * stays below $15 a card, and the Americas sit above $45. So a listing's pay is **placed inside its
+ * region's band**, by where it sits within its own country's salary range rather than by the exchange
+ * rate. The advertised salary still travels with the card, so the member sees the employer's number
+ * next to the board's.
+ *
+ * Inside a band, the ordering is preserved: a senior listing still pays more than a junior one.
  */
-export function hourlyPayUsd(listing: SampleJob): number {
-  const basis = PAY_BASIS[listing.salary.frequency].hoursPerPeriod
-  return Math.round((listing.salaryUsd / basis) * 100) / 100
+export const REGION_PAY_BAND: Record<SampleRegion, { min: number; max: number; floor: number }> = {
+  // `floor` is the cheapest a card can be and still be worth opening; the band tops out below $15.
+  Africa: { min: 6, max: 14, floor: 6 },
+  // The Americas start above $45 and climb, which is what "more prices above 45" asks for.
+  Americas: { min: 46, max: 72, floor: 46 },
+  Europe: { min: 40, max: 62, floor: 40 },
+  Asia: { min: 20, max: 40, floor: 20 },
+}
+
+/** Every listing's advertised salary normalised to an hour, in USD. */
+const HOURLY_USD: Record<string, number> = Object.fromEntries(
+  SAMPLE_JOBS.map((listing) => [listing.referenceId, listing.salaryUsd / PAY_BASIS[listing.salary.frequency].hoursPerPeriod]),
+)
+
+/** The hourly range of one region's listings, so a card can be placed inside its band. */
+function regionHourlyRange(region: SampleRegion): { low: number; high: number } {
+  const values = SAMPLE_JOBS.filter((listing) => listing.region === region).map((listing) => HOURLY_USD[listing.referenceId]!)
+  return { low: Math.min(...values), high: Math.max(...values) }
+}
+
+/**
+ * The figure a listing pays on its board.
+ *
+ * Position within the region's own salary range, mapped onto the region's band. Deliberately not a
+ * currency conversion: the exchange rate would put a Nairobi card within a few dollars of a Berlin
+ * one, which is exactly the complaint this replaces.
+ */
+export function boardPayUsd(listing: SampleJob): number {
+  const band = REGION_PAY_BAND[listing.region]
+  const { low, high } = regionHourlyRange(listing.region)
+  const hourly = HOURLY_USD[listing.referenceId] ?? low
+  // A flat region (one listing, or several at the same rate) lands at the middle of the band.
+  const position = high > low ? (hourly - low) / (high - low) : 0.5
+  const amount = band.min + position * (band.max - band.min)
+  return Math.max(band.floor, Math.round(amount * 100) / 100)
 }
 
 function slug(value: string): string {
@@ -59,7 +95,7 @@ function slug(value: string): string {
 /** One listing → one board card. */
 export function listingToCard(listing: SampleJob): Job {
   const category = categoryForListing(listing.title)
-  const pay = hourlyPayUsd(listing)
+  const pay = boardPayUsd(listing)
   const payBasis = PAY_BASIS[listing.salary.frequency].label
   const money = `${listing.salary.amount.toLocaleString('en-US')} ${listing.salary.currency} ${listing.salary.frequency}`
 
@@ -71,7 +107,7 @@ export function listingToCard(listing: SampleJob): Job {
     description: [
       `${listing.description}`,
       `Employer: ${listing.company} (sample listing) · ${listing.city}, ${listing.country} · ${listing.employmentType} · ${listing.workArrangement} · ${listing.experienceLevel} experience.`,
-      `Advertised pay: ${money} — about $${pay.toFixed(2)} an hour, which is what this card pays for a one-hour task (derived by dividing a ${payBasis} figure by the hours it covers).`,
+      `Advertised pay: ${money}. On the ${listing.region} board this card pays $${pay.toFixed(2)} for a one-hour task, placed inside the board's own price band (the advertised rate normalised to an hour is $${(listing.salaryUsd / PAY_BASIS[listing.salary.frequency].hoursPerPeriod).toFixed(2)}).`,
       `Education: ${listing.education}. Application deadline: ${listing.applicationDeadline}. ${listing.applicants} applicants so far.`,
     ].join(' '),
     responsibilities: [

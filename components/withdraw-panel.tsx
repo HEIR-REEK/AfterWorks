@@ -209,11 +209,6 @@ export function WithdrawPanel() {
               <p className="flex items-center gap-1.5 text-xs font-semibold">
                 <PayoutMethodIcon method={payouts.destination.method} className="size-3.5" />
                 {payouts.destination.label}
-                {payouts.destination.notYetPayable && (
-                  <span className="rounded-full bg-warning/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-warning">
-                    Not live
-                  </span>
-                )}
               </p>
               <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">
                 {payouts.destination.ready

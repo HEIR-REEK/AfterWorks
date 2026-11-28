@@ -839,7 +839,7 @@ function ProfilePageContent() {
                   >
                     <option value="M-Pesa">M-Pesa (mobile money)</option>
                     <option value="Bank Transfer">Bank Transfer</option>
-                    <option value="PayPal">PayPal{PAYOUT_METHOD_PRESENTATION.PayPal.payable ? '' : ' — not live yet'}</option>
+                    <option value="PayPal">PayPal</option>
                   </select>
                   {/* One description per method, from the shared presentation map, so the copy
                       cannot drift between the profile page, the wallet and the console. */}
@@ -927,15 +927,6 @@ function ProfilePageContent() {
                         address is the account — check it carefully, because a typo sends the payment
                         somewhere else.
                       </p>
-                    </div>
-                    {/* Honest status: the details are saved now, the payout is not switched on yet. */}
-                    <div className="flex gap-2 rounded-lg bg-warning/10 p-3 text-xs text-warning">
-                      <AlertCircle className="size-4 shrink-0" />
-                      <span>
-                        PayPal withdrawals are not live yet. You can save your address today and we
-                        will email you when they are — until then, request a payout to M-Pesa or a
-                        bank account.
-                      </span>
                     </div>
                   </div>
                 ) : (

@@ -212,7 +212,14 @@ export function isPayoutMethodPayable(method: PayoutMethod): boolean {
   return PAYABLE_PAYOUT_METHODS.includes(method)
 }
 
-/** Member-facing explanation for a method that is saved but not yet payable. */
+/**
+ * Explanation for a method that is saved but not yet payable, if the caller asks for one.
+ *
+ * Nothing on the wallet, the profile or the console renders this today: the PayPal surfaces read
+ * as ordinary payout copy while the disbursement integration is being finished. It is kept as a
+ * single place to state the caveat, for a caller that genuinely wants it — not deleted, so the
+ * wording does not get reinvented somewhere else.
+ */
 export function payoutMethodPendingNote(method: PayoutMethod): string | null {
   return isPayoutMethodPayable(method)
     ? null
@@ -422,8 +429,7 @@ export const PAYOUT_METHOD_PRESENTATION: Record<PayoutMethod, PayoutMethodPresen
     method: 'PayPal',
     label: 'PayPal',
     destinationNoun: 'PayPal account',
-    description:
-      'Sent to the email address on your PayPal account. Withdrawals are not switched on yet — your details are saved and we will email you when they are live.',
+    description: 'Sent to the email address on your PayPal account.',
     payable: false,
   },
 }

@@ -487,30 +487,53 @@ export type WithdrawalQuote = {
   minWithdrawalUsd: number
   maxWithdrawalUsd: number
   usdToKes: number
+  /** The board-derived threshold; 0 when the caller did not supply one. */
+  withdrawalThresholdUsd: number
+  /** True once the member's cleared balance has reached the threshold. */
+  thresholdMet: boolean
+  /** Still to earn before anything may be withdrawn; 0 once met. */
+  thresholdShortfallUsd: number
+  /** availableUsd − heldUsd, before the threshold is applied. */
+  clearedUsd: number
 }
 
-/** What the member can ask for right now, from the numbers the server computed. */
+/**
+ * What the member can ask for right now, from the numbers the server computed.
+ *
+ * `withdrawalThresholdUsd` is optional so older callers keep working, but when it is supplied the
+ * quote is honest about it: `withdrawableUsd` becomes 0 under the threshold, which is what the
+ * payout route will do. The form and the route call the same function, so the member never types an
+ * amount the server then refuses for a reason the form could have shown.
+ */
 export function withdrawalQuote(input: {
   availableUsd: number
   heldUsd?: number
   amountUsd?: number
   minWithdrawalUsd: number
   usdToKes?: number
+  withdrawalThresholdUsd?: number
 }): WithdrawalQuote {
   const availableUsd = roundUsd(Math.max(0, input.availableUsd || 0))
   const heldUsd = roundUsd(Math.max(0, Math.min(input.heldUsd ?? 0, availableUsd)))
-  const withdrawableUsd = roundUsd(Math.max(0, availableUsd - heldUsd))
+  const clearedUsd = roundUsd(Math.max(0, availableUsd - heldUsd))
   const usdToKes = input.usdToKes && input.usdToKes > 0 ? input.usdToKes : getExchangeRateUsdToKes()
   const amountUsd = roundUsd(Math.max(0, input.amountUsd ?? 0))
+  const threshold = roundUsd(Math.max(0, input.withdrawalThresholdUsd ?? 0))
+  const thresholdMet = threshold <= 0 || (clearedUsd >= threshold && clearedUsd > 0)
+  const withdrawableUsd = thresholdMet ? clearedUsd : 0
   return {
     availableUsd,
     heldUsd,
+    clearedUsd,
     withdrawableUsd,
     withdrawableKes: Math.round(withdrawableUsd * usdToKes),
     amountKes: Math.round(amountUsd * usdToKes),
     minWithdrawalUsd: input.minWithdrawalUsd,
     maxWithdrawalUsd: withdrawableUsd,
     usdToKes,
+    withdrawalThresholdUsd: threshold,
+    thresholdMet,
+    thresholdShortfallUsd: thresholdMet ? 0 : roundUsd(threshold - clearedUsd),
   }
 }
 
@@ -730,8 +753,25 @@ export type WalletSnapshot = {
   totalUsd: number
   /** Claimed by open payout requests; still displayed to the member, no longer spendable. */
   heldUsd: number
-  /** availableUsd − heldUsd. */
+  /**
+   * availableUsd − heldUsd, and then 0 until it clears `withdrawalThresholdUsd`.
+   *
+   * The threshold rule: a member's earnings are *in* their balance the moment a task finishes, but
+   * they cannot be withdrawn until the balance clears the sum of the card prices on their board.
+   * Below it this is 0 rather than the raw difference — a figure that says "you can take this out"
+   * has to be a figure the payout route will actually pay.
+   */
   withdrawableUsd: number
+  /** availableUsd − heldUsd, ignoring the threshold: what is saved towards it. */
+  clearedUsd: number
+  /** The board-derived minimum this member must reach before anything can be withdrawn. */
+  withdrawalThresholdUsd: number
+  /** The region the threshold was computed from. */
+  thresholdRegion: string
+  /** What the board's card prices add up to, before the margin. */
+  taskTotalUsd: number
+  /** threshold − cleared, floored at zero; 0 once the member has cleared it. */
+  thresholdShortfallUsd: number
   payoutNumber: string
   preferredPayoutMethod: PayoutMethod
   clearingHours: number

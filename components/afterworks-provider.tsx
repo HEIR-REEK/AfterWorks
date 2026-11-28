@@ -122,6 +122,8 @@ type AfterWorksContextValue = {
   jobs: Job[]
   applications: Application[]
   paidTrainings: string[]
+  /** Regions whose job prices this member has paid to unlock. */
+  unlockedPriceRegions: string[]
   profileLoaded: boolean
   mode: 'live' | 'demo'
   /** True when the cards on screen are real catalogue rows (not the sample catalogue). */
@@ -187,6 +189,14 @@ export type PayoutState = {
   heldUsd: number
   minWithdrawalUsd: number
   withdrawableUsd: number
+  /** available − held, before the threshold: the money saved towards it. */
+  clearedUsd: number
+  /** The board-derived total a member must reach before anything may be withdrawn. */
+  withdrawalThresholdUsd: number
+  /** Still to earn before withdrawal opens; 0 once the threshold is met. */
+  thresholdShortfallUsd: number
+  /** The region whose board set the threshold. */
+  thresholdRegion: string
   withdrawableKes: number
   pendingKes: number
   usdToKes: number
@@ -213,6 +223,10 @@ const BLANK_PAYOUTS: PayoutState = {
   heldUsd: 0,
   minWithdrawalUsd: 50,
   withdrawableUsd: 0,
+  clearedUsd: 0,
+  withdrawalThresholdUsd: 0,
+  thresholdShortfallUsd: 0,
+  thresholdRegion: '',
   withdrawableKes: 0,
   pendingKes: 0,
   usdToKes: 0,
@@ -282,6 +296,9 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
   const [jobCards, setJobCards] = useState<Record<string, Job>>({})
   const [applications, setApplications] = useState<PendingApplication[]>([])
   const [paidTrainings, setPaidTrainings] = useState<string[]>([])
+  // Regions whose job prices this member has bought. Drives the unlock panel and the board's
+  // "you can work this board" state; the *server* decides whether a card action is allowed.
+  const [unlockedPriceRegions, setUnlockedPriceRegions] = useState<string[]>([])
   const [pending, setPending] = useState<Record<string, boolean>>({})
   const [error, setError] = useState<string | null>(null)
   const mounted = useRef(true)
@@ -544,6 +561,10 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
         heldUsd: Number(data.heldUsd ?? 0) || 0,
         minWithdrawalUsd: Number(data.minWithdrawalUsd ?? 50) || 50,
         withdrawableUsd: Number(data.withdrawableUsd ?? 0) || 0,
+        clearedUsd: Number(data.clearedUsd ?? 0) || 0,
+        withdrawalThresholdUsd: Number(data.withdrawalThresholdUsd ?? 0) || 0,
+        thresholdShortfallUsd: Number(data.thresholdShortfallUsd ?? 0) || 0,
+        thresholdRegion: String(data.thresholdRegion ?? ''),
         withdrawableKes: Number(fx.withdrawableKes ?? 0) || 0,
         pendingKes: Number(fx.pendingKes ?? 0) || 0,
         usdToKes: Number(data.usdToKes ?? 0) || 0,
@@ -564,6 +585,11 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
       })
       if (Array.isArray(data.paidTrainings)) {
         setPaidTrainings((prev) => Array.from(new Set([...prev, ...(data.paidTrainings as string[]).filter(Boolean)])))
+      }
+      // The price tiers this member has paid to work. Read back from the server on every wallet
+      // refresh, so a region bought on another device appears here without a re-login.
+      if (Array.isArray(data.unlockedPriceRegions)) {
+        setUnlockedPriceRegions((data.unlockedPriceRegions as string[]).filter(Boolean))
       }
     } catch (err) {
       // A wallet read failing must not wipe the numbers already on screen.
@@ -926,6 +952,7 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
       jobs,
       applications,
       paidTrainings,
+      unlockedPriceRegions,
       profileLoaded,
       mode: configured && user ? 'live' : 'demo',
       catalogueLive: catalogue.live,
@@ -974,6 +1001,7 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
     jobCards,
     applications,
     paidTrainings,
+    unlockedPriceRegions,
     profileLoaded,
     configured,
     user,

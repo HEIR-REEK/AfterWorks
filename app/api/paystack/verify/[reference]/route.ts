@@ -1,8 +1,9 @@
 import { NextRequest } from 'next/server'
 import { consumeBucket, audit, fail, json, requireUser, routeError } from '@/lib/guards'
 import { env, normalizeEmail, sanitizeLine } from '@/lib/security-core'
-import { getPaystackAmountSubunits } from '@/lib/afterworks-data'
+import { getExchangeRateUsdToKes, getPaystackAmountSubunits } from '@/lib/afterworks-data'
 import { resolvePaymentBinding } from '@/lib/payment-binding'
+import type { PayRegion } from '@/lib/pay-regions'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -11,6 +12,10 @@ type StoredTransaction = {
   jobId: string
   userId: string
   expectedSubunits: number
+  /** The USD price the row was opened at — the figure the tier was sold for. */
+  amountUsd: number
+  /** The price region this charge was opened for; '' for an older per-card training charge. */
+  priceRegion: string
 }
 
 /** The server-written pending row for this reference, when it still exists. */
@@ -23,18 +28,21 @@ async function storedTransactionFor(reference: string): Promise<StoredTransactio
       const stored = (snap.data() ?? {}) as {
         jobId?: unknown
         userId?: unknown
-        metadata?: { expectedSubunits?: unknown }
+        amountUsd?: unknown
+        metadata?: { expectedSubunits?: unknown; priceRegion?: unknown; purpose?: unknown }
       }
       return {
         jobId: typeof stored.jobId === 'string' ? stored.jobId : '',
         userId: typeof stored.userId === 'string' ? stored.userId : '',
         expectedSubunits: Number(stored.metadata?.expectedSubunits ?? 0) || 0,
+        amountUsd: Number(stored.amountUsd ?? 0) || 0,
+        priceRegion: typeof stored.metadata?.priceRegion === 'string' ? stored.metadata.priceRegion : '',
       }
     }
   } catch {
     /* storage unavailable — the verified charge metadata is the fallback authority */
   }
-  return { jobId: '', userId: '', expectedSubunits: 0 }
+  return { jobId: '', userId: '', expectedSubunits: 0, amountUsd: 0, priceRegion: '' }
 }
 
 /**
@@ -71,7 +79,8 @@ function expectedSubunitsFor(stored: StoredTransaction, metadata?: Record<string
  * have open.
  */
 
-const REFERENCE_PATTERN = /^aw_tr_[A-Za-z0-9]{4,32}$/
+/** `aw_tr_` is the retired per-card training charge; `aw_px_` is a region price unlock. */
+const REFERENCE_PATTERN = /^aw_(tr|px)_[A-Za-z0-9]{4,32}$/
 
 type PaystackVerify = {
   status?: boolean
@@ -103,13 +112,12 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ refe
     return fail(400, 'That payment reference was not issued by this site.', { code: 'bad_reference' })
   }
 
-  // The caller must say which job card it is verifying for. The answer is checked against the
-  // server-written transaction row and the verified Paystack metadata below — never trusted here.
-  const requestedJobId = sanitizeLine(req.nextUrl.searchParams.get('jobId'), 80)
-  if (!requestedJobId) return fail(400, 'A job card is required to verify training payment.', { code: 'missing_job_id' })
-  if (!/^[A-Za-z0-9_-]{3,80}$/.test(requestedJobId)) {
-    return fail(400, 'Unknown job reference.', { code: 'bad_job_id' })
-  }
+  // Which tier this charge is for. The server's own pending row is the authority; the Paystack
+  // metadata is the fallback for a row that never landed. A caller cannot nominate a region here —
+  // there is no parameter for it — so verifying a $4 Africa charge can never unlock the Americas.
+  const requestedRegion = sanitizeLine(req.nextUrl.searchParams.get('priceRegion'), 20)
+  const jobIdParam = sanitizeLine(req.nextUrl.searchParams.get('jobId'), 80)
+  if (jobIdParam && !/^[A-Za-z0-9_-]{3,80}$/.test(jobIdParam)) return fail(400, 'Unknown job reference.', { code: 'bad_job_id' })
 
   const secretKey = env('PAYSTACK_SECRET_KEY')
   if (!secretKey) {
@@ -150,21 +158,42 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ refe
     }
 
     const stored = await storedTransactionFor(reference)
-    const binding = resolvePaymentBinding({
-      requestedJobId,
-      storedJobId: stored.jobId,
-      metadataJobId: tx.metadata?.jobId,
-      uid,
-      storedUserId: stored.userId,
-      metadataUserId: tx.metadata?.uid,
-    })
-    if (!binding.ok) {
+    const metadataRegion = typeof tx.metadata?.priceRegion === 'string' ? tx.metadata.priceRegion : ''
+    const targetRegion = (stored.priceRegion || metadataRegion || requestedRegion) as PayRegion
+    const KNOWN: PayRegion[] = ['Africa', 'Americas', 'Europe', 'Asia']
+    const isPriceAccess = stored.priceRegion !== '' || metadataRegion !== '' || reference.startsWith('aw_px_')
+
+    // The charge must belong to the member verifying it, and it must be a charge for *something*.
+    const metadataUid = typeof tx.metadata?.uid === 'string' ? tx.metadata.uid : ''
+    if ((stored.userId && stored.userId !== uid) || (metadataUid && metadataUid !== uid)) {
+      await audit({ action: 'PAYMENT_BINDING_REFUSED', actorEmail: email, details: { reference, code: 'uid_mismatch' }, req })
+      return fail(403, 'That payment belongs to a different account.', { code: 'uid_mismatch' })
+    }
+    if (isPriceAccess && !KNOWN.includes(targetRegion)) {
+      await audit({ action: 'PAYMENT_BINDING_REFUSED', actorEmail: email, details: { reference, code: 'region_missing' }, req })
+      return fail(409, 'That charge does not name a price region. Contact support.', { code: 'region_missing' })
+    }
+    // A legacy per-card training charge is still honoured, and bound to its own card exactly as
+    // before — the old check is not weakened just because a new purpose exists alongside it. A
+    // price-access charge is exempt only from the *card* binding: it unlocks a region, and the card
+    // it was opened from is context, not a claim on the money.
+    const binding = isPriceAccess
+      ? null
+      : resolvePaymentBinding({
+          requestedJobId: jobIdParam,
+          storedJobId: stored.jobId,
+          metadataJobId: typeof tx.metadata?.jobId === 'string' ? tx.metadata.jobId : '',
+          uid,
+          storedUserId: stored.userId,
+          metadataUserId: metadataUid,
+        })
+    if (binding && !binding.ok) {
       await audit({
         action: binding.code === 'job_mismatch' ? 'PAYMENT_JOB_MISMATCH' : 'PAYMENT_BINDING_REFUSED',
         actorEmail: email,
         details: {
           reference,
-          requestedJobId,
+          requestedJobId: jobIdParam,
           storedJobId: stored.jobId,
           metadataJobId: typeof tx.metadata?.jobId === 'string' ? tx.metadata.jobId : '',
           code: binding.code,
@@ -173,7 +202,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ refe
       })
       return fail(binding.code === 'uid_mismatch' ? 403 : 409, binding.message, { code: binding.code })
     }
-    const jobId = binding.jobId
+    const jobId = binding && binding.ok ? binding.jobId : stored.jobId
 
     const expectedSubunits = expectedSubunitsFor(stored, tx.metadata)
     const paidSubunits = Number(tx.amount ?? 0)
@@ -192,9 +221,19 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ refe
       })
     }
 
-    // Grant to the authenticated member, and only for the job card the charge was opened for.
+    // Grant to the authenticated member: the region their own charge names, or — for an older
+    // per-card training charge — that one card, exactly as before.
     const firestore = await import('@/lib/firestore-admin')
-    await firestore.recordPaidTrainingAdmin(uid, jobId)
+    if (isPriceAccess) {
+      await firestore.recordPriceAccessAdmin(uid, targetRegion, {
+        reference,
+        // The row's own USD price, falling back to the KES amount Paystack actually charged.
+        amountUsd: stored.amountUsd > 0 ? stored.amountUsd : Math.round(paidSubunits / 100 / getExchangeRateUsdToKes() * 100) / 100,
+        actorEmail: email,
+      })
+    } else {
+      await firestore.recordPaidTrainingAdmin(uid, jobId)
+    }
     await firestore
       .recordPaymentTransactionAdmin({
         reference: tx.reference || reference,
@@ -215,16 +254,27 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ refe
 
     await firestore
       .notifyUser(uid, {
-        title: 'Training payment confirmed',
-        body: 'Your payment was confirmed for this job card. Training and assessment unlock once your identity verification is approved.',
+        title: isPriceAccess ? `${targetRegion} job prices unlocked` : 'Training payment confirmed',
+        body: isPriceAccess
+          ? `Your payment was confirmed. Cards on the ${targetRegion} board now pay ${targetRegion} prices — open the board to see them.`
+          : 'Your payment was confirmed for this job card. Training and assessment unlock once your identity verification is approved.',
         tone: 'success',
-        link: `/training/${encodeURIComponent(jobId)}`,
+        link: isPriceAccess ? '/jobs' : `/training/${encodeURIComponent(jobId)}`,
       })
       .catch(() => undefined)
 
     await audit({ action: 'PAYMENT_VERIFIED', actorEmail: email, details: { reference, jobId, amountKes: Math.round(paidSubunits / 100) }, req })
 
-    return json({ ok: true, paid: true, status: 'success', reference, jobId, amountKes: Math.round(paidSubunits / 100), currency: tx.currency ?? 'KES' })
+    return json({
+      ok: true,
+      paid: true,
+      status: 'success',
+      reference,
+      jobId,
+      priceRegion: isPriceAccess ? targetRegion : '',
+      amountKes: Math.round(paidSubunits / 100),
+      currency: tx.currency ?? 'KES',
+    })
   } catch (err) {
     return routeError('paystack/verify', err)
   }

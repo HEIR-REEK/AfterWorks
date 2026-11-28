@@ -12,14 +12,15 @@ import { cn } from '@/lib/utils'
  * paragraph on the training page; these two surfaces put it where a member actually looks — under
  * the landing-page hero and directly under the dashboard wallet.
  *
- * Wording is deliberately about *unlocking the work*, not about guaranteed earnings: the fee is
- * shown on the card before checkout, and passing the assessment is what makes the job available.
+ * Wording is deliberately about *unlocking the work*, not about guaranteed earnings: the course is
+ * what makes a specialist card available, and finishing its task is what pays. Nothing here charges
+ * for a lesson — the only optional payment on the platform buys another region's prices.
  */
 
 const TITLE = 'Get trained. Get the higher-paying jobs.'
 const BODY =
   'Some of the best-paid cards on the board ask for a short, job-specific training module and a quick assessment. Finish them once, and those higher-paying specialist jobs are open to you.'
-const FINE_PRINT = 'A one-off training fee is shown on the card before you pay. Applying is always free.'
+const FINE_PRINT = 'Courses and tasks are free on your own board. Applying is always free.'
 
 /** The compact, high-contrast banner used on the signed-in dashboard. */
 export function TrainingPushBanner({

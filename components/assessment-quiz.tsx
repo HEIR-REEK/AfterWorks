@@ -7,7 +7,8 @@ import { authedFetch, describeError } from '@/lib/client-api'
 import { TrainingFigure } from '@/components/training-figure'
 import { NoCopyPaste } from '@/components/no-copy-paste'
 import { useCameraProctor, type ProctorTermination } from '@/components/assessment-proctor'
-import { CheckCircle2, Circle, AlertCircle, BookOpen, Camera, CameraOff, ShieldAlert } from 'lucide-react'
+import { CheckCircle2, Circle, AlertCircle, BookOpen, Camera, CameraOff, ShieldAlert, Timer, Wallet } from 'lucide-react'
+import { formatUsd } from '@/lib/afterworks-data'
 
 type QuizQuestion = {
   id: number
@@ -33,6 +34,24 @@ type ScoreResponse = {
   passMark: number
   review: ReviewRow[]
   proctorTerminated?: boolean
+  /** What finishing the task credited, when it passed. */
+  task?: { payUsd: number; billedMinutes: number; alreadyCredited: boolean } | null
+}
+
+/**
+ * The task's clock and price, as the server reported them when the questions were handed out.
+ *
+ * `remainingSeconds` is a countdown, not a deadline: the server re-reads the run on submission and
+ * refuses anything the timer has not released, so a paused tab or a doctored clock changes nothing.
+ */
+type TaskTimer = {
+  timerMinutes: number
+  remainingSeconds: number
+  elapsedSeconds: number
+  complete: boolean
+  rateUsd: number
+  payUsd: number
+  billedMinutes: number
 }
 
 export function AssessmentQuiz({ category, jobId, onPass }: { category: JobCategory; jobId: string; onPass: () => void }) {
@@ -50,7 +69,13 @@ export function AssessmentQuiz({ category, jobId, onPass }: { category: JobCateg
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [active, setActive] = useState(0)
   const [proctorTerminated, setProctorTerminated] = useState<ProctorTermination | null>(null)
+  const [task, setTask] = useState<TaskTimer | null>(null)
+  const [nowMs, setNowMs] = useState(() => Date.now())
+  const [credited, setCredited] = useState<number | null>(null)
   const questionRef = useRef<HTMLDivElement | null>(null)
+  // When this page learned the clock. The countdown is measured from here so a slow load does not
+  // show time the server has already spent.
+  const taskLoadedAtRef = useRef<number>(Date.now())
   const assessmentRef = useRef<HTMLDivElement | null>(null)
 
   // Camera proctoring: the questions are not even fetched until the camera is on, and the quiz
@@ -81,11 +106,17 @@ export function AssessmentQuiz({ category, jobId, onPass }: { category: JobCateg
     setActive(0)
     void (async () => {
       try {
-        const data = await authedFetch<{ questions: QuizQuestion[]; passMark: number }>(
+        const data = await authedFetch<{ questions: QuizQuestion[]; passMark: number; timer?: TaskTimer | null }>(
           `/api/assessments?jobId=${encodeURIComponent(jobId)}`,
         )
         if (cancelled) return
         const rows = Array.isArray(data.questions) ? data.questions : []
+        // The clock started server-side on this request. The client only draws it.
+        if (data.timer) {
+          taskLoadedAtRef.current = Date.now()
+          setTask(data.timer)
+          setNowMs(Date.now())
+        }
         if (rows.length === 0) {
           setLoadError('This assessment is not available right now. Refresh the page or contact support.')
           return
@@ -102,6 +133,14 @@ export function AssessmentQuiz({ category, jobId, onPass }: { category: JobCateg
       cancelled = true
     }
   }, [jobId, cameraState])
+
+  // One second tick, only while the task is running — enough for a countdown, nothing in the
+  // background. The authoritative clock is the server's.
+  useEffect(() => {
+    if (!task || submitted) return
+    const id = window.setInterval(() => setNowMs(Date.now()), 1000)
+    return () => window.clearInterval(id)
+  }, [task, submitted])
 
   const handleSelect = (qId: number, oIdx: number) => {
     if (submitted || submitting) return
@@ -125,6 +164,7 @@ export function AssessmentQuiz({ category, jobId, onPass }: { category: JobCateg
           (Array.isArray(result.review) ? result.review : []).map((row) => [row.id, row]),
         ),
       )
+      if (result.passed && result.task) setCredited(Number(result.task.payUsd) || 0)
       setSubmitted(true)
     } catch (err) {
       setSubmitError(describeError(err))
@@ -268,6 +308,39 @@ export function AssessmentQuiz({ category, jobId, onPass }: { category: JobCateg
     )
   }
 
+  // The task, stated plainly: what it pays, how long it runs, and how long is left. The submit button
+  // stays disabled until the server's clock says the task is done — "when time passes the submission
+  // is never made".
+  const taskRemaining = task
+    ? Math.max(0, task.remainingSeconds - Math.floor((nowMs - taskLoadedAtRef.current) / 1000))
+    : 0
+  const taskRunning = Boolean(task) && !submitted && taskRemaining > 0
+  const taskPanel = task ? (
+    <div className="flex flex-col gap-3 rounded-xl border border-primary/25 bg-primary/5 p-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex items-start gap-3">
+        <div className="rounded-lg bg-primary/10 p-2 text-primary">
+          <Wallet className="size-4" />
+        </div>
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-foreground">
+            Paid task — {formatUsd(task.payUsd)}
+          </p>
+          <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+            {formatUsd(task.rateUsd)} an hour · {task.timerMinutes} min timer · paid to your balance when
+            you finish. Withdrawing opens once your balance reaches the total of your board’s task
+            prices.
+          </p>
+        </div>
+      </div>
+      <div className="flex shrink-0 items-center gap-2 self-start rounded-lg border border-border bg-background px-3 py-2 sm:self-auto">
+        <Timer className={taskRunning ? 'size-4 text-primary' : 'size-4 text-success'} />
+        <span className="font-mono text-sm font-semibold tabular-nums">
+          {taskRemaining > 0 ? formatClock(taskRemaining) : 'Time is up'}
+        </span>
+      </div>
+    </div>
+  ) : null
+
   if (passed) {
     return (
       <NoCopyPaste className="flex flex-col gap-4">
@@ -278,6 +351,12 @@ export function AssessmentQuiz({ category, jobId, onPass }: { category: JobCateg
             You scored {score}/{questions.length} — at or above the {passMark}/{questions.length} pass
             mark — and demonstrated your skills for {category} tasks.
           </p>
+          {credited !== null && (
+            <p className="flex items-center gap-2 rounded-lg bg-success/15 px-4 py-2 text-sm font-semibold text-success">
+              <Wallet className="size-4" />
+              {formatUsd(credited)} added to your balance
+            </p>
+          )}
           <div className="mt-4 flex flex-col items-center gap-2 sm:flex-row">
             <Button onClick={handleProceed} size="lg" className="px-8">
               Proceed to Application
@@ -379,6 +458,8 @@ export function AssessmentQuiz({ category, jobId, onPass }: { category: JobCateg
           </div>
         </div>
 
+        {!submitted && taskPanel && <div className="mb-4">{taskPanel}</div>}
+
         {!submitted && (
           <>
             <div className="mt-4 flex items-center justify-between gap-3 text-[11px] font-medium text-muted-foreground">
@@ -478,19 +559,25 @@ export function AssessmentQuiz({ category, jobId, onPass }: { category: JobCateg
                   <Button
                     type="button"
                     onClick={handleSubmit}
-                    disabled={submitting || answeredCount < questions.length}
+                    disabled={submitting || answeredCount < questions.length || taskRunning}
                     className="shadow-md"
                   >
                     {submitting ? 'Scoring…' : 'Submit answers'}
                   </Button>
                 )}
                 {currentIndex < questions.length - 1 && answeredCount === questions.length && (
-                  <Button type="button" variant="outline" onClick={handleSubmit} disabled={submitting}>
+                  <Button type="button" variant="outline" onClick={handleSubmit} disabled={submitting || taskRunning}>
                     {submitting ? 'Scoring…' : 'Submit answers'}
                   </Button>
                 )}
               </div>
             </div>
+            {taskRunning && !submitError && (
+              <p className="text-xs font-medium text-muted-foreground" role="status">
+                This task has {formatClock(taskRemaining)} left on its timer. Answers are saved as you go —
+                submission opens when the timer finishes.
+              </p>
+            )}
             {submitError && (
               <p className="text-xs text-destructive" role="alert">
                 {submitError}
@@ -535,4 +622,15 @@ export function AssessmentQuiz({ category, jobId, onPass }: { category: JobCateg
       </NoCopyPaste>
     </div>
   )
+}
+
+/** mm:ss for a countdown, hours included past an hour. Matches `describeRemaining` on the server. */
+function formatClock(totalSeconds: number): string {
+  const total = Math.max(0, Math.round(totalSeconds))
+  const hours = Math.floor(total / 3600)
+  const minutes = Math.floor((total % 3600) / 60)
+  const seconds = total % 60
+  const mm = String(minutes).padStart(2, '0')
+  const ss = String(seconds).padStart(2, '0')
+  return hours > 0 ? `${hours}:${mm}:${ss}` : `${mm}:${ss}`
 }

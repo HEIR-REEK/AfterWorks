@@ -13,7 +13,7 @@ import {
 import { PublicPage } from '@/components/public-shell'
 import { getPublicJob, listPublicJobs } from '@/lib/public-jobs-server'
 import { jsonLd, publicCategoryFor, publicCategoryPath, publicJobPath, type PublicJob } from '@/lib/public-jobs'
-import { formatDuration, formatUsd, trainingFeeUsdFor } from '@/lib/afterworks-data'
+import { formatDuration, formatUsd } from '@/lib/afterworks-data'
 import { site } from '@/lib/site'
 
 export const dynamic = 'force-dynamic'
@@ -81,7 +81,6 @@ export default async function PublicJobPage({ params }: Props) {
   const related = (await listPublicJobs())
     .filter((entry) => entry.category === job.category && entry.id !== job.id)
     .slice(0, 3)
-  const trainingFee = formatUsd(trainingFeeUsdFor(job.trainingFeeUsd))
   const breadcrumb = {
     '@context': 'https://schema.org',
     '@type': 'BreadcrumbList',
@@ -151,8 +150,8 @@ export default async function PublicJobPage({ params }: Props) {
                     <p className="font-medium">{job.trainingRequired ? 'Complete the full training course for this card' : 'No training course — this card is assessment-only'}</p>
                     <p className="mt-1 text-muted-foreground">
                       {job.trainingRequired
-                        ? `The one-off training fee is ${trainingFee}. The course and assessment unlock after the required identity check is approved.`
-                        : 'This card has no training, so there is nothing to pay. The assessment unlocks once your identity check is approved.'}
+                        ? `The course is free. The task unlocks after the required identity check is approved, and pays its hourly rate when you finish it.`
+                        : 'This card has no training course — it is a task and an assessment. Nothing is charged for it; the task unlocks once your identity check is approved.'}
                     </p>
                   </div>
                 </li>
@@ -186,7 +185,7 @@ export default async function PublicJobPage({ params }: Props) {
                 <div className="flex items-center justify-between gap-3"><dt className="flex items-center gap-2 text-muted-foreground"><Users className="size-4" /> Slots</dt><dd className="font-medium">{job.slotsRemaining} of {job.capacity} open</dd></div>
                 <div className="flex items-center justify-between gap-3"><dt className="text-muted-foreground">Closes</dt><dd className="font-medium">{closingDate(job.closesAt)}</dd></div>
                 {job.trainingRequired && (
-                  <div className="flex items-center justify-between gap-3"><dt className="flex items-center gap-2 text-muted-foreground"><GraduationCap className="size-4" /> Training</dt><dd className="font-medium">{trainingFee}</dd></div>
+                  <div className="flex items-center justify-between gap-3"><dt className="flex items-center gap-2 text-muted-foreground"><GraduationCap className="size-4" /> Training</dt><dd className="font-medium">Free</dd></div>
                 )}
               </dl>
               <Link href="/sign-up" className="mt-5 inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-primary px-3 py-2.5 text-sm font-semibold text-primary-foreground hover:bg-primary/90">

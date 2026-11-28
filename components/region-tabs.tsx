@@ -1,6 +1,7 @@
 'use client'
 
-import { Lock, MapPin } from 'lucide-react'
+import Link from 'next/link'
+import { ArrowRight, Lock, MapPin } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 export type BoardRegion = {
@@ -92,8 +93,11 @@ export function RegionTabs({
  * The cards ARE rendered — the platform asked to see the other regions' work, prices and detail —
  * but blurred, unclickable and inert. Nothing here is a lock in the security sense: anyone can
  * delete the `blur` class. The real refusal is on the server (`lib/job-region-gate.ts`), so the
- * assessment will not open, the training fee will not charge and the apply button is not rendered
- * at all on a locked card. The blur is a courtesy; the API is the wall.
+ * assessment will not open and the apply button is not rendered at all on a locked card. The blur is
+ * a courtesy; the API is the wall.
+ *
+ * One thing is *not* a wall any more: the region's prices can be bought. The panel says so, and links
+ * to the page that sells them, because a locked board is now an offer as well as a limit.
  */
 export function LockedRegionPanel({
   entry,
@@ -116,6 +120,21 @@ export function LockedRegionPanel({
           <MapPin className="size-3" aria-hidden="true" />
           {current ? `You are on the ${current} board` : 'Connect from this region to open it'}
         </p>
+      </div>
+
+      {/* The way in that is not a change of location: buy the region's prices, once. */}
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-primary/30 bg-primary/5 px-4 py-3">
+        <p className="text-xs leading-relaxed text-muted-foreground">
+          Work this board from anywhere by unlocking {entry.label} job prices — its cards then pay{' '}
+          {entry.label} rates.
+        </p>
+        <Link
+          href="/prices"
+          className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:bg-primary/90"
+        >
+          See prices
+          <ArrowRight className="size-3" aria-hidden="true" />
+        </Link>
       </div>
 
       {entry.cards && entry.cards.length > 0 ? (

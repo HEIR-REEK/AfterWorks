@@ -76,7 +76,7 @@ export default function JobDetailPage({
 
   async function handleApply() {
     setError(null)
-    // A training fee may be paid before identity verification — that is the whole point of the
+    // A price unlock may be paid before identity verification — that is the whole point of the
     // checkout on the training page. What verification gates is access to the training material
     // and the assessment, plus the application itself (which the server also enforces).
     if (!worker.kycVerified && (!trainingRequired || isPaid)) {
@@ -156,7 +156,7 @@ export default function JobDetailPage({
                       <span>Identity Verification — <strong className="text-warning font-medium">Action required</strong></span>
                       {hasTraining ? (
                         <p className="mt-1 text-xs text-muted-foreground">
-                          You can pay this job card’s training fee first. The training material and assessment unlock after this check is approved.
+                          The course and the task are free. What costs money is working another region’s prices — your own board is included. Identity verification is what unlocks the course and the task.
                         </p>
                       ) : null}
                     </div>
@@ -284,7 +284,7 @@ export default function JobDetailPage({
                       Request verification in Profile
                     </Button>
                     <p className="text-center text-xs text-muted-foreground">
-                      You can pay the training fee first. Training and the assessment unlock once your identity review is approved.
+                      The course and the task unlock once your identity review is approved — there is no fee for this card. Unlocking another region’s prices is a separate, optional payment.
                     </p>
                   </div>
                 ) : (
@@ -326,7 +326,7 @@ export default function JobDetailPage({
 
               {!application && !isClosed && (
                 <p className="mt-3 text-center text-xs text-muted-foreground">
-                  No fee to submit an application. A training fee, where the job card requires one, is separate. Your saved professional details are attached automatically.
+                  No fee to submit an application, and no training fee on the card. Working another region’s prices is the only optional payment. Your saved professional details are attached automatically.
                 </p>
               )}
             </div>

@@ -390,6 +390,45 @@ export async function holdKycRequest(uid: string, missingLabels: string[]): Prom
 /**
  * Records a completed Paystack training payment in Firestore using Admin SDK.
  */
+/**
+ * Grants a member the right to work one region's prices.
+ *
+ * This is the entitlement the *price access* payment buys, and it replaces the per-card training fee
+ * as the thing a charge unlocks. Written only by the server, after Paystack confirms the transaction,
+ * for the region encoded in that transaction's own metadata — never for a region the caller names in
+ * a later request. Idempotent by `arrayUnion`, so a webhook and a verify for the same reference
+ * cannot double-write or fail.
+ */
+export async function recordPriceAccessAdmin(
+  uid: string,
+  region: string,
+  input: { reference?: string; amountUsd?: number; actorEmail?: string } = {},
+): Promise<void> {
+  const db = adminDb()
+  const known = ['Africa', 'Americas', 'Europe', 'Asia']
+  if (!known.includes(region)) throw new TransitionError('That is not a price region.', 400)
+  const now = new Date().toISOString()
+  const userRef = db.collection('users').doc(uid)
+  await userRef.set(
+    {
+      unlockedPriceRegions: FieldValue.arrayUnion(region),
+      [`priceAccessAt.${region}`]: now,
+      updatedAt: now,
+    },
+    { merge: true },
+  )
+  await db.collection('price_access').add({
+    uid,
+    region,
+    reference: String(input.reference ?? '').slice(0, 120),
+    amountUsd: Number(input.amountUsd ?? 0) || 0,
+    currency: 'USD',
+    actorEmail: String(input.actorEmail ?? '').slice(0, 200),
+    createdAt: now,
+  })
+  await createAuditEntry('PRICE_ACCESS_GRANTED', { uid, region, reference: input.reference ?? '', amountUsd: input.amountUsd ?? 0 }, input.actorEmail ?? 'paystack')
+}
+
 export async function recordPaidTrainingAdmin(
   uid: string,
   jobId: string,
@@ -3028,6 +3067,237 @@ export async function recordAssessmentPass(uid: string, jobId: string): Promise<
     },
     { merge: true },
   )
+}
+
+// ─── Task runs: the timer, and the earning it releases ───────────────────────
+
+export type TaskRun = {
+  id: string
+  uid: string
+  jobId: string
+  region: string
+  rateUsd: number
+  timerMinutes: number
+  startedAt: string
+  startedAtMs: number
+  status: 'running' | 'completed'
+  completedAt?: string
+  payUsd?: number
+  billedMinutes?: number
+  elapsedSeconds?: number
+}
+
+/** One run per member per card. The id is the pair, so a second start cannot fork the clock. */
+function taskRunId(uid: string, jobId: string): string {
+  return `${uid}__${jobId}`.slice(0, 400)
+}
+
+function taskRunFromDoc(id: string, raw: Record<string, unknown>): TaskRun {
+  return {
+    id,
+    uid: String(raw.uid ?? ''),
+    jobId: String(raw.jobId ?? ''),
+    region: String(raw.region ?? ''),
+    rateUsd: Number(raw.rateUsd ?? 0) || 0,
+    timerMinutes: Number(raw.timerMinutes ?? 0) || 0,
+    startedAt: String(raw.startedAt ?? ''),
+    startedAtMs: Number(raw.startedAtMs ?? 0) || 0,
+    status: raw.status === 'completed' ? 'completed' : 'running',
+    completedAt: raw.completedAt ? String(raw.completedAt) : undefined,
+    payUsd: raw.payUsd === undefined ? undefined : Number(raw.payUsd) || 0,
+    billedMinutes: raw.billedMinutes === undefined ? undefined : Number(raw.billedMinutes) || 0,
+    elapsedSeconds: raw.elapsedSeconds === undefined ? undefined : Number(raw.elapsedSeconds) || 0,
+  }
+}
+
+/**
+ * Start (or resume) the timer for one task.
+ *
+ * Resuming is the important half: a reload must not hand the member a fresh clock, so an existing
+ * run is returned untouched — including its original `startedAt`. The region and rate are snapshotted
+ * here, once, from the server's own resolution, so a later profile edit or a different connection
+ * cannot reprice a task that is already running.
+ */
+/**
+ * The three profile fields that decide a member's price region, read cheaply.
+ *
+ * Returns empty strings rather than throwing: a missing profile is answered by the caller's own
+ * region fallback (Africa), which is the safe direction — the lower price, never a windfall.
+ */
+export async function getTaskProfileFields(
+  uid: string,
+): Promise<{ verifiedCountry: string; country: string }> {
+  const db = dbOrNull()
+  if (!db) return { verifiedCountry: '', country: '' }
+  try {
+    const snap = await db.collection('users').doc(uid).get()
+    const data = (snap.data() ?? {}) as Record<string, unknown>
+    return {
+      verifiedCountry: String(data.verifiedCountry ?? '').trim(),
+      country: String(data.country ?? '').trim(),
+    }
+  } catch {
+    return { verifiedCountry: '', country: '' }
+  }
+}
+
+/** The country of the member's most recent payout destination — half of the region resolution. */
+export async function resolveWorkerPayoutCountry(uid: string): Promise<string> {
+  return resolvePayoutCountryFor(uid)
+}
+
+export async function startTaskRun(input: {
+  uid: string
+  jobId: string
+  region: string
+  rateUsd: number
+  timerMinutes: number
+}): Promise<TaskRun> {
+  const db = adminDb()
+  const ref = db.collection('task_runs').doc(taskRunId(input.uid, input.jobId))
+  const existing = await ref.get()
+  if (existing.exists) return taskRunFromDoc(ref.id, (existing.data() ?? {}) as Record<string, unknown>)
+
+  const now = new Date()
+  const row = {
+    uid: input.uid,
+    jobId: input.jobId,
+    region: input.region,
+    rateUsd: Math.round(input.rateUsd * 100) / 100,
+    timerMinutes: Math.round(input.timerMinutes),
+    startedAt: now.toISOString(),
+    startedAtMs: now.getTime(),
+    status: 'running',
+  }
+  // `create` rather than `set`: two tabs opening the task at once must not overwrite the first
+  // start with a later one, which would hand the member a second full timer.
+  await ref.create(row).catch(async (err) => {
+    const raced = await ref.get()
+    if (!raced.exists) throw err
+  })
+  const stored = await ref.get()
+  return taskRunFromDoc(ref.id, (stored.data() ?? {}) as Record<string, unknown>)
+}
+
+export async function readTaskRun(uid: string, jobId: string): Promise<TaskRun | null> {
+  const db = dbOrNull()
+  if (!db) return null
+  const ref = db.collection('task_runs').doc(taskRunId(uid, jobId))
+  const snap = await ref.get()
+  if (!snap.exists) return null
+  return taskRunFromDoc(ref.id, (snap.data() ?? {}) as Record<string, unknown>)
+}
+
+export type CompleteTaskResult = {
+  run: TaskRun
+  creditedUsd: number
+  alreadyCredited: boolean
+  wallet: { availableUsd: number; pendingUsd: number }
+}
+
+/**
+ * Credit a finished task to the member's balance.
+ *
+ * Money is written here, so the shape follows the same rules the payout path already relies on: one
+ * transaction, every read before the first write, a ledger row whose id is a hard idempotency key,
+ * and the run's own status as the guard against a double credit.
+ *
+ * The amount is computed by the caller from `lib/task-pay.ts` and passed in — but the *guard* is
+ * server-side state: a run that is already `completed` returns the amount it paid and credits
+ * nothing, so a retried request, a double tap or a replayed body cannot pay twice.
+ */
+export async function completeTaskRun(input: {
+  uid: string
+  jobId: string
+  payUsd: number
+  billedMinutes: number
+  elapsedSeconds: number
+}): Promise<CompleteTaskResult> {
+  const db = adminDb()
+  const runRef = db.collection('task_runs').doc(taskRunId(input.uid, input.jobId))
+  const ledgerRef = db.collection('wallet_ledger').doc(`task_earn_${input.uid}_${input.jobId}`.slice(0, 400))
+  const userRef = db.collection('users').doc(input.uid)
+  const now = new Date().toISOString()
+
+  return db.runTransaction(async (tx) => {
+    const runSnap = await tx.get(runRef)
+    if (!runSnap.exists) throw new TransitionError('Start the task before submitting it.', 409)
+    const run = taskRunFromDoc(runRef.id, (runSnap.data() ?? {}) as Record<string, unknown>)
+    const userSnap = await tx.get(userRef)
+    const ledgerSnap = await tx.get(ledgerRef)
+
+    const data = (userSnap.data() ?? {}) as Record<string, unknown>
+    const wallet = (data.wallet ?? {}) as Record<string, unknown>
+    const availableUsd = Number(wallet.availableUsd ?? 0) || 0
+    const pendingUsd = Number(wallet.pendingUsd ?? 0) || 0
+
+    if (run.status === 'completed') {
+      // The task is done. Report what it paid and touch nothing — including the balance, which may
+      // have moved on since (spent on a payout) and must not be recomputed from a stale read.
+      return {
+        run,
+        creditedUsd: run.payUsd ?? 0,
+        alreadyCredited: true,
+        wallet: { availableUsd, pendingUsd },
+      }
+    }
+    if (!userSnap.exists) {
+      throw new TransitionError('Your profile is missing, so the earning was not credited.', 409)
+    }
+    // A ledger row without a completed run means a previous attempt wrote the credit and failed to
+    // mark the run; that is still a paid task and must not pay again.
+    if (ledgerSnap.exists) {
+      tx.set(runRef, { status: 'completed', completedAt: now, payUsd: run.payUsd ?? 0 }, { merge: true })
+      return { run: { ...run, status: 'completed' as const }, creditedUsd: 0, alreadyCredited: true, wallet: { availableUsd, pendingUsd } }
+    }
+
+    const payUsd = Math.round(Math.max(0, input.payUsd) * 100) / 100
+    const nextAvailable = Math.round((availableUsd + payUsd) * 100) / 100
+
+    tx.set(
+      userRef,
+      {
+        'wallet.availableUsd': nextAvailable,
+        tasksCompleted: (Number(data.tasksCompleted ?? 0) || 0) + 1,
+        updatedAt: now,
+      },
+      { merge: true },
+    )
+    tx.set(
+      runRef,
+      {
+        status: 'completed',
+        completedAt: now,
+        payUsd,
+        billedMinutes: Math.round(input.billedMinutes),
+        elapsedSeconds: Math.round(input.elapsedSeconds),
+      },
+      { merge: true },
+    )
+    tx.create(ledgerRef, {
+      id: ledgerRef.id,
+      uid: input.uid,
+      kind: 'task_earning',
+      amountUsd: payUsd,
+      currency: 'USD',
+      jobId: input.jobId,
+      region: run.region,
+      rateUsd: run.rateUsd,
+      billedMinutes: Math.round(input.billedMinutes),
+      status: 'cleared',
+      description: 'Completed a paid task',
+      clearedAt: now,
+      createdAt: now,
+      createdBy: 'member',
+    })
+
+    return {
+      run: { ...run, status: 'completed' as const, completedAt: now, payUsd },
+      creditedUsd: payUsd,
+      alreadyCredited: false,
+      wallet: { availableUsd: nextAvailable, pendingUsd },
+    }
+  })
 }
 
 export async function upsertJob(input: AdminJobInput, actorEmail: string): Promise<{ id: string }> {

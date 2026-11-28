@@ -806,7 +806,8 @@ export default function AdminJobsPage() {
                 </header>
 
                 {/* The board is two kinds of card, and this is the choice between them. A training
-                    card has modules and charges for them; an assessment-only card has neither. */}
+                    card has modules; an assessment-only card does not. Neither charges the worker —
+                    what a card's fee prices is the *region's* price tier, sold once per member. */}
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                   <button
                     type="button"
@@ -821,7 +822,7 @@ export default function AdminJobsPage() {
                       Training + assessment
                     </span>
                     <span className="text-[11px] leading-snug text-muted-foreground">
-                      Workers pay the training fee, work through the modules, then pass the assessment.
+                      Workers work through the modules, then the paid task. No charge on the card.
                     </span>
                   </button>
                   <button
@@ -837,7 +838,7 @@ export default function AdminJobsPage() {
                       Assessment only
                     </span>
                     <span className="text-[11px] leading-snug text-muted-foreground">
-                      No training and no fee. Verified workers go straight to the assessment, then apply.
+                      No modules. Verified workers go straight to the paid task, then apply.
                     </span>
                   </button>
                 </div>
@@ -860,8 +861,8 @@ export default function AdminJobsPage() {
 
                 {editingHasTraining && (
                   <Field
-                    label="Training fee (USD)"
-                    hint={`Charged once per worker for this card only — ≈ KES ${trainingFeeKesFor(editing.trainingFeeUsd).toLocaleString()} at the current rate.`}
+                    label="Region price access (USD)"
+                    hint={`What unlocking this card's region prices costs a member from elsewhere — charged once per region, never per card. ≈ KES ${trainingFeeKesFor(editing.trainingFeeUsd).toLocaleString()} at the current rate, capped by the region ceiling.`}
                   >
                     <input
                       type="number"

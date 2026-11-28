@@ -121,15 +121,33 @@ test('the server gate refuses another board’s listing card, document or not', 
   assert.equal((await gateJobId(unknown, 'nope')).gate.ok, true)
 })
 
-test('the refusal message reads like a sentence', async () => {
+test('the refusal message reads like a sentence, and offers the unlock', async () => {
   const { jobActionRefusal } = await import('@/lib/job-regions')
   const europe = jobActionRefusal({ region: 'Europe', title: 'Virtual Assistant' }, { region: 'Africa' })
   assert.match(europe!.message, /Connect from a country in Europe/)
+  // The new rule: a locked board is a price tier, so the refusal has to name the way in, not only the
+  // way around it. "Connect from Europe" alone would hide the thing the platform now sells.
+  assert.match(europe!.message, /Unlock Europe job prices/, 'a refusal must offer the paid unlock')
   const africa = jobActionRefusal({ region: 'Africa', title: 'AI Data Annotator' }, { region: 'Asia' })
   assert.match(africa!.message, /Connect from a country in Africa/, 'the phrase must read correctly for every board')
   const americas = jobActionRefusal({ region: 'Americas', title: 'Software Developer' }, { region: 'Europe' })
   assert.match(americas!.message, /Connect from a country in Americas/)
   assert.doesNotMatch(africa!.message, /from the Africa/)
+
+  // A paid unlock clears the refusal for exactly that region, and for nothing else.
+  assert.equal(
+    jobActionRefusal({ region: 'Europe', title: 'Virtual Assistant' }, { region: 'Africa', unlockedRegions: ['Europe'] }),
+    null,
+    'a purchased tier is not a locked board',
+  )
+  assert.ok(
+    jobActionRefusal({ region: 'Europe', title: 'Virtual Assistant' }, { region: 'Africa', unlockedRegions: ['Asia'] }),
+    'paying for Asia must not open Europe',
+  )
+  assert.ok(
+    jobActionRefusal({ region: 'Europe', title: 'Virtual Assistant' }, { region: 'Africa', unlockedRegions: ['europe'] }),
+    'the unlock is compared exactly, not case-folded from a stray value',
+  )
 })
 
 test('a Firestore snapshot cannot delete the generated cards', () => {

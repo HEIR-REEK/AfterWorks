@@ -309,16 +309,23 @@ test('every card action is refused on the server, because the blur is only cosme
   // The members can see another board's cards and strip the blur with one stylesheet edit, so the
   // three things a card does — assess, pay, apply — must each be refused by the server.
   const surfaces = [
-    ['app/api/assessments/route.ts', 2],
-    ['app/api/paystack/initialize/route.ts', 1],
-    ['app/api/applications/route.ts', 1],
+    ['app/api/assessments/route.ts', /gateJobId\(/g, 2],
+    ['app/api/applications/route.ts', /gateJobId\(/g, 1],
   ] as const
-  for (const [file, calls] of surfaces) {
+  for (const [file, pattern, calls] of surfaces) {
     const source = readFileSync(file, 'utf8')
-    const found = source.match(/gateJobId\(/g) ?? []
+    const found = source.match(pattern) ?? []
     assert.equal(found.length, calls, `${file} must gate every entry point`)
     assert.match(source, /code: 'region_locked'/, `${file} must refuse with a region error`)
   }
+  // The checkout is the exception, and it is deliberate: buying a region's price tier is the one
+  // action that must work from *outside* that region. What it must still do is refuse to sell a tier
+  // the member already stands in, and refuse to sell one they already bought — otherwise the
+  // exception becomes a way to pay twice for nothing.
+  const checkout = readFileSync('app/api/paystack/initialize/route.ts', 'utf8')
+  assert.match(checkout, /price_already_open/, 'own board is free — never sell it back to the member')
+  assert.match(checkout, /price_already_unlocked/, 'and never sell the same tier twice')
+  assert.doesNotMatch(checkout, /gateJobId\(/, 'the tier on sale is not a locked board')
   // Assessment scoring is the dangerous one: a pass unlocks applying, so POST is gated too.
   const assessments = readFileSync('app/api/assessments/route.ts', 'utf8')
   assert.match(assessments, /export async function POST/)
@@ -329,7 +336,8 @@ test('every card action is refused on the server, because the blur is only cosme
   )
   // One rule decides, not three copies: the gate delegates to jobActionRefusal.
   const gate = readFileSync('lib/job-region-gate.ts', 'utf8')
-  assert.match(gate, /jobActionRefusal\(job, \{ region \}\)/)
+  assert.match(gate, /jobActionRefusal\(job, \{ region, unlockedRegions: unlocked \}\)/)
+  assert.match(gate, /requestUnlockedRegions\(req, uid\)/, 'and a paid price unlock is read from the profile, on the server')
 })
 
 test('the client cannot undo the lock with a Firestore snapshot', () => {

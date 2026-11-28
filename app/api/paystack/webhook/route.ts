@@ -139,6 +139,16 @@ export async function POST(req: NextRequest) {
 
     const uid = storedUserId || metadataUserId
     const jobId = storedJobId || metadataJobId
+    // A price-access charge names a *region*, not a card, so the job binding is not required for it.
+    const storedRegion = String((stored.metadata as Record<string, unknown> | undefined)?.priceRegion ?? '')
+    const metadataRegion = String(verified.data.metadata?.priceRegion ?? '')
+    const targetRegion = storedRegion || metadataRegion
+    const isPriceAccess = targetRegion !== ''
+    if (isPriceAccess && (storedRegion && metadataRegion && storedRegion !== metadataRegion)) {
+      await txRef.set({ status: 'binding_conflict', checkedAt: new Date().toISOString() }, { merge: true })
+      await firestore.createAuditEntry('PAYMENT_WEBHOOK_BINDING_CONFLICT', { reference, storedRegion, metadataRegion }, 'Paystack Webhook')
+      return NextResponse.json({ status: true, recorded: 'binding_conflict' }, { headers: NO_STORE_HEADERS })
+    }
 
     if (paidSubunits < expected) {
       await txRef.set({ status: 'underpaid', paidSubunits, expectedSubunits: expected, checkedAt: new Date().toISOString() }, { merge: true })
@@ -146,12 +156,22 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ status: true, recorded: 'underpaid' }, { headers: NO_STORE_HEADERS })
     }
 
-    if (!uid || !jobId) {
+    if (!uid || (!jobId && !isPriceAccess)) {
       await firestore.createAuditEntry('PAYMENT_WEBHOOK_UNBOUND', { reference, payer }, 'Paystack Webhook')
       return NextResponse.json({ status: true, recorded: 'unbound' }, { headers: NO_STORE_HEADERS })
     }
 
-    await firestore.recordPaidTrainingAdmin(uid, jobId)
+    if (isPriceAccess) {
+      await firestore.recordPriceAccessAdmin(uid, targetRegion, {
+        reference,
+        amountUsd: Number(stored.amountUsd ?? 0) || 0,
+        actorEmail: payer,
+      })
+    } else {
+      // A retired per-card training charge. Honoured exactly as it was, so a member who paid before
+      // the rule changed still gets the card they bought.
+      await firestore.recordPaidTrainingAdmin(uid, jobId)
+    }
     await txRef.set(
       {
         status: 'success',
@@ -160,6 +180,7 @@ export async function POST(req: NextRequest) {
         email: payer || String(stored.email ?? ''),
         userId: uid,
         jobId,
+        ...(isPriceAccess ? { priceRegion: targetRegion } : {}),
         grantedAt: new Date().toISOString(),
         source: 'webhook',
         paidAt: tx.paid_at ?? verified.data.paid_at ?? '',
@@ -169,14 +190,20 @@ export async function POST(req: NextRequest) {
 
     await firestore
       .notifyUser(uid, {
-        title: 'Training payment confirmed',
-        body: 'We confirmed your payment for this job card. Training and assessment unlock once your identity verification is approved.',
+        title: isPriceAccess ? `${targetRegion} job prices unlocked` : 'Training payment confirmed',
+        body: isPriceAccess
+          ? `We confirmed your payment. Cards on the ${targetRegion} board now pay ${targetRegion} prices.`
+          : 'We confirmed your payment for this job card. Training and assessment unlock once your identity verification is approved.',
         tone: 'success',
-        link: `/training/${encodeURIComponent(jobId)}`,
+        link: isPriceAccess ? '/jobs' : `/training/${encodeURIComponent(jobId)}`,
       })
       .catch(() => undefined)
 
-    await firestore.createAuditEntry('PAYMENT_WEBHOOK_GRANTED', { reference, jobId, amountKes: Math.round(paidSubunits / 100) }, 'Paystack Webhook')
+    await firestore.createAuditEntry(
+      'PAYMENT_WEBHOOK_GRANTED',
+      { reference, jobId, priceRegion: isPriceAccess ? targetRegion : undefined, amountKes: Math.round(paidSubunits / 100) },
+      'Paystack Webhook',
+    )
 
     return NextResponse.json({ status: true, granted: true }, { headers: NO_STORE_HEADERS })
   } catch (err) {

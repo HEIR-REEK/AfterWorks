@@ -141,17 +141,20 @@ test('every write path preserves the choice rather than re-deriving it', () => {
 })
 
 test('the member surfaces branch on the same choice', () => {
-  // The training page: pay, modules, assessment, apply — or straight to the assessment.
+  // The training page still splits on the card's own choice — but the split is now "does this card
+  // have a course", not "has this card been paid for". The per-card paywall is gone; the modules are
+  // not.
   const training = code('app/training/[id]/page.tsx')
   assert.match(training, /const hasTraining = jobHasTraining\(job\)/)
-  assert.match(training, /const isPaid = !hasTraining \|\|/, 'a card with no training has nothing to pay')
   assert.match(training, /\{!hasTraining && \(/, 'and takes the assessment-only branch')
-  const assessmentOnly = training.slice(training.indexOf('{!hasTraining && ('), training.indexOf('{hasTraining && !isPaid && ('))
+  assert.doesNotMatch(training, /hasTraining && !isPaid/, 'the per-card paywall is retired')
+  const assessmentOnly = training.slice(training.indexOf('{!hasTraining && ('), training.indexOf('{hasTraining && ('))
   assert.doesNotMatch(assessmentOnly, /TrainingModules/, 'no modules on an assessment-only card')
   assert.match(assessmentOnly, /AssessmentQuiz/, 'just the assessment')
-  // The paid branch renders the modules, which is where the built-in coursebook appears.
-  const paid = training.slice(training.indexOf('{hasTraining && isPaid && ('))
-  assert.match(paid, /<TrainingModules/, 'a training card shows its modules')
+  // The card that has training shows it, and the course is not behind a card-level charge.
+  const trained = training.slice(training.indexOf('A CARD WITH TRAINING'))
+  assert.match(trained, /<TrainingModules/, 'a training card shows its modules')
+  assert.match(trained, /unlockedRegion/, 'what it gates on is the *region* unlock, not a card payment')
 
   // The rest of the member surface.
   assert.match(code('components/job-card.tsx'), /jobHasTraining\(job\)/)
@@ -162,14 +165,34 @@ test('the member surfaces branch on the same choice', () => {
 
 // The gates
 
-test('a training fee can be paid before identity verification, but the assessment cannot', () => {
+test('a price unlock can be paid before identity verification, but the assessment cannot', () => {
+  // The payment is a *price access* charge now, not a per-card training fee, but the verification
+  // order it depends on is unchanged and still worth pinning: money first, identity later.
   const init = code('app/api/paystack/initialize/route.ts')
   assert.match(init, /requireUser\(req\)/, 'payment takes an authenticated member, not a verified one')
-  assert.doesNotMatch(init, /requireVerifiedUser/, 'so an unverified member can still pay the fee')
-  assert.match(init, /requiresTraining: data\?\.trainingRequired === true/, 'and only for a training card')
+  assert.doesNotMatch(init, /requireVerifiedUser/, 'so an unverified member can still pay for a tier')
+  assert.match(init, /priceRegion/, 'the body names the region whose prices are being bought')
+  assert.match(init, /priceAccessFeeUsd\(/, 'and the price comes from the tier, never from the request')
+  assert.doesNotMatch(init, /training_not_required/, 'the old per-card training gate is gone')
 
   const assessments = code('app/api/assessments/route.ts')
   assert.match(assessments, /requireVerifiedUser\(req\)/, 'the assessment still requires verification')
+})
+
+test('the training modules survive the change of what the payment buys', () => {
+  // The instruction was explicit: remove the training *gating*, keep the training. Both halves get a
+  // test, because "we replaced the fee" is exactly the change that quietly deletes a coursebook.
+  const page = code('app/training/[id]/page.tsx')
+  assert.match(page, /TrainingModules/, 'the modules still render')
+  assert.match(page, /readTrainingProgress/, 'and progress is still read')
+  const modules = code('components/training-modules.tsx')
+  assert.match(modules, /export function TrainingModules/)
+
+  // The fee the board *shows* is now a tier-unlock price, so it is no longer charged per card: the
+  // card's own `trainingFeeUsd` prices a region, it does not meter a lesson.
+  const priceAccess = code('lib/price-access.ts')
+  assert.match(priceAccess, /priceAccessFeeUsd/)
+  assert.match(priceAccess, /PRICE_ACCESS_PURPOSE = 'price_access'/)
 })
 
 test('the admin can create a card and set both the pay and the training fee', () => {
@@ -177,7 +200,9 @@ test('the admin can create a card and set both the pay and the training fee', ()
   const editor = code('app/admin/jobs/page.tsx')
   assert.match(editor, /New job/, 'a card can be created')
   assert.match(editor, /label="Pay per job \(USD\)"/, 'and the job pay is editable')
-  assert.match(editor, /label="Training fee \(USD\)"/, 'and so is the training fee')
+  // The money field is still there, but it now prices the region's tier rather than the card's lesson.
+  assert.match(editor, /label="Region price access \(USD\)"/, 'and the region price-access fee')
+  assert.doesNotMatch(editor, /label="Training fee \(USD\)"/, 'the per-card training fee is retired')
   assert.match(editor, /label="Estimated minutes"/)
   assert.match(editor, /label="Capacity"/)
 })

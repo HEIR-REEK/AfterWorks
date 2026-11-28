@@ -81,10 +81,8 @@ type Faq = { q: string; a: string }
 const FAQS: Faq[] = [
   { q: SITE_FAQ[0].q, a: SITE_FAQ[0].a },
   {
-    q: 'Do I have to pay for the training?',
-    a: `Only for the jobs that require it. Those cards show their one-off training fee before checkout — the standard fee is ${formatUsd(
-      site.trainingFeeUsd,
-    )}, though a job can set its own. You can pay it before identity verification, but that job's training material and assessment unlock only after your ID check is approved. Applying, verifying your identity and requesting a payout do not carry a platform charge.`,
+    q: 'Do I have to pay to start working?',
+    a: `Not for your own board. Courses and tasks are free, and every card on the board you connect from pays its hourly rate with no charge to start. What you can pay for is another region’s job prices — one payment for that region, and its cards then pay that region’s rates. You can pay for a region before identity verification, but tasks open only after your ID check is approved. Applying, verifying your identity and requesting a payout do not carry a platform charge.`,
   },
   { q: SITE_FAQ[1].q, a: SITE_FAQ[1].a },
   { q: SITE_FAQ[2].q, a: SITE_FAQ[2].a },

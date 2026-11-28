@@ -508,6 +508,10 @@ function UsersPageInner() {
               <Fact label="Pending" value={formatUsd(selected.wallet.pendingUsd)} />
               <Fact label="Payout handle" value={selected.wallet.payoutNumberMasked || selected.payoutNumberMasked || '—'} />
               <Fact label="Paid trainings" value={String(selected.paidTrainingsCount)} />
+              <Fact
+                label="Unlocked price tiers"
+                value={selected.unlockedPriceRegions.length > 0 ? selected.unlockedPriceRegions.join(', ') : 'Own board only'}
+              />
               <Fact label="Joined" value={selected.createdAt ? new Date(selected.createdAt).toLocaleDateString() : '—'} />
             </div>
 

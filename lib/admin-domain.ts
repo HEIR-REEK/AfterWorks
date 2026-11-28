@@ -208,6 +208,12 @@ export type AdminUserRowModel = {
   phoneMasked?: string
   paidTrainingsCount: number
   /**
+   * The price tiers this member has paid to work, besides their own board. This is the thing the
+   * console needs to answer "why can this member take Americas cards from Nairobi?" — the answer is
+   * a purchase, and it is invisible everywhere else in the drawer.
+   */
+  unlockedPriceRegions: string[]
+  /**
    * No name *and* no email: a stub document (a phone claim, a terms acceptance, an interrupted
    * write) rather than a member we can describe. Worth flagging in the UI instead of rendering a
    * row that looks like a rendering bug.
@@ -364,6 +370,9 @@ export function adminUserRowFromDoc(
     paidTrainingsCount: Array.isArray(doc.paidTrainings)
       ? doc.paidTrainings.length
       : asCount(doc.paidTrainingsCount, 0),
+    unlockedPriceRegions: Array.isArray(doc.unlockedPriceRegions)
+      ? (doc.unlockedPriceRegions as unknown[]).filter((v): v is string => typeof v === 'string' && v !== '')
+      : [],
     profileIncomplete: !name && !email,
     // Idempotent projection: the server scores this from the FULL document. When the input is an
     // already-projected wire row — which carries no raw bio/skills/languages/location and only a

@@ -316,7 +316,11 @@ export async function getMemberWallet(uid: string): Promise<WalletSnapshot | nul
     heldUsd,
     withdrawableUsd,
     payoutNumber: String(wallet.payoutNumber ?? data.phone ?? ''),
-    preferredPayoutMethod: String(data.preferredPayoutMethod ?? 'M-Pesa') === 'Bank Transfer' ? 'Bank Transfer' : 'M-Pesa',
+    // Third and last copy of the old two-method coercion: a PayPal member's wallet summary would
+    // have reported "M-Pesa", disagreeing with the destination panel on the same page.
+    preferredPayoutMethod: (PAYOUT_METHODS as readonly string[]).includes(String(data.preferredPayoutMethod ?? 'M-Pesa'))
+      ? (String(data.preferredPayoutMethod ?? 'M-Pesa') as PayoutMethod)
+      : 'M-Pesa',
     clearingHours: site.clearingWindowHours,
     minWithdrawalUsd: site.minWithdrawalUsd,
     nextClearingAt,

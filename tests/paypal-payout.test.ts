@@ -273,3 +273,84 @@ test('the withdraw path passes paypalEmail into validation', () => {
   const source = read('lib/wallet-server.ts')
   assert.match(source, /paypalEmail: data\.paypalEmail/, 'without this, a PayPal profile can never validate')
 })
+
+// ─── Presentation layer ─────────────────────────────────────────────────────
+
+test('every method has presentation copy, including the one that is not live', async () => {
+  const { PAYOUT_METHOD_PRESENTATION, payoutMethodPresentation } = await import('@/lib/payouts')
+  for (const method of PAYOUT_METHODS) {
+    const entry = PAYOUT_METHOD_PRESENTATION[method]
+    assert.ok(entry, `${method} is missing presentation copy`)
+    assert.ok(entry.label.length > 0)
+    assert.ok(entry.destinationNoun.length > 0, `${method} needs a noun for "paid to your …"`)
+    assert.ok(entry.description.length > 20, `${method} needs a real description`)
+    // The payable flag must agree with the single source of truth.
+    assert.equal(entry.payable, isPayoutMethodPayable(method), `${method} payable flag disagrees`)
+  }
+  // Payne: the PayPal description must warn, because the option is selectable.
+  assert.match(PAYOUT_METHOD_PRESENTATION.PayPal.description, /not switched on yet/i)
+  // An unknown stored value falls back rather than rendering undefined.
+  assert.equal(payoutMethodPresentation('Bitcoin').method, 'M-Pesa')
+  assert.equal(payoutMethodPresentation(undefined).method, 'M-Pesa')
+})
+
+test('no page re-implements the two-method ternary that mislabels PayPal', () => {
+  // The bug shape: `method === 'Bank Transfer' ? X : Y` reads as "bank, else M-Pesa" and quietly
+  // dresses PayPal as mobile money. Payment pages must go through the shared helpers instead.
+  for (const file of ['components/withdraw-panel.tsx', 'app/admin/payouts/page.tsx']) {
+    const source = read(file)
+    // The bug shape is in the ELSE branch: `method === 'Bank Transfer' ? <Landmark/> : <Smartphone/>`
+    // means "bank, else M-Pesa", so PayPal silently wears the M-Pesa icon. Detect the ternary and
+    // then look at what follows the colon.
+    const ternary = /===\s*'Bank Transfer'(?![\s\S]{0,200}?selected\.destination\.bankAccountNumber)\s*\?[\s\S]{0,160}?:\s*(?:<Smartphone|'M-Pesa')/g
+    const offenders = [...source.matchAll(ternary)].map((m) => m[0].replace(/\s+/g, ' ').slice(0, 90))
+    assert.deepEqual(
+      offenders,
+      [],
+      `${file} still branches two ways on the payout method, which renders PayPal as M-Pesa:\n${offenders.join('\n')}`,
+    )
+    assert.match(source, /PayoutMethodIcon/, `${file} should use the shared icon`)
+  }
+})
+
+test('the console can copy a PayPal address, and says the request cannot be paid', () => {
+  const admin = read('app/admin/payouts/page.tsx')
+  // A PayPal destination has no account number: "copy account number" would copy "".
+  assert.match(admin, /Copy PayPal email/)
+  assert.match(admin, /selected\.destination\.paypalEmail/)
+  // Nobody should mark a PayPal request paid and assume the money left.
+  assert.match(admin, /PayPal payouts are not live/)
+})
+
+test('the wallet shows the "not live" state as a blocker, not as an error', () => {
+  const panel = read('components/withdraw-panel.tsx')
+  // A saved-but-unpayable method must reach the blocker list so the member reads it before
+  // filling in an amount.
+  assert.match(panel, /payouts\.destination\.notYetPayable/)
+  assert.match(panel, /blockers\.push\(payouts\.destination\.notYetPayable\)/)
+  // And the destination row carries a badge rather than looking like a normal ready method.
+  assert.match(panel, /Not live/)
+})
+
+test('the profile shows one description per method and a labelled summary', () => {
+  const profile = read('app/profile/page.tsx')
+  assert.match(profile, /payoutMethodPresentation\(formData\.preferredPayoutMethod\)\.description/)
+  assert.match(profile, /payoutMethodPresentation\(worker\.preferredPayoutMethod\)\.label/)
+  // PayPal gains an email field, and it is only sent when PayPal is the chosen method.
+  assert.match(profile, /value=\{formData\.paypalEmail\}/)
+  assert.match(profile, /paypalEmail: formData\.preferredPayoutMethod === 'PayPal' \? formData\.paypalEmail\.trim\(\) : ''/)
+})
+
+test('the wallet summary agrees with the destination panel about the method', () => {
+  // `walletMeta.preferredPayoutMethod` had its own copy of the two-method coercion, so a PayPal
+  // member saw "M-Pesa" in the summary and "PayPal" in the panel on the same page.
+  const source = read('lib/wallet-server.ts')
+  const start = source.indexOf('preferredPayoutMethod:')
+  const line = source.slice(start, start + 400)
+  assert.doesNotMatch(
+    line,
+    /=== 'Bank Transfer' \? 'Bank Transfer' : 'M-Pesa'/,
+    'the wallet summary must not coerce every non-bank method to M-Pesa',
+  )
+  assert.match(line, /PAYOUT_METHODS/)
+})

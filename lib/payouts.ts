@@ -344,6 +344,59 @@ export function validatePayoutDestination(input: {
   }
 }
 
+// ─── Presentation (client-safe) ─────────────────────────────────────────────
+
+/**
+ * Everything the UI needs to *name* a payout method, in one place.
+ *
+ * The pages used to branch on `method === 'Bank Transfer' ? … : …` in four different files, which
+ * worked while there were two methods and silently mislabels a third (PayPal rendered as M-Pesa).
+ * One helper means a fourth method is a one-line change here rather than a hunt.
+ */
+export type PayoutMethodPresentation = {
+  method: PayoutMethod
+  /** Short label for a badge or a select option. */
+  label: string
+  /** Noun for "paid to your …": bank account / M-Pesa number / PayPal account. */
+  destinationNoun: string
+  /** One line of member-facing copy. */
+  description: string
+  /** True when money can actually be sent this way today. */
+  payable: boolean
+}
+
+export const PAYOUT_METHOD_PRESENTATION: Record<PayoutMethod, PayoutMethodPresentation> = {
+  'M-Pesa': {
+    method: 'M-Pesa',
+    label: 'M-Pesa',
+    destinationNoun: 'M-Pesa number',
+    description: 'Sent to your mobile-money number. It must match the name on your verified ID.',
+    payable: true,
+  },
+  'Bank Transfer': {
+    method: 'Bank Transfer',
+    label: 'Bank transfer',
+    destinationNoun: 'bank account',
+    description: 'Sent to your bank account. Transfers can take one working day to appear.',
+    payable: true,
+  },
+  PayPal: {
+    method: 'PayPal',
+    label: 'PayPal',
+    destinationNoun: 'PayPal account',
+    description:
+      'Sent to the email address on your PayPal account. Withdrawals are not switched on yet — your details are saved and we will email you when they are live.',
+    payable: false,
+  },
+}
+
+/** Presentation for a method value that may have come from a document (so: string). */
+export function payoutMethodPresentation(method: unknown): PayoutMethodPresentation {
+  const value = String(method ?? '')
+  return (PAYOUT_METHOD_PRESENTATION as Record<string, PayoutMethodPresentation>)[value] ??
+    PAYOUT_METHOD_PRESENTATION['M-Pesa']
+}
+
 /** One-line human description of where a payout is going. */
 export function describeDestination(destination: PayoutDestination, { masked = true }: { masked?: boolean } = {}): string {
   if (destination.method === 'PayPal') {

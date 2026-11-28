@@ -34,7 +34,13 @@ import { formatTimestamp } from '@/lib/datetime'
 import { KENYAN_BANKS } from '@/lib/banks'
 import { CountrySelect, PhoneInput } from '@/components/phone-input'
 import { DEFAULT_COUNTRY, guessCountryFromE164, isKnownCountry, normalisePhone } from '@/lib/countries'
-import { PAYOUT_STATUS_SHORT, PAYOUT_STATUS_TONE } from '@/lib/payouts'
+import {
+  PAYOUT_METHOD_PRESENTATION,
+  PAYOUT_STATUS_SHORT,
+  PAYOUT_STATUS_TONE,
+  payoutMethodPresentation,
+} from '@/lib/payouts'
+import { PayoutMethodIcon } from '@/components/payout-method-icon'
 import { site } from '@/lib/site'
 import { StatusBadge } from '@/components/status-badge'
 
@@ -527,7 +533,13 @@ function ProfilePageContent() {
               <CreditCard className="size-3.5 text-primary" />
               Payout
             </div>
-            <span className="mt-1 text-sm font-semibold sm:text-base">{worker.preferredPayoutMethod || '-'}</span>
+            <span className="mt-1 flex items-center gap-1.5 text-sm font-semibold sm:text-base">
+              <PayoutMethodIcon method={worker.preferredPayoutMethod} className="size-3.5" />
+              {payoutMethodPresentation(worker.preferredPayoutMethod).label}
+            </span>
+            {worker.preferredPayoutMethod === 'PayPal' && worker.paypalEmail ? (
+              <span className="mt-0.5 truncate text-[11px] text-muted-foreground">{worker.paypalEmail}</span>
+            ) : null}
           </div>
         </div>
       </section>
@@ -827,8 +839,13 @@ function ProfilePageContent() {
                   >
                     <option value="M-Pesa">M-Pesa (mobile money)</option>
                     <option value="Bank Transfer">Bank Transfer</option>
-                    <option value="PayPal">PayPal</option>
+                    <option value="PayPal">PayPal{PAYOUT_METHOD_PRESENTATION.PayPal.payable ? '' : ' — not live yet'}</option>
                   </select>
+                  {/* One description per method, from the shared presentation map, so the copy
+                      cannot drift between the profile page, the wallet and the console. */}
+                  <p className="text-[11px] text-muted-foreground">
+                    {payoutMethodPresentation(formData.preferredPayoutMethod).description}
+                  </p>
                 </div>
 
                 {formData.preferredPayoutMethod === 'Bank Transfer' ? (

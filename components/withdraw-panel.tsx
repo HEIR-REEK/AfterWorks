@@ -24,11 +24,9 @@ import {
   Clock,
   Hourglass,
   Loader2,
-  Landmark,
-  Smartphone,
-  Wallet,
   XCircle,
 } from 'lucide-react'
+import { PayoutMethodIcon } from '@/components/payout-method-icon'
 import { Button } from '@/components/ui/button'
 import { StatusBadge } from '@/components/status-badge'
 import { useAfterWorks } from '@/components/afterworks-provider'
@@ -38,6 +36,7 @@ import {
   PAYOUT_STATUS_SHORT,
   PAYOUT_STATUS_TONE,
   isCancellablePayoutStatus,
+  payoutMethodPresentation,
   payoutStatusCopy,
   validateWithdrawalAmount,
   withdrawalQuote,
@@ -133,12 +132,7 @@ export function WithdrawPanel() {
           <div>
             <h2 className="text-base font-semibold tracking-tight">Withdraw your earnings</h2>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              Request a payout to your saved{' '}
-              {payouts.destination.method === 'Bank Transfer'
-                ? 'bank account'
-                : payouts.destination.method === 'PayPal'
-                  ? 'PayPal account'
-                  : 'M-Pesa number'}.
+              Request a payout to your saved {payoutMethodPresentation(payouts.destination.method).destinationNoun}.
               {site.payoutSla ? ` ${site.payoutSla}` : ''}
             </p>
           </div>
@@ -213,13 +207,7 @@ export function WithdrawPanel() {
           <div className="flex items-start justify-between gap-3 rounded-xl border border-border bg-muted/25 p-3">
             <div className="min-w-0">
               <p className="flex items-center gap-1.5 text-xs font-semibold">
-                {payouts.destination.method === 'Bank Transfer' ? (
-                  <Landmark className="size-3.5" />
-                ) : payouts.destination.method === 'PayPal' ? (
-                  <Wallet className="size-3.5 text-primary" />
-                ) : (
-                  <Smartphone className="size-3.5 text-success" />
-                )}
+                <PayoutMethodIcon method={payouts.destination.method} className="size-3.5" />
                 {payouts.destination.label}
                 {payouts.destination.notYetPayable && (
                   <span className="rounded-full bg-warning/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-warning">

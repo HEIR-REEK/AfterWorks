@@ -45,6 +45,7 @@ import {
   type PayoutRequestStatus,
 } from '@/lib/payouts'
 import type { AdminPayoutRow } from '@/lib/admin'
+import { PayoutMethodIcon } from '@/components/payout-method-icon'
 
 /** Same rows, but the console transport types `history[].status` loosely (it is server text). */
 type Transitions = Record<string, { next: PayoutRequestStatus[]; needsReason: boolean; needsReference: boolean }>
@@ -393,27 +394,60 @@ export default function AdminPayoutsPage() {
               </div>
               <div className="rounded-xl border border-border bg-muted/25 p-3.5 text-xs">
                 <p className="flex items-center gap-1.5 font-semibold">
-                  {selected.method === 'Bank Transfer' ? <CreditCard className="size-3.5" /> : <ShieldCheck className="size-3.5" />}
+                  <PayoutMethodIcon method={selected.method} className="size-3.5" />
                   Destination
                 </p>
                 <p className="mt-1.5">{selected.destinationLabel}</p>
                 <p className="text-muted-foreground">Account name: {selected.destination.accountName || '—'}</p>
+                {/* Bank specifics only exist for a bank transfer. */}
                 {selected.method === 'Bank Transfer' ? (
                   <p className="text-muted-foreground">
                     {selected.destination.bankName} · {selected.destination.bankBranch}
                   </p>
                 ) : null}
-                <button
-                  type="button"
-                  className="mt-2 inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline"
-                  onClick={() => {
-                    const value = selected.method === 'Bank Transfer' ? selected.destination.bankAccountNumber : selected.destination.accountNumber
-                    void navigator.clipboard?.writeText(value)
-                    push('info', 'Account number copied for the provider portal.')
-                  }}
-                >
-                  <Copy className="size-3" /> Copy account number
-                </button>
+                {/* What the operator actually needs to type into the provider portal. PayPal has no
+                    account number at all, so a "copy account number" button would have copied "". */}
+                {selected.method === 'PayPal' ? (
+                  <p className="text-muted-foreground">
+                    PayPal email:{' '}
+                    <span className="font-mono text-foreground">{selected.destination.paypalEmail || 'not on file'}</span>
+                  </p>
+                ) : null}
+                {selected.method === 'PayPal' ? (
+                  <button
+                    type="button"
+                    className="mt-2 inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline"
+                    onClick={() => {
+                      void navigator.clipboard?.writeText(selected.destination.paypalEmail || '')
+                      push('info', 'PayPal email copied.')
+                    }}
+                  >
+                    <Copy className="size-3" /> Copy PayPal email
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="mt-2 inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline"
+                    onClick={() => {
+                      const value =
+                        selected.method === 'Bank Transfer'
+                          ? selected.destination.bankAccountNumber
+                          : selected.destination.accountNumber
+                      void navigator.clipboard?.writeText(value)
+                      push('info', 'Account number copied for the provider portal.')
+                    }}
+                  >
+                    <Copy className="size-3" /> Copy account number
+                  </button>
+                )}
+                {/* PayPal is stored but cannot be disbursed yet: say so on the request, so nobody
+                    marks it paid and assumes the money left. */}
+                {selected.method === 'PayPal' ? (
+                  <p className="mt-2 rounded-lg bg-warning/10 p-2 text-warning">
+                    PayPal payouts are not live. This request cannot be marked paid — ask the member to
+                    switch to M-Pesa or a bank account.
+                  </p>
+                ) : null}
               </div>
             </div>
 

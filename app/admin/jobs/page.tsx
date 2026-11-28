@@ -175,6 +175,10 @@ export default function AdminJobsPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [filter, setFilter] = useState<string>('all')
+  // Which board's catalogue to inspect. `all` is the flat status list the desk has always shown;
+  // a region narrows it to that board, so "does Europe have cards?" is answerable without reading
+  // a small grey label on every row. `global` means the cards open to every board.
+  const [board, setBoard] = useState<string>('all')
   const [searchInput, setSearchInput] = useState('')
   const [search, setSearch] = useState('')
   const [editing, setEditing] = useState<Draft | null>(null)
@@ -216,6 +220,27 @@ export default function AdminJobsPage() {
   useEffect(() => {
     if (session.status === 'authorized') void load()
   }, [session.status, load])
+
+  /**
+   * The rows on screen. This is a *view* of the loaded catalogue, not a second fetch: the region is
+   * already on every document, so filtering here cannot disagree with what the board serves.
+   */
+  const boardRows = useMemo(() => {
+    if (board === 'all') return jobs
+    if (board === 'global') return jobs.filter((job) => !job.region)
+    return jobs.filter((job) => job.region === board)
+  }, [board, jobs])
+
+  /** How many cards each board actually has, so an empty board is visible before it is opened. */
+  const boardCounts = useMemo(() => {
+    const counts: Record<string, number> = { global: 0 }
+    for (const region of JOB_REGION_LIST) counts[region] = 0
+    for (const job of jobs) {
+      if (!job.region) counts.global += 1
+      else if (job.region in counts) counts[job.region] += 1
+    }
+    return counts
+  }, [jobs])
 
   const totals = useMemo(
     () => ({
@@ -534,10 +559,19 @@ export default function AdminJobsPage() {
                 </option>
               ))}
             </select>
+            <select value={board} onChange={(event) => setBoard(event.target.value)} className={cn(inputClass, 'h-8 w-auto py-1 text-xs')} aria-label="Filter by region board">
+              <option value="all">All boards</option>
+              {JOB_REGION_LIST.map((region) => (
+                <option key={region} value={region}>
+                  {region} board ({boardCounts[region] ?? 0})
+                </option>
+              ))}
+              <option value="global">Every board ({boardCounts.global ?? 0})</option>
+            </select>
             {isOwner && (
               <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setConfirmImport(true)}>
                 <Upload className="size-3.5" />
-                Import 2026 cards
+                Import reviewed cards
               </Button>
             )}
             {isOwner && (
@@ -568,16 +602,22 @@ export default function AdminJobsPage() {
 
         {error && <p className="mb-3 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-[11px] text-destructive">{error}</p>}
 
-        {loading && jobs.length === 0 ? (
+        {loading && boardRows.length === 0 ? (
           <div className="flex items-center justify-center gap-2 py-16 text-xs text-muted-foreground">
             <Loader2 className="size-4 animate-spin" />
             Loading catalogue…
           </div>
-        ) : jobs.length === 0 ? (
-          <p className="py-10 text-center text-xs text-muted-foreground">No jobs with that status. Publish one to put work on the board.</p>
+        ) : boardRows.length === 0 ? (
+          <p className="py-10 text-center text-xs text-muted-foreground">
+            {board === 'all'
+              ? 'No jobs with that status. Publish one to put work on the board.'
+              : board === 'global'
+                ? 'No cards are open to every board. Every published card is scoped to a region.'
+                : `The ${board} board has no cards yet. Publish one with “Region board” set to ${board}, or import the regional catalogue.`}
+          </p>
         ) : (
           <ul className="flex flex-col gap-2">
-            {jobs.map((job) => (
+            {boardRows.map((job) => (
               <li key={job.id} className="flex flex-wrap items-start gap-3 rounded-xl border border-border/80 bg-card p-3">
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
@@ -1305,9 +1345,9 @@ export default function AdminJobsPage() {
 
       <ReasonDialog
         open={confirmImport}
-        title="Publish the 2026 catalogue expansion?"
-        description="Adds the 12 reviewed cards (two per category) to the live jobs collection, each with its own training briefing, built-in assessment bank and per-card training price. Ids that already exist are skipped; older and hand-authored cards are never touched."
-        confirmLabel="Import 12 cards"
+        title="Publish the reviewed catalogue?"
+        description="Adds every reviewed card to the live jobs collection: the 2026 expansion, the assessment-only batch, and the regional batch — six cards on each of the four region boards, one in every category, each with its own briefing, assessment and training price. Ids that already exist are skipped; older and hand-authored cards are never touched."
+        confirmLabel="Import reviewed cards"
         tone="default"
         requireReason={false}
         busy={importing}

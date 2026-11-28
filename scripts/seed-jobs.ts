@@ -24,6 +24,7 @@ import {
   IMPORTABLE_CATALOGUE_JOB_IDS,
   seedJobs,
 } from '../lib/afterworks-data'
+import { seedRegionalJobs } from '../lib/regional-jobs'
 import { importStarterJobs, starterJobInput, STARTER_IMPORT_ACTOR } from '../lib/job-seed'
 
 function loadEnvFile(): void {
@@ -63,7 +64,9 @@ async function main() {
     return
   }
 
-  const cards = seedJobs().filter((job) => ids.includes(job.id))
+  // The regional batch lives in its own module, so the publish set is the sample catalogue plus it.
+  // Filtering `seedJobs()` alone made every regional id look missing from the seed data.
+  const cards = [...seedJobs(), ...seedRegionalJobs()].filter((job) => ids.includes(job.id))
   const missingFromSeed = ids.filter((id) => !cards.some((job) => job.id === id))
   if (missingFromSeed.length > 0) {
     console.error(`Seed data is missing: ${missingFromSeed.join(', ')}`)

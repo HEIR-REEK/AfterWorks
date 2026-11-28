@@ -1,11 +1,18 @@
 /**
  * Region-scoped job cards — the seeded content each region's board opens on.
  *
- * Three cards per region, one in a different category, each with its own training sections, its own
- * training fee and **its own assessment**. The assessment matters more than it looks: each card here
- * carries twenty authored questions, because `lib/assessment-bank.ts` deliberately returns an empty
- * bank for a category rather than serving an easy quiz, and a card whose id is not in the bank would
- * otherwise refuse every attempt with "this job has no assessment".
+ * Six cards per region — one in every category on the platform — each with its own training
+ * sections, its own training fee and **its own assessment**. A board that only carried three
+ * categories left that region with no Transcription, Image Labeling or Translation work at all.
+ *
+ * The assessment matters more than it looks: each card here carries twenty authored questions,
+ * because `lib/assessment-bank.ts` deliberately returns an empty bank for a category rather than
+ * serving an easy quiz, and a card whose id is not in the bank would otherwise refuse every attempt
+ * with "this job has no assessment".
+ *
+ * The copy is written from each region's own market — the money habits, the labelling rules, the
+ * data-residency question — so a board is not the African card with a different label. See
+ * `MARKET_DETAIL`.
  *
  * Prices follow the tiering the platform asked for: the Americas highest, then Europe, then Asia,
  * and Africa lowest. The gap is not cosmetic — it is the reason the boards are locked to a region in
@@ -56,6 +63,75 @@ function sections(region: JobRegion, intro: string, standards: string, delivery:
   ]
 }
 
+/**
+ * The market detail each board's new cards are written from.
+ *
+ * This is the part that makes a region's catalogue its own rather than the same card relabelled: a
+ * transcription queue in Kenya is Sheng and M-Pesa receipts, in the Americas it is Spanish-English
+ * calls and US state tax names, in Europe it is an EU data-residency answer, in Asia it is a
+ * WhatsApp-first support thread. The work and the standard are the same; the mess is local.
+ */
+const MARKET_DETAIL: Record<
+  JobRegion,
+  {
+    /** How people actually talk in this market's support calls. */
+    speech: string
+    /** The money wording a transcription or label queue meets. */
+    money: string
+    /** Where the consumer rules a label queue is graded against come from. */
+    labelRules: string
+    /** What a shelf-label queue has to survive, beyond the barcode. */
+    shelf: string
+    /** The compliance question a translation queue has to answer differently per market. */
+    residency: string
+    /** What makes this market's marketplace policy different from the others. */
+    reviewPolicy: string
+    /** The language pair this board's translation card is authored for. */
+    pair: string
+  }
+> = {
+  Africa: {
+    speech: 'Sheng and English in the same sentence, with M-Pesa confirmations read out mid-call ("nimetuma elfu mbili") that must be transcribed as they are spoken, not tidied into English',
+    money: 'shillings written four different ways — "KSh 1,200", "1,200/-", "1200 Ksh" and "elfu moja na mia mbili"',
+    labelRules: 'the county weights-and-measures rules on net weight and the KEBS mark, which must be visible on the pack photo before a label is approved',
+    shelf: 'a price tag that is handwritten on the shelf edge while the till shows a different number',
+    residency: 'whether the client may hold Kenyan customer data outside Kenya, which turns on the Data Protection Act 2019 and its cross-border transfer rule',
+    pair: 'Swahili and English',
+    reviewPolicy:
+      "the Data Protection Act 2019 consent wording and the local herbal-remedy claim rules, which are stricter than the imported supplements suggest",
+  },
+  Americas: {
+    speech: 'Spanish and English code-switching within a call, plus spelled-out state names and ZIP codes that must not be normalised to a different state',
+    money: 'US dollars written as "$1,200.00", "1,200 USD" and "twelve hundred", with a sales-tax line that differs by state',
+    labelRules: 'the FDA nutrition-panel layout and the US net-quantity declaration, both of which are format rules before they are content rules',
+    shelf: 'a shelf price that excludes local sales tax while the online listing includes it',
+    residency: 'whether the client may process US customer data outside the United States, which is a contract question more often than a statute',
+    pair: 'Spanish and English',
+    reviewPolicy:
+      'the FTC substantiation standard for health claims and the state rules on what a sale price may claim',
+  },
+  Europe: {
+    speech: 'English as a second language across several accents, with euro amounts dictated in two languages in the same call',
+    money: 'euros written "€1.200,00" in one country and "1,200.00 EUR" in another, where the separator meanings swap',
+    labelRules: "the EU FIC allergen emphasis rule and the member state's own language requirement for the label",
+    shelf: 'a price that includes VAT on the shelf and excludes it on the invoice',
+    residency: 'whether the client may move EU personal data to a third country, which turns on GDPR Chapter V and the transfer mechanism named in the contract',
+    pair: 'German and English',
+    reviewPolicy:
+      "the EU nutrition-and-health-claims register and the member state's own language requirement for mandatory information",
+  },
+  Asia: {
+    speech: 'English, Mandarin and Malay mixed in one support thread, with amounts dictated in the local currency and then repeated in USD',
+    money: 'amounts written in local currency and USD in the same sentence, at a rate the speaker states but does not date',
+    labelRules: "the importing country's own labelling language requirement and its net-weight tolerance for the pack size",
+    shelf: 'a promo price that is conditional on a membership the shopper may not hold',
+    residency: 'whether the client may hold customer data outside the jurisdiction it was collected in, which differs by country on this board',
+    pair: 'Mandarin and English',
+    reviewPolicy:
+      "the importing country's registration requirement for health products and the platform-specific rules on sale price claims",
+  },
+}
+
 const JOB_UNIT_NAMES: Record<JobRegion, string> = {
   Africa: 'African queues',
   Americas: 'Americas queues',
@@ -63,8 +139,17 @@ const JOB_UNIT_NAMES: Record<JobRegion, string> = {
   Asia: 'Asian queues',
 }
 
-/** Build one region's three cards. Kept as a function so ids and region fields cannot drift. */
-function cardsForRegion(region: JobRegion, pay: { data: number; review: number; research: number }): Job[] {
+/** Build one region's six cards. Kept as a function so ids and region fields cannot drift. */
+type RegionPay = {
+  data: number
+  review: number
+  research: number
+  transcription: number
+  labels: number
+  translation: number
+}
+
+function cardsForRegion(region: JobRegion, pay: RegionPay): Job[] {
   const fee = REGION_FEE[region]
   const closesAt = new Date(Date.now() + 21 * 86400_000).toISOString()
 
@@ -75,7 +160,7 @@ function cardsForRegion(region: JobRegion, pay: { data: number; review: number; 
       category: 'Data Entry',
       region,
       description:
-        'A monthly batch of scanned supplier invoices from clients in your region, entered into a fixed accounts template. Some scans are skewed, a few carry handwritten corrections, and two are deliberately the same invoice filed twice.',
+        `A monthly batch of scanned supplier invoices from ${JOB_REGION_LABELS[region]} clients, entered into a fixed accounts template. The scans carry ${MARKET_DETAIL[region].money}; some are skewed, a few carry handwritten corrections, and two are deliberately the same invoice filed twice.`,
       responsibilities: [
         'Enter 60 invoices into the provided template, one row each',
         'Convert every date to ISO 8601 and every amount to two decimals',
@@ -105,7 +190,7 @@ function cardsForRegion(region: JobRegion, pay: { data: number; review: number; 
       category: 'Content Review',
       region,
       description:
-        'Review a queue of product listings for a marketplace operating in your region. Mark the ones that breach the written policy, leave the rest alone, and record a one-line reason for every removal.',
+        `Review a queue of product listings for a marketplace operating in ${JOB_REGION_LABELS[region]}. The policy is written for that market — ${MARKET_DETAIL[region].reviewPolicy}. Mark breaches, leave the rest alone, and record a one-line reason for every removal.`,
       responsibilities: [
         'Review 120 listings against a nine-rule policy sheet',
         'Tag breaches by rule number, not by opinion',
@@ -135,7 +220,7 @@ function cardsForRegion(region: JobRegion, pay: { data: number; review: number; 
       category: 'Research',
       region,
       description:
-        'Build a price comparison for a client entering your region. Twenty named retailers, four products each, with the shelf price, the promo price and the date you checked — sourced only from pages you actually opened.',
+        `Build a price comparison for a client entering ${JOB_REGION_LABELS[region]}. Twenty named retailers, four products each, with the shelf price, the promo price and the date you checked — the comparison has to survive ${MARKET_DETAIL[region].shelf}, which is what makes this market its own job.`,
       responsibilities: [
         'Record 80 price points in the supplied sheet',
         'Note promo conditions (minimum spend, membership, dates) in the notes column',
@@ -158,6 +243,93 @@ function cardsForRegion(region: JobRegion, pay: { data: number; review: number; 
       status: 'open',
       closesAt,
       postedAgo: '1 week ago',
+    },
+    {
+      id: regionalJobId(region, 'call-transcription'),
+      title: `Transcribe ${JOB_REGION_LABELS[region]} customer support calls`,
+      category: 'Transcription',
+      region,
+      description: `Ten recorded support calls from a ${JOB_REGION_LABELS[region]} call centre, transcribed with speaker turns, timestamps every thirty seconds and verbatim amounts. The audio is real: background noise, overlapping speakers and numbers spoken aloud.`,
+      responsibilities: [
+        'Transcribe 10 calls, speaker-labelled, timestamps every 30 seconds',
+        'Write amounts and phone numbers exactly as spoken, then as digits in the notes column',
+        'Mark unintelligible passages as [inaudible] rather than reconstructing them',
+      ],
+      payAmountUsd: pay.transcription,
+      estimatedMinutes: 200,
+      capacity: 35,
+      slotsRemaining: 29,
+      trainingRequired: true,
+      trainingFeeUsd: fee,
+      trainingNotes: sections(
+        region,
+        `The calls come from a ${JOB_REGION_LABELS[region]} support line, so the audio carries ${MARKET_DETAIL[region].speech}. Your transcript is evidence in a dispute about what a customer was promised, which is why verbatim matters more than readable.`,
+        'Clean up grammar and the transcript stops being evidence. Two conventions decide most QA findings: a number spoken aloud is transcribed as spoken and repeated as digits, and a passage you cannot hear is marked [inaudible] — never guessed from context, however obvious the guess feels.',
+        'Submit one file per call plus a list of the timestamps you flagged. Payment is per completed call; a call with a reconstructed passage is returned, not paid.',
+      ),
+      assessmentQuestions: transcriptionQuestions(region),
+      requiresVerified: true,
+      status: 'open',
+      closesAt,
+      postedAgo: '3 days ago',
+    },
+    {
+      id: regionalJobId(region, 'shelf-labels'),
+      title: `Label ${JOB_REGION_LABELS[region]} retail shelf photos for a planogram audit`,
+      category: 'Image Labeling',
+      region,
+      description: `Draw a box around every price tag and product face in 400 shelf photographs from ${JOB_REGION_LABELS[region]} stores, then classify each tag as matching the product above it. Two reviewers grade the same photos, and a disagreement is re-checked before it is paid.`,
+      responsibilities: [
+        'Box every price tag and product face in 400 photos',
+        'Mark each tag as matching, mismatched or unreadable against the product above it',
+        'Leave glare and cropped tags in a separate class rather than guessing the number',
+      ],
+      payAmountUsd: pay.labels,
+      estimatedMinutes: 220,
+      capacity: 30,
+      slotsRemaining: 24,
+      trainingRequired: true,
+      trainingFeeUsd: fee,
+      trainingNotes: sections(
+        region,
+        `The audit answers one question for the ${JOB_REGION_LABELS[region]} retailer: is the shelf telling the truth? A tag that is boxed but misclassified is worse than one left unlabelled, because the client acts on it. ${MARKET_DETAIL[region].shelf} is the case this queue is built around.`,
+        `Two habits decide your score. Box the tag itself, not the shelf edge — a box that includes the rail cannot be re-read by the classifier. And judge the class, not the product: ${MARKET_DETAIL[region].labelRules}.`,
+        'Submit the label file in the supplied format plus your disagreement list. QA re-checks a sample against the photo, so a guessed class is caught even when it looks plausible.',
+      ),
+      assessmentQuestions: labelQuestions(region),
+      requiresVerified: true,
+      status: 'open',
+      closesAt,
+      postedAgo: '5 days ago',
+    },
+    {
+      id: regionalJobId(region, 'support-translation'),
+      title: `Translate ${JOB_REGION_LABELS[region]} customer support replies`,
+      category: 'Translation',
+      region,
+      description: `Translate 150 support replies between ${MARKET_DETAIL[region].pair} for a business operating in ${JOB_REGION_LABELS[region]}. Every reply carries a refund amount, a delivery date or a policy sentence, and all three have to survive translation exactly.`,
+      responsibilities: [
+        'Translate 150 replies, keeping amounts, dates and policy wording exact',
+        'Flag any reply whose meaning depends on a local term with no clean equivalent',
+        'Leave a glossary entry for every recurring term you had to decide once',
+      ],
+      payAmountUsd: pay.translation,
+      estimatedMinutes: 210,
+      capacity: 25,
+      slotsRemaining: 21,
+      trainingRequired: true,
+      trainingFeeUsd: fee,
+      trainingNotes: sections(
+        region,
+        `These replies go straight to customers in ${JOB_REGION_LABELS[region]}, so a mistranslated refund amount is a real dispute. The pair is ${MARKET_DETAIL[region].pair}; the register is polite and plain, and the customer is often already angry.`,
+        `Translate meaning, not words, except where the words are the commitment. A policy sentence is translated as written even when it reads badly — you are not improving the client's terms. ${MARKET_DETAIL[region].residency} is the sort of question that arrives in these threads, and the answer must not be softened.`,
+        'Submit the translated replies and your glossary. Payment is per completed reply; a reply where an amount or date changed is returned regardless of how good the prose was.',
+      ),
+      assessmentQuestions: translationQuestions(region),
+      requiresVerified: true,
+      status: 'open',
+      closesAt,
+      postedAgo: '6 days ago',
     },
   ]
 }
@@ -265,8 +437,91 @@ function researchQuestions(region: JobRegion): AssessmentQuestion[] {
   ]
 }
 
+function transcriptionQuestions(region: JobRegion): AssessmentQuestion[] {
+  const market = JOB_REGION_LABELS[region]
+  const money = MARKET_DETAIL[region].money
+  return [
+    q(`A caller says "nimetuma elfu mbili" and the agent repeats "two thousand". Which goes in the transcript?`, ['Only the English repeat', 'Both utterances, as spoken, in their speaker turns', 'The Swahili translated into English', 'The figure, once, in the notes column'], 1, 'A transcript is a record of what was said. Collapsing two utterances into one destroys the evidence that the agent confirmed the amount.'),
+    q(`A customer spells a name letter by letter and the letters are hard to hear. What is correct?`, ['Write the most likely name from context', 'Write the letters you heard and mark the rest [inaudible]', 'Omit the spelling entirely', 'Substitute a similar-sounding name'], 1, 'A reconstructed name is invented evidence. Partial transcription plus a flag is the honest record.'),
+    q(`The audio has two people talking over each other for six seconds. What do you do?`, ['Transcribe whoever is louder', 'Mark the overlap and transcribe what is distinguishable', 'Skip the six seconds silently', 'Guess the exchange from what follows'], 1, 'Overlap is a fact about the call. Marking it lets QA re-listen; skipping it hides a gap in the record.'),
+    q(`An amount is spoken as "twelve hundred" but the client asks for digits in the notes column. What goes in the transcript body?`, ['1200', 'Twelve hundred, with 1200 in the notes column', 'Both, inline as 1200 (twelve hundred)', 'Whatever reads better'], 1, 'Verbatim body, normalised digits in the notes column. That is the convention the brief sets, and it keeps both the words and the number findable.'),
+    q(`The brief requires a timestamp every thirty seconds. A sentence begins at 29 seconds and ends at 34. Where does the timestamp go?`, ['At the start of the sentence', 'At the thirty-second mark inside it', 'At the end of the sentence', 'Nowhere; it spans a boundary'], 1, 'The marker belongs where the clock says it is, inside the sentence, so a reviewer can seek to it. Moving it to a sentence edge breaks the seek.'),
+    q(`A caller gives a phone number twice and the two readings differ by one digit. What is correct?`, ['Use the second, as it is a correction', 'Transcribe both and flag the discrepancy', 'Use the first reading', 'Ask the client which is right'], 1, 'You are not adjudicating. Both readings are evidence; the flag is what the client needs.'),
+    q(`Background noise makes four words unintelligible but the meaning is obvious from the rest. What do you write?`, ['The likely words', 'A paraphrase in brackets', '[inaudible] for those words', 'Nothing, and continue the sentence'], 2, 'Obvious to you is not evidence. [inaudible] marks exactly what the recording did not carry.'),
+    q(`The agent quotes a policy sentence from a script. The caller repeats it slightly wrong and the agent does not correct them. What do you transcribe?`, ['The script version, for accuracy', 'What each speaker actually said', 'The caller version only', 'A merged version'], 1, 'The disagreement between script and customer belief is often the whole dispute. Smoothing it removes the finding.'),
+    q(`A stretch of the call is hold music for two minutes. What belongs in the transcript?`, ['Nothing for that stretch', 'A marked hold segment with start and end', 'A guess at what happened', 'A note that the call was paused'], 1, 'A two-minute gap with no marker looks like a transcription failure. Mark it as hold, with the timestamps.'),
+    q(`The client asks for "clean readable transcripts". The brief also says verbatim. Which wins?`, ['Clean readable', 'Verbatim, with punctuation you may tidy', 'A summary plus verbatim appendix', 'Ask the client'], 1, 'The brief is the authority: verbatim content, punctuation you may tidy. Cleaning grammar changes what was said.'),
+    q(`A caller reads out an account number with pauses: 4-4-2-1-9. What do you transcribe?`, ['442 19', 'As spoken, with the pauses marked', '44219 in digits only', 'The number, spelled out'], 1, 'The grouping is how the number was given, and a mis-grouped number is a mis-transcribed number.'),
+    q(`Two speakers have the same first name. What is the correct labelling?`, ['Both as "Speaker"', 'Speaker 1 and Speaker 2, with a note if the call establishes who is who', 'The agent as "Agent" and the caller by name', 'Their full names from the CRM'], 1, 'Labels must be stable and derived from the audio. Pulling names from elsewhere invents information the recording does not contain.'),
+    q(`A caller is upset and swears repeatedly. The client template has no profanity guidance. What do you do?`, ['Censor the words', 'Transcribe verbatim and note it in the flags list', 'Omit the words', 'Replace with asterisks'], 1, 'Censoring edits evidence. Transcribe, then flag so the client can set a house rule.'),
+    q(`A caller states an amount in words and the agent confirms it in digits, and the two do not match. What is the risk of transcribing only the digits?`, ['None; the number is the same', 'The words are the customer claim and the digits are the agent restatement — they can differ', 'The digit form is easier to search', 'The words are redundant'], 1, 'Two speakers, two utterances. Transcribing one loses the chance to catch a disagreement about the amount.'),
+    q(`A call cuts off mid-sentence at 3:12. What do you record?`, ['The transcript ends at 3:12 with a note that the recording ended', 'A guessed completion of the sentence', 'The call as complete', 'Nothing after the last full sentence'], 0, 'An abrupt end is a fact. Noting it stops QA reading a truncated transcript as a sloppy one.'),
+    q(`You finish nine of ten calls and one file will not open. What is the correct submission?`, ['Nine calls, no mention', 'Nine calls plus a note naming the file that failed', 'Ten, with the tenth empty', 'Nothing until all ten open'], 1, 'A handover that names its gap is complete. An empty file would look like a call with no speech.'),
+    q(`The audio contains a language the brief did not name, mixed with English. What is correct?`, ['Transcribe the English and mark the rest as a foreign-language passage', 'Skip the call', 'Translate the other language', 'Transcribe phonetically'], 0, 'Marking the language boundary is accurate. Skipping loses the call; translating invents a step the brief did not ask for.'),
+    q(`A caller gives a date as "the third of next month". What goes in the transcript?`, ['The computed date', 'The words, as spoken', 'A numeric date', 'The words plus a computed date in the notes'], 1, 'Verbatim first. Computing a date is an interpretation, and "next month" depends on when the call was placed.'),
+    q(`QA checks one call at random against its audio. Which habit protects you?`, ['Fast typing', 'Consistent conventions applied to every call', 'Polished prose', 'Transcribing from memory afterwards'], 1, 'A sample catches an inconsistent convention because it appears everywhere. Clean prose that drops a word is still a dropped word.'),
+    q(`Which of these makes a transcript defensible in a dispute?`, ['No gaps at all', 'Every gap marked and every ambiguity flagged as it occurs', 'Perfect spelling', 'A summary at the top'], 1, 'Defensibility is explained gaps. That is the whole of the standard on this queue.'),
+  ]
+}
+
+function labelQuestions(region: JobRegion): AssessmentQuestion[] {
+  const market = JOB_REGION_LABELS[region]
+  const rules = MARKET_DETAIL[region].labelRules
+  return [
+    q(`A price tag is boxed but half of it is behind the shelf rail, so the number cannot be read. What class is correct?`, ['Matching', 'Mismatched', 'Unreadable', 'Leave it unboxed'], 2, 'An unreadable tag is its own class so the client can count them. Filing it as matching invents a number nobody could see.'),
+    q(`The box around a tag includes the shelf rail and the neighbouring tag. What is wrong with it?`, ['Nothing; the tag is inside', 'The box must contain only the tag being classified', 'The box is too small', 'The box should include the product'], 1, 'A box that contains two tags cannot be classified against one product, and the classifier is trained on the box.'),
+    q(`Two products share one price tag on the shelf. What is the correct label?`, ['Matching', 'Mismatched', 'One box per product, both referencing the same tag id', 'Leave the products unboxed'], 2, 'The shelf is doing something unusual and both products need that fact attached. Dropping one product loses it.'),
+    q(`A tag shows a promo price with a struck-through original. The till price matches the promo. Is the tag matching?`, ['No — two prices on one tag', 'Yes — the current price is what the shopper pays', 'Only if the promo has an end date', 'Unreadable'], 1, 'The question is what the shopper pays today. A struck-through figure is a marketing claim, not the price.'),
+    q(`A product face is turned away so the brand cannot be read, but the barcode is visible. How do you label it?`, ['Box the barcode as the product face', 'Box the product and mark the face as obscured', 'Skip the product', 'Infer the brand from the shelf position'], 1, 'The product exists and is obscured. Inferring a brand from position is a guess dressed as data.'),
+    q(`The photo is taken at an angle so the tag for row 3 sits visually under row 4's product. Which product does the tag belong to?`, ['The product it visually sits under', 'The product in its own row, from the shelf edge alignment', 'Split the difference', 'Mark as ambiguous'], 1, 'Planogram audits are about rows. Perspective is a camera artefact, and the shelf edge is the reliable alignment.'),
+    q(`The brief says ${rules}. A pack photo shows the mark but it is a sticker applied over the printed area. What is correct?`, ['Approve — the mark is visible', 'Mark it for review: the mark is not part of the printed label', 'Reject outright', 'Ignore the mark'], 1, 'Visible but not printed is a real distinction in these audits, and it is a review item rather than a rejection you are not authorised to make.'),
+    q(`A shelf tag reads a price that is 10x the neighbouring tags for the same product. Suspecting a typo, what do you do?`, ['Label it matching', 'Label it mismatched and flag the magnitude', 'Correct the price in the label', 'Skip the tag'], 1, 'You report what the shelf says. Correcting the number in the label destroys the only record of what was printed.'),
+    q(`Glare covers the last two digits of a price. Which class?`, ['Matching, if the rest matches', 'Unreadable', 'Mismatched', 'Matching with a note'], 1, 'If the number cannot be read the tag is unreadable, and the note field is not a substitute for the class.'),
+    q(`A product appears twice in one photo because it is stocked in two facings. What is correct?`, ['One box, two facings noted', 'Two boxes, one per facing', 'One box per SKU regardless of facings', 'Box only the front facing'], 1, 'The audit counts facings, which is why each is its own box. Collapsing them undercounts the shelf.'),
+    q(`The tag is legible but the product above it is entirely missing from the shelf. What do you do?`, ['Label the tag unreadable', 'Label the tag as a gap and note the missing product', 'Leave both unboxed', 'Box the empty space as a product'], 1, 'An out-of-stock is exactly what a planogram audit wants to find. Marking the tag unreadable buries the finding.'),
+    q(`Your box edges are consistently 5 pixels inside the tag. Does it matter?`, ['No, the tag is still inside', 'Yes — the box must cover the tag, not most of it', 'Only for large tags', 'Only if the number is cut'], 1, 'A cropped box loses the edge of the number for the classifier. Consistency is not the same as correctness.'),
+    q(`A competitor product is stocked in the client's slot with no tag. What is correct?`, ['Box it as a mismatched product', 'Box it and note it as a foreign product in the slot', 'Ignore it', 'Box the empty tag slot'], 1, 'It is a finding the client wants, and it is not a tag mismatch because there is no tag. The class has to say what it actually is.'),
+    q(`One photo is too dark to classify anything. What is the right submission for that photo?`, ['Skip it silently', 'Mark the photo unusable and note why', 'Classify everything unreadable', 'Guess the classes from the shelf pattern'], 1, 'The unit of work includes photo quality. Marking the whole photo unusable is accurate and countable; guessing is not.'),
+    q(`The client's slot label on the shelf edge is in a language you do not read. What do you do?`, ['Skip the row', 'Use the position and the barcode, and note the language', 'Guess from the packaging colour', 'Mark the row unreadable'], 1, 'The audit keys on position and barcode. Noting the language is useful; guessing from colour is not evidence.'),
+    q(`A price tag shows a currency symbol the client's brief does not mention. What is correct?`, ['Convert it', 'Record the tag as printed and flag the currency', 'Mark mismatched', 'Mark unreadable'], 1, 'The tag is legible and it is what it is. Flagging the currency tells the client their brief is out of date.'),
+    q(`Two reviewers disagree on one product's class. What should happen for your part?`, ['You change yours to agree', 'Both classes stand and the item is re-checked', 'The senior reviewer wins', 'The product is dropped'], 1, 'The disagreement is the signal the process is built to find. Quietly agreeing removes it.'),
+    q(`The brief asks for boxes on every price tag. A shelf has a handwritten tag next to a printed one. What is correct?`, ['Only the printed tag', 'Both tags, each boxed', 'Only the handwritten one', 'Neither, since they conflict'], 1, 'A handwritten tag over a printed one is the exact case the audit is looking for. Both are tags.'),
+    q(`You finish 380 of 400 photos. What is the correct submission?`, ['380, no mention', '380 plus a list of the 20 that are not done', '400 with the missing 20 empty', 'Hold everything until 400'], 1, 'Completeness is explained gaps. An empty photo entry reads as a photo with nothing in it.'),
+    q(`Which submission makes an image-label job auditable?`, ['Fast throughput', 'A label file in the required format plus your disagreement and exception list', 'A summary of the overall condition', 'Screenshots of your work'], 1, 'QA re-checks the file against the photos. Only the structured file plus exceptions survives that.'),
+  ]
+}
+
+function translationQuestions(region: JobRegion): AssessmentQuestion[] {
+  const market = JOB_REGION_LABELS[region]
+  const pair = MARKET_DETAIL[region].pair
+  const residency = MARKET_DETAIL[region].residency
+  const amount = region === 'Africa' ? 'KSh 1,240' : region === 'Americas' ? '$48.00' : region === 'Europe' ? 'EUR 42.00' : 'the local amount'
+  return [
+    q(`A reply says "your refund of ${amount} will arrive within 5 working days". A translator renders "within about a week". What is wrong?`, ['Nothing; the meaning is close', 'Both the amount and the committed number of days changed', 'Working days should be calendar days', 'The tone is too formal'], 1, 'The two things a customer can hold the business to are the amount and the deadline. Both were altered.'),
+    q(`A policy sentence is awkward in the target language. What is correct?`, ['Rewrite it so it reads naturally', 'Translate it as written, however awkward', 'Soften it to be polite', 'Omit it and explain in a note'], 1, 'You are not the author of the client terms. Clarity of your translation is your job; changing their commitment is not.'),
+    q(`A local term has no clean equivalent in the target language. What belongs in the glossary entry?`, ['The nearest English word', 'The term, the chosen rendering, and one line on what is lost', 'A footnote in every reply', 'The term untranslated with no explanation'], 1, 'The glossary is what keeps 150 replies consistent. Recording what is lost is how the next translator avoids guessing differently.'),
+    q(`The customer writes in the source language and the agent replies in it too, mixing ${pair}. What do you translate?`, ['Only one direction', 'Both, keeping the register each speaker used', 'Only the customer messages', 'Neither — leave it as written'], 1, `The deliverable is a reply the customer can act on. Dropping one side breaks the exchange; the pair is ${pair}, so both directions are in scope.`),
+    q(`A reply contains a legal reference the target reader will not recognise. What do you do?`, ['Replace it with the equivalent local law', 'Keep the reference and add a translator note', 'Delete the reference', 'Translate it loosely'], 1, 'Substituting a different jurisdiction changes the client obligation. A note tells the reader what they are looking at without editing the claim.'),
+    q(`The source says "approximately". You know the client's system is exact to two decimals. What do you translate?`, ['The exact figure', '"Approximately", as written', 'Nothing — ask the client', '"Up to" the figure'], 1, 'Your knowledge of the system is not in the source. Translating what is written is the only defensible choice.'),
+    q(`A customer is angry and uses strong language. The template says replies are polite. What do you do with their message?`, ['Soften it', 'Translate it as written and keep the reply polite', 'Omit the strong words', 'Translate only the reply'], 1, 'The customer register is part of the record; the reply register is the client policy. They are separate decisions.'),
+    q(`Two replies use the same source sentence but different contexts. Must they be translated identically?`, ['Yes, always', 'Not necessarily — the rendering must fit the context, and the glossary records both', 'No, the translator decides freely', 'Only if the sentence is a policy'], 1, 'Consistency is about decisions, not identical strings. Recording both renderings is what keeps the file auditable.'),
+    q(`A date is written as 03/04 in the source. The target audience reads month first. What is correct?`, ['Translate to the target numeric convention', 'Keep it ambiguous', 'Render it as an unambiguous date and note the source format', 'Use the source convention'], 2, 'Ordering swaps are how refunds arrive a month late. Making the date unambiguous is the translation, not an embellishment.'),
+    q(`A reply contains the client's registered company name. What is correct?`, ['Translate the name', 'Keep the registered name as written', 'Abbreviate it', 'Replace with the local branch'], 1, 'Registered names are legal identifiers. They are not translated.'),
+    q(`The brief says ${residency}. A customer asks where their data is stored. What is correct?`, ['Answer generally that it is secure', 'Translate the client policy as written and flag the question if the policy does not answer it', 'Answer from your own knowledge', 'Skip the question in the reply'], 1, 'This is a compliance answer, not a linguistic one. Translate the policy exactly; the flag is how the client learns their policy has a gap.'),
+    q(`The target language has a formal and an informal "you". Which do you use?`, ['Informal — it is friendlier', 'Whatever the client style guide names; if it names none, flag it', 'Formal, always', 'Alternate by paragraph'], 1, 'Register is a client decision and it must be held for all 150 replies. Guessing produces an inconsistent file.'),
+    q(`A reply quotes a percentage discount and a cap. The cap is described in words. What is the risk of translating only the percentage accurately?`, ['None, the percentage is the offer', 'The cap limits the offer; losing it overstates what was promised', 'The cap is a detail', 'The words are unambiguous in any language'], 1, 'A promise without its cap is a bigger promise. Amounts and limits both have to survive.'),
+    q(`A phone number and an email address appear in a reply. What do you do?`, ['Translate the domain', 'Keep them byte for byte', 'Reformat the phone number for the target country', 'Remove them'], 1, 'Addresses are identifiers. Reformatting a number can make it undialable.'),
+    q(`A reply is a template with a customer name in a placeholder. The placeholder does not exist in the target grammar. What is correct?`, ['Drop the placeholder', 'Restructure the sentence so the placeholder still works, and note it', 'Leave it in the wrong position', 'Replace the name with "customer"'], 1, 'Restructuring is translation. Dropping the personalisation or breaking the variable is a system failure in production.'),
+    q(`You finish 145 of 150 replies and five depend on a policy you cannot find. What is the correct submission?`, ['145, no mention', '145 plus a note naming the five and the missing policy', '150 with the five roughly translated', 'Hold everything'], 1, 'A handover that names what is blocked is complete. A rough translation of a policy sentence is the one thing you may not ship.'),
+    q(`A reply contains humour. What is the correct approach?`, ['Translate it literally', 'Translate the intent, and flag it if the humour carries meaning', 'Remove it', 'Replace with a local joke'], 1, 'Literal humour usually lands as rudeness. Intent plus a flag is the safe rendering; inventing a joke changes the message.'),
+    q(`Which of these makes your translated file auditable?`, ['Smooth prose', 'A glossary plus a flags list naming every judgement call', 'Word-for-word fidelity', 'Fast delivery'], 1, 'The sample is re-checked against the glossary and flags. Judgement calls recorded are defensible; judgement calls hidden are not.'),
+    q(`A source reply contains a typo that changes the amount ("1O0" for "100"). What do you do?`, ['Translate as 100', 'Translate as written and flag the typo', 'Leave the token untranslated', 'Fix it silently'], 1, 'You may be right and the client still needs to know their template is emitting a wrong amount.'),
+    q(`The customer replies in the target language asking a question the source thread never covered. What do you do?`, ['Answer it yourself', 'Translate the thread and flag the uncovered question', 'Ignore the message', 'Translate it and answer from the policy'], 1, 'Answering makes you the client. Flagging is how a real gap in their coverage gets closed.'),
+  ]
+}
+
 /**
- * The three cards per region, as one flat list.
+ * The six cards per region, as one flat list.
  *
  * Every id is region-prefixed (`job-africa-…`, `job-americas-…`) so an application, a training
  * payment and an assessment pass can never be confused between regions — which matters because a
@@ -275,10 +530,18 @@ function researchQuestions(region: JobRegion): AssessmentQuestion[] {
  */
 export function seedRegionalJobs(): Job[] {
   return [
-    ...cardsForRegion('Africa', { data: 9, review: 11, research: 13 }),
-    ...cardsForRegion('Americas', { data: 34, review: 42, research: 48 }),
-    ...cardsForRegion('Europe', { data: 30, review: 37, research: 43 }),
-    ...cardsForRegion('Asia', { data: 20, review: 25, research: 29 }),
+    ...cardsForRegion('Africa', {
+      data: 9, review: 11, research: 13, transcription: 10, labels: 8, translation: 12,
+    }),
+    ...cardsForRegion('Americas', {
+      data: 34, review: 42, research: 48, transcription: 36, labels: 31, translation: 38,
+    }),
+    ...cardsForRegion('Europe', {
+      data: 30, review: 37, research: 43, transcription: 32, labels: 27, translation: 34,
+    }),
+    ...cardsForRegion('Asia', {
+      data: 20, review: 25, research: 29, transcription: 22, labels: 18, translation: 24,
+    }),
   ]
 }
 

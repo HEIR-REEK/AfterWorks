@@ -13,6 +13,9 @@ import {
   validateJobRegion,
 } from '@/lib/job-regions'
 import { seedRegionalJobs } from '@/lib/regional-jobs'
+import { normaliseJobRecord } from '@/lib/job-catalogue'
+import { toPublicJob } from '@/lib/public-jobs-server'
+import { importStarterJobs } from '@/lib/job-seed'
 import { PAY_REGIONS } from '@/lib/pay-regions'
 import { REGIONAL_CATALOGUE_JOB_IDS, IMPORTABLE_CATALOGUE_JOB_IDS, JOB_CATEGORY_LIST } from '@/lib/afterworks-data'
 
@@ -110,12 +113,32 @@ test('the locked payload carries no card fields', () => {
 
 test('every region has its own cards, with its own content and price', () => {
   const cards = seedRegionalJobs()
-  assert.equal(cards.length, JOB_REGION_LIST.length * 3, 'three cards per region')
+  assert.equal(cards.length, JOB_REGION_LIST.length * 6, 'six cards per region')
   for (const region of JOB_REGION_LIST) {
     const mine = cards.filter((card) => card.region === region)
-    assert.equal(mine.length, 3, `${region} should seed three cards`)
+    assert.equal(mine.length, 6, `${region} should seed six cards`)
+    // One card in every category: a board that skips a category leaves that region with no work of
+    // that kind at all, which is the complaint this batch exists to answer.
+    assert.deepEqual(
+      [...new Set(mine.map((card) => card.category))].sort(),
+      [...JOB_CATEGORY_LIST].sort(),
+      `${region} should cover every category`,
+    )
     // Distinct work, not the same card copied four times.
-    assert.equal(new Set(mine.map((c) => c.title)).size, 3)
+    assert.equal(new Set(mine.map((c) => c.title)).size, 6)
+    // The copy is written from the region's own market, not the same text with a label swapped:
+    // the descriptions must differ between boards for the same category.
+    const descriptionFor = (r: string, category: string) =>
+      cards.find((c) => c.region === r && c.category === category)?.description ?? ''
+    if (region !== 'Africa') {
+      for (const category of JOB_CATEGORY_LIST) {
+        assert.notEqual(
+          descriptionFor(region, category),
+          descriptionFor('Africa', category),
+          `${region}/${category} reuses Africa's copy`,
+        )
+      }
+    }
     for (const card of mine) {
       assert.ok(card.description.length > 80, `${card.id} needs real description copy`)
       assert.ok((card.responsibilities ?? []).length >= 3, `${card.id} needs responsibilities`)
@@ -168,6 +191,74 @@ test('the seeded ids are exactly the ids the importer will accept', () => {
       `${id} is seeded but the importer would refuse it`,
     )
   }
+})
+
+test('the regional cards survive the round trip out of Firestore with their board', () => {
+  // This is what made the boards look broken: the reader dropped `region`, so every card the client
+  // received was global — the own board was empty and the locked preview had nothing to blur.
+  const stored = {
+    id: 'job-europe-market-research',
+    title: 'Compile a competitor price sheet',
+    category: 'Research',
+    description: 'A stored card',
+    responsibilities: [],
+    payAmountUsd: 43,
+    capacity: 10,
+    slotsRemaining: 9,
+    region: 'Europe',
+    trainingRequired: false,
+    requiresVerified: true,
+    status: 'open',
+  }
+  const card = normaliseJobRecord('job-europe-market-research', stored)
+  assert.ok(card)
+  assert.equal(card?.region, 'Europe', 'a stored board must not be dropped on read')
+  // A board the rules do not know is not invented rather than passed through.
+  const stray = normaliseJobRecord('job-x', { ...stored, region: 'Mars' })
+  assert.equal(stray?.region, undefined)
+})
+
+test('the importer can actually resolve the regional batch, so an import publishes cards', async () => {
+  // The cards lived in `lib/regional-jobs.ts`, which `seedJobs()` does not include, so every
+  // regional import failed as "seed missing" and no board was ever published. Importing the ids now
+  // gets past the seed check — it only fails later, for want of storage credentials in a test.
+  await assert.rejects(
+    () => importStarterJobs({ ids: [...REGIONAL_CATALOGUE_JOB_IDS] }),
+    (err: unknown) => {
+      assert.ok(err instanceof Error)
+      const code = (err as Error & { code?: string }).code
+      assert.notEqual(code, 'seed_missing', 'the regional ids must resolve to real cards')
+      assert.notEqual(code, 'unknown_ids', 'the regional ids must be importable')
+      return true
+    },
+  )
+})
+
+test('a board-locked card is never published to the open web', () => {
+  // The public listing has no idea where the reader is. Publishing a regional card would index one
+  // region's work and price for everyone, and leak the other boards' catalogues to search engines.
+  const job = {
+    title: 'Compile a competitor price sheet',
+    category: 'Research',
+    status: 'open',
+    capacity: 10,
+    slotsRemaining: 9,
+    payAmountUsd: 43,
+    estimatedMinutes: 240,
+    trainingRequired: false,
+    requiresVerified: true,
+    closesAt: new Date(Date.now() + 86400_000).toISOString(),
+  }
+  assert.ok(toPublicJob('job-global', { ...job, region: '' }), 'a global card is publishable')
+  assert.equal(toPublicJob('job-europe-x', { ...job, region: 'Europe' }), null, 'a regional card is not')
+})
+
+test('the console can inspect one board at a time', () => {
+  const page = readFileSync('app/admin/jobs/page.tsx', 'utf8')
+  assert.match(page, /aria-label="Filter by region board"/)
+  assert.match(page, /JOB_REGION_LIST\.map\(\(region\) => \(/)
+  // The empty case names the board instead of showing a blank list.
+  assert.match(page, /board has no cards yet/)
 })
 
 test('region-prefixed ids cannot collide with each other', () => {
@@ -353,7 +444,8 @@ test('a locked tab is pressable, marked with a lock, and its panel is inert', ()
   assert.match(tabs, /<Lock/, 'and still marked with a lock')
   // The panel shows the real cards, blurred and out of reach.
   assert.match(tabs, /entry\.cards\.map/, 'the locked cards are rendered')
-  assert.match(tabs, /blur-\[3px\]/, 'blurred as asked')
+  assert.match(tabs, /blur-\[1\.5px\]/, 'blurred as asked — light, because the details are meant to be readable')
+  assert.doesNotMatch(tabs, /blur-\[[2-9]/, 'the card blur must stay under 2px')
   assert.match(tabs, /pointer-events-none/)
   assert.match(tabs, /inert/, 'the whole subtree is out of the tab order')
   assert.match(tabs, /formatPay\(card\.payAmountUsd\)/, 'prices stay visible on a locked card')

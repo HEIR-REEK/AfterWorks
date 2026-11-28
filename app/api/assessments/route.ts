@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server'
 import { consumeBucket, fail, json, requireVerifiedUser, routeError } from '@/lib/guards'
 import { readJsonBody, sanitizeLine } from '@/lib/security-core'
 import { publicAssessmentQuestions } from '@/lib/assessment-bank'
+import { gateJobId } from '@/lib/job-region-gate'
 
 /**
  * /api/assessments — server-authoritative assessment.
@@ -22,6 +23,11 @@ export async function GET(req: NextRequest) {
   const jobId = sanitizeLine(req.nextUrl.searchParams.get('jobId'), 128)
   if (!jobId) return fail(400, 'A job id is required.', { code: 'missing_job' })
   try {
+    // Region lock first: another board's card must not even yield its questions, or a member with an
+    // unblurred grid could read and pass its assessment they are not entitled to take.
+    const gated = await gateJobId(req, jobId)
+    if (!gated.gate.ok) return fail(403, gated.gate.message, { code: 'region_locked', details: { jobRegion: gated.gate.jobRegion } })
+
     const firestore = await import('@/lib/firestore-admin')
     if (!firestore.isFirebaseAdminUsable()) return fail(503, 'Assessment is temporarily unavailable.', { code: 'storage_unavailable' })
     const source = await firestore.getAssessmentSource(jobId)
@@ -55,6 +61,11 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    // Gate the scoring path too, not just the questions: a pass is what unlocks applying, so a
+    // forged submission for another region's card has to be refused here as well.
+    const gated = await gateJobId(req, jobId)
+    if (!gated.gate.ok) return fail(403, gated.gate.message, { code: 'region_locked', details: { jobRegion: gated.gate.jobRegion } })
+
     const firestore = await import('@/lib/firestore-admin')
     if (!firestore.isFirebaseAdminUsable()) return fail(503, 'Assessment is temporarily unavailable.', { code: 'storage_unavailable' })
     const source = await firestore.getAssessmentSource(jobId)

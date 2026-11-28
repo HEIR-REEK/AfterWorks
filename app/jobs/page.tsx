@@ -7,10 +7,10 @@ import { useSearchParams } from 'next/navigation'
 import { AlertCircle, ChevronRight, GraduationCap, RefreshCw, Search } from 'lucide-react'
 import { JobCard } from '@/components/job-card'
 import { ExternalJobsSection } from '@/components/external-jobs-section'
-import { LockedRegionStrip } from '@/components/locked-region-card'
+import { LockedRegionPanel, RegionTabs, type BoardRegion } from '@/components/region-tabs'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
-import type { JobCategory } from '@/lib/afterworks-data'
+import { formatUsd, type JobCategory } from '@/lib/afterworks-data'
 import { formatTimestamp } from '@/lib/datetime'
 import { filterJobs } from '@/lib/admin-search'
 
@@ -33,7 +33,7 @@ export default function JobsPage() {
 }
 
 function JobsPageInner() {
-  const { jobs, worker, profileLoaded, mode, catalogueLive, catalogueSyncedAt, refreshJobs, jobRegion, lockedRegions } =
+  const { jobs, worker, profileLoaded, mode, catalogueLive, catalogueSyncedAt, refreshJobs, jobRegion, regions } =
     useAfterWorks()
   const searchParams = useSearchParams()
   const trainingParam = searchParams.get('training') === '1'
@@ -64,9 +64,33 @@ function JobsPageInner() {
     }
   }
 
+  // Region tab: default to the board this member's connection resolved to. Any board can be
+  // *viewed* — a locked one renders the blurred preview below — but only an open board's cards ever
+  // reach the grid, and the server refuses every action on the locked ones regardless of the CSS.
+  const [pickedRegion, setPickedRegion] = useState<string | null>(null)
+  const activeRegion = useMemo(() => {
+    if ((regions ?? []).length === 0) return null
+    const wanted = pickedRegion ?? jobRegion?.region ?? regions?.[0]?.region ?? null
+    return (regions ?? []).some((entry) => entry.region === wanted) ? wanted : (regions?.[0]?.region ?? null)
+  }, [jobRegion?.region, pickedRegion, regions])
+
+  const activeRegionEntry = useMemo(
+    () => (regions ?? []).find((entry) => entry.region === activeRegion) ?? null,
+    [activeRegion, regions],
+  )
+
+  // The member's own board: their region's cards plus the global ones. Cards from another region
+  // are already absent from `jobs` — the server removed them — so this only narrows by region.
+  const activeIsOpen = activeRegionEntry?.open !== false
+
+  const onThisBoard = useMemo(() => {
+    if (!activeRegion || !activeIsOpen) return jobs
+    return jobs.filter((job) => !job.region || job.region === activeRegion)
+  }, [activeIsOpen, activeRegion, jobs])
+
   const filtered = useMemo(
-    () => filterJobs(jobs, { category, trainingOnly, hideFull, search: query }),
-    [jobs, category, hideFull, trainingOnly, query],
+    () => filterJobs(onThisBoard, { category, trainingOnly, hideFull, search: query }),
+    [onThisBoard, category, hideFull, trainingOnly, query],
   )
 
   return (
@@ -76,7 +100,7 @@ function JobsPageInner() {
           <h1 className="text-2xl font-semibold tracking-tight">Browse jobs</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             {filtered.length} {filtered.length === 1 ? 'job' : 'jobs'} available
-            {jobRegion?.region ? ` on the ${jobRegion.region} board` : ''}. Applying is always free.
+            {activeRegion ? ` on the ${activeRegion} board` : ''}. Applying is always free.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -133,6 +157,13 @@ function JobsPageInner() {
           </Link>
         </div>
       )}
+
+      <RegionTabs
+        regions={(regions ?? []) as BoardRegion[]}
+        current={jobRegion?.region ?? null}
+        selected={activeRegion}
+        onSelect={(region) => setPickedRegion(region)}
+      />
 
       <div className="flex flex-col gap-3">
         <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
@@ -191,7 +222,21 @@ function JobsPageInner() {
         </div>
       </div>
 
-      {filtered.length === 0 ? (
+      {/* A locked board: the cards are visible, blurred and inert. Nothing in this subtree is
+          focusable, so removing the blur reveals a card that still cannot be clicked. */}
+      {activeRegionEntry && !activeRegionEntry.open ? (
+        <LockedRegionPanel
+          entry={activeRegionEntry as BoardRegion}
+          current={jobRegion?.region ?? null}
+          formatPay={formatUsd}
+        />
+      ) : activeRegionEntry && activeRegionEntry.count === 0 && filtered.length === 0 ? (
+        <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed border-border bg-muted/20 p-10 text-center">
+          <p className="text-sm font-medium text-foreground">No cards on the {activeRegionEntry.label} board yet</p>
+          <p className="max-w-[46ch] text-sm text-muted-foreground">{activeRegionEntry.blurb}</p>
+          <p className="text-xs text-muted-foreground">This board opens as soon as the first card is published to it.</p>
+        </div>
+      ) : filtered.length === 0 ? (
         <p className="rounded-xl border border-dashed border-border p-10 text-center text-sm text-muted-foreground">
           No jobs match your filters right now. Check back soon — new work is posted daily.
         </p>
@@ -202,8 +247,6 @@ function JobsPageInner() {
           ))}
         </div>
       )}
-
-      <LockedRegionStrip regions={lockedRegions} currentRegion={jobRegion?.region ?? null} />
 
       <ExternalJobsSection />
     </div>

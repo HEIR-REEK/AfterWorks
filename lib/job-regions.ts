@@ -93,6 +93,19 @@ export function jobVisibleInRegion(card: { region?: unknown }, region: JobRegion
  * description — and shipping it so the UI can blur it would defeat the entire point of locking it.
  * The UI shows "Americas — 4 job cards, connect from the Americas to open them", which is true,
  * useful and reveals nothing.
+ *
+ * Cards from a locked region ARE sent: the platform wants members to see other regions' work,
+ * prices and detail — blurred — so they know what is there. That makes the blur purely cosmetic,
+ * which is stated plainly rather than pretended otherwise: anyone who removes the CSS sees the
+ * card. So the rules that matter are enforced on the server, on every action, not by the styling:
+ *
+ *   • `assertJobActionAllowed` — one helper, called by the assessment, training-payment and
+ *     apply entry points, refusing anything that belongs to another board.
+ *   • The assessment *answer key* is never in the catalogue payload, so a locked card cannot be
+ *     passed by reading its questions even if the grid is unblurred.
+ *
+ * A region with no cards of its own is still open — the member sees the global cards and an honest
+ * "no cards on this board yet", rather than a lock they cannot clear.
  */
 export type RegionalCatalogue<T = unknown> = {
   /** The region the request was resolved to. `null` means we could not tell, so nothing is locked. */
@@ -101,6 +114,22 @@ export type RegionalCatalogue<T = unknown> = {
   source: 'header' | 'lookup' | 'none'
   /** Cards this member may open. Global cards are included. */
   jobs: T[]
+  /**
+   * Every region, with how many cards its board holds. The open one is carried so the board can
+   * render all four tabs from one source; only the locked entries carry no card bodies.
+   */
+  regions: {
+    region: JobRegion
+    label: string
+    blurb: string
+    count: number
+    open: boolean
+    /**
+     * The board's cards, for the blurred preview. Present for every region — the platform asked to
+     * see them — and `locked: true` marks the ones whose actions the server refuses.
+     */
+    cards: Record<string, unknown>[]
+  }[]
   /** Regions this member may not open, with a count only. */
   lockedRegions: { region: JobRegion; label: string; blurb: string; count: number }[]
   /** True when the member is seeing every card, i.e. we could not resolve a region. */
@@ -142,10 +171,41 @@ export function buildRegionalCatalogue<T extends { region?: unknown }>(
   resolved: { region: JobRegion | null; source: 'header' | 'lookup' | 'none' },
 ): RegionalCatalogue<T> {
   const { visible, locked } = partitionCatalogue(cards, resolved.region)
+
+  // How many cards each board holds. Global cards are excluded: they appear on every board, so
+  // counting them here would make each region look bigger than its own content.
+  const counts = new Map<JobRegion, number>()
+  for (const card of cards) {
+    const audience = jobAudienceOf(card.region)
+    if (audience.kind !== 'region') continue
+    counts.set(audience.region, (counts.get(audience.region) ?? 0) + 1)
+  }
+  const regions = PAY_REGIONS.map((region) => ({
+    region,
+    label: JOB_REGION_LABELS[region],
+    blurb: JOB_REGION_BLURBS[region],
+    count: counts.get(region) ?? 0,
+    // With no resolved region every board is open; with one, only that one is.
+    open: resolved.region === null || resolved.region === region,
+    // Cards for the blurred preview. `region` is stamped on each so the client can tell a locked
+    // card from an open one, and `locked` states it outright for the UI to key on.
+    cards: cards
+      .filter((card) => {
+        const audience = jobAudienceOf(card.region)
+        return audience.kind === 'region' && audience.region === region
+      })
+      .map((card) => ({
+        ...card,
+        region,
+        locked: !(resolved.region === null || resolved.region === region),
+      })),
+  }))
+
   return {
     region: resolved.region,
     source: resolved.source,
     jobs: visible,
+    regions,
     lockedRegions: locked.map((entry) => ({
       region: entry.region,
       label: JOB_REGION_LABELS[entry.region],
@@ -176,6 +236,33 @@ export function regionalJobId(region: JobRegion, slug: string): string {
  * fail the suite. Connecting from America is how a member says they want the American board.
  */
 export const REGION_DETECTION_USES_IP_BY_DESIGN = true
+
+/**
+ * The rule every card action must pass: is the member allowed to act on this card?
+ *
+ * Called by the assessment route, the training checkout and the application route. It exists as one
+ * function because the failure mode of writing it three times is a fourth entry point that forgets —
+ * and this is the only thing standing between "blurred" and "interactive" once the cards are sent to
+ * the browser.
+ *
+ * Resolves the region from *this request*, so a member who moves to a VPN in another region gains
+ * that board immediately, which is the behaviour the platform asked for.
+ *
+ * Fails **open** when the region cannot be resolved: a geo outage must not stop members working.
+ */
+export function jobActionRefusal(
+  card: { region?: unknown; title?: unknown },
+  resolved: { region: JobRegion | null },
+): { message: string; jobRegion: string } | null {
+  const audience = jobAudienceOf(card.region)
+  if (audience.kind === 'global') return null
+  if (resolved.region === null) return null
+  if (audience.region === resolved.region) return null
+  return {
+    jobRegion: audience.region,
+    message: `“${String(card.title ?? 'This job')}” is part of the ${JOB_REGION_LABELS[audience.region]} board, and you are connecting from ${JOB_REGION_LABELS[resolved.region]}. Connect from the ${JOB_REGION_LABELS[audience.region]} to take its assessment, pay its training fee or apply.`,
+  }
+}
 
 /** Countries a region names, for the console's region picker. */
 export function regionCountries(region: JobRegion): string[] {

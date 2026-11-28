@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs'
 import {
   JOB_REGION_LIST,
   buildRegionalCatalogue,
+  jobActionRefusal,
   jobAudienceOf,
   jobVisibleInRegion,
   partitionCatalogue,
@@ -200,15 +201,44 @@ test('the board route resolves the region from the request, and reads no profile
   assert.match(route, /Vary:/)
 })
 
-test('an application to another region board is refused, not just hidden', () => {
-  // Hiding the card is a courtesy; pasting its id is the actual bypass.
+test('an application to another region board is refused, not just blurred', () => {
+  // The card is on screen (blurred), so pasting its id is the bypass that matters.
   const route = readFileSync('app/api/applications/route.ts', 'utf8')
-  assert.match(route, /checkJobRegionForRequest\(req, jobId\)/)
+  assert.match(route, /gateJobId\(req, jobId\)/)
   assert.match(route, /code: 'region_locked'/)
   // And it must fail open when the region cannot be resolved, or a geo outage blocks all work.
-  const start = route.indexOf('async function checkJobRegionForRequest')
-  const body = route.slice(start, start + 2_000)
-  assert.match(body, /if \(!resolved\.country\) return \{ ok: true \}/)
+  const gate = readFileSync('lib/job-region-gate.ts', 'utf8')
+  const start = gate.indexOf('export async function requestRegion')
+  const body = gate.slice(start, start + 600)
+  assert.match(body, /resolved\.country \? regionForCountry\(resolved\.country\) : null/, 'no country → no region → nothing locked')
+  assert.match(body, /catch \{\s*return null/, 'a throwing resolver fails open')
+})
+
+test('every card action is refused on the server, because the blur is only cosmetic', () => {
+  // The members can see another board's cards and strip the blur with one stylesheet edit, so the
+  // three things a card does — assess, pay, apply — must each be refused by the server.
+  const surfaces = [
+    ['app/api/assessments/route.ts', 2],
+    ['app/api/paystack/initialize/route.ts', 1],
+    ['app/api/applications/route.ts', 1],
+  ] as const
+  for (const [file, calls] of surfaces) {
+    const source = readFileSync(file, 'utf8')
+    const found = source.match(/gateJobId\(/g) ?? []
+    assert.equal(found.length, calls, `${file} must gate every entry point`)
+    assert.match(source, /code: 'region_locked'/, `${file} must refuse with a region error`)
+  }
+  // Assessment scoring is the dangerous one: a pass unlocks applying, so POST is gated too.
+  const assessments = readFileSync('app/api/assessments/route.ts', 'utf8')
+  assert.match(assessments, /export async function POST/)
+  assert.ok(
+    assessments.indexOf('gateJobId') < assessments.indexOf('export async function POST') + 400 ||
+      assessments.split('gateJobId').length - 1 > 1,
+    'both the question read and the submission are gated',
+  )
+  // One rule decides, not three copies: the gate delegates to jobActionRefusal.
+  const gate = readFileSync('lib/job-region-gate.ts', 'utf8')
+  assert.match(gate, /jobActionRefusal\(job, \{ region \}\)/)
 })
 
 test('the client cannot undo the lock with a Firestore snapshot', () => {
@@ -231,4 +261,104 @@ test('the console can set a card’s region, and refuses one it does not know', 
   const page = readFileSync('app/admin/jobs/page.tsx', 'utf8')
   assert.match(page, /label="Region board"/)
   assert.match(page, /region: editing\.region/)
+})
+
+// ─── Region tabs on Browse jobs ─────────────────────────────────────────────
+
+test('every region is sent to the board, with its own card count and open flag', () => {
+  const cards = [
+    { id: 'us-1', region: 'Americas' },
+    { id: 'us-2', region: 'Americas' },
+    { id: 'ke-1', region: 'Africa' },
+    { id: 'global' },
+  ]
+  const board = buildRegionalCatalogue(cards, { region: 'Americas', source: 'header' })
+  assert.equal(board.regions.length, PAY_REGIONS.length, 'all four tabs must exist')
+  const byRegion = new Map(board.regions.map((r) => [r.region, r]))
+  assert.equal(byRegion.get('Americas')?.open, true)
+  assert.equal(byRegion.get('Americas')?.count, 2)
+  // Every other board is present and locked — a member should see the work exists, not a missing tab.
+  assert.equal(byRegion.get('Africa')?.open, false)
+  assert.equal(byRegion.get('Africa')?.count, 1)
+  assert.equal(byRegion.get('Europe')?.open, false)
+  assert.equal(byRegion.get('Asia')?.open, false)
+  // Global cards are not counted as any region's own content.
+  assert.equal(byRegion.get('Europe')?.count, 0)
+})
+
+test('a region with no cards of its own is still open, not a lock the member cannot clear', () => {
+  // A country whose board has not been seeded yet must see an honest empty board.
+  const board = buildRegionalCatalogue([{ id: 'ke-1', region: 'Africa' }], { region: 'Europe', source: 'header' })
+  const europe = board.regions.find((r) => r.region === 'Europe')
+  assert.equal(europe?.open, true)
+  assert.equal(europe?.count, 0)
+})
+
+test('with no resolved region every board is open and the tabs are not locked', () => {
+  const board = buildRegionalCatalogue([{ id: 'us-1', region: 'Americas' }], { region: null, source: 'none' })
+  assert.equal(board.regions.every((r) => r.open), true)
+  assert.deepEqual(board.lockedRegions, [])
+})
+
+test('the locked region payload now carries its cards, stamped locked', () => {
+  // The platform asked to see the other boards' work, prices and detail — blurred, not withheld.
+  // The lock is carried on the card so every action can refuse it, not on the payload boundary.
+  const board = buildRegionalCatalogue(
+    [{ id: 'us-1', title: 'Secret US work', payAmountUsd: 48, region: 'Americas' }],
+    { region: 'Africa', source: 'header' },
+  )
+  const americas = board.regions.find((r) => r.region === 'Americas')
+  assert.equal(americas?.open, false)
+  assert.equal(americas?.cards.length, 1)
+  const card = americas?.cards[0] as { id: string; title: string; payAmountUsd: number; locked: boolean; region: string }
+  assert.equal(card.title, 'Secret US work')
+  assert.equal(card.payAmountUsd, 48, 'the price is visible on purpose')
+  assert.equal(card.locked, true, 'and the card knows every action will be refused')
+  assert.equal(card.region, 'Americas')
+  // The member's own board is open and its cards are NOT marked locked.
+  const africa = board.regions.find((r) => r.region === 'Africa')
+  assert.equal(africa?.open, true)
+  assert.ok(africa?.cards.every((c) => !c.locked), 'own cards are actionable')
+
+  // The refusal itself is a server rule, tested directly rather than through the UI.
+  assert.equal(jobActionRefusal({ region: '' }, { region: null }), null, 'a global card is always fine')
+  assert.equal(jobActionRefusal({ region: 'Americas' }, { region: null }), null, 'unresolved region fails open')
+  assert.equal(jobActionRefusal({ region: 'Americas' }, { region: 'Americas' }), null, 'own board')
+  const refused = jobActionRefusal({ region: 'Americas' }, { region: 'Africa' })
+  assert.ok(refused, 'another board is refused')
+  assert.equal(refused?.jobRegion, 'Americas')
+})
+
+test('every board can be selected, but a locked one never becomes a card grid', () => {
+  const page = readFileSync('app/jobs/page.tsx', 'utf8')
+  // Any region the payload carries can be selected — pressing a locked tab is allowed, it is how
+  // the member sees the blurred catalogue.
+  assert.match(page, /regions\?\.\[0\]\?\.region/, 'the selection falls back to the first board sent')
+  assert.match(page, /some\(\(entry\) => entry\.region === wanted\)/, 'the selection is still validated')
+  // The grid is only for an open board; a locked one renders the blurred panel instead.
+  assert.match(page, /activeRegionEntry && !activeRegionEntry\.open \?/, 'a locked board branches away from the grid')
+  assert.match(page, /<LockedRegionPanel/, 'and renders the blurred preview')
+  // Assert the predicate, not the identifier: renaming the variable would otherwise pass while
+  // dropping the filter. Locked cards reach the client now, so this filter is the only thing
+  // keeping them out of the interactive grid.
+  assert.match(page, /if \(!activeRegion \|\| !activeIsOpen\) return jobs/)
+  assert.match(page, /jobs\.filter\(\(job\) => !job\.region \|\| job\.region === activeRegion\)/)
+})
+
+test('a locked tab is pressable, marked with a lock, and its panel is inert', () => {
+  const tabs = readFileSync('components/region-tabs.tsx', 'utf8')
+  // Pressable: pressing it opens the blurred catalogue, which is the whole point of this design.
+  assert.match(tabs, /onClick=\{\(\) => onSelect\(entry\.region\)\}/)
+  assert.doesNotMatch(tabs, /aria-disabled/, 'a locked board is viewable, not disabled')
+  assert.match(tabs, /<Lock/, 'and still marked with a lock')
+  // The panel shows the real cards, blurred and out of reach.
+  assert.match(tabs, /entry\.cards\.map/, 'the locked cards are rendered')
+  assert.match(tabs, /blur-\[3px\]/, 'blurred as asked')
+  assert.match(tabs, /pointer-events-none/)
+  assert.match(tabs, /inert/, 'the whole subtree is out of the tab order')
+  assert.match(tabs, /formatPay\(card\.payAmountUsd\)/, 'prices stay visible on a locked card')
+  assert.match(tabs, /card\.description/, 'and so do the details')
+  // It must never render the interactive card, so no apply/assess control exists in this subtree.
+  assert.doesNotMatch(tabs, /JobCard/)
+  assert.doesNotMatch(tabs, /Apply now|Start assessment/)
 })

@@ -67,8 +67,22 @@ export default function AdminNotificationsPage() {
   const markAllRead = async () => {
     setMarking(true)
     try {
-      await apiFetch<{ ok: boolean }>('/api/admin/notifications', { method: 'PATCH', body: { ids: [] } })
-      push('success', 'All notifications marked as read.')
+      // `all: true` says what is meant. The old payload (`ids: []`) was read server-side as an
+      // empty document-id query, which Firestore rejects — so this button always failed.
+      const result = await apiFetch<{ ok: boolean; marked?: number; truncated?: boolean }>(
+        '/api/admin/notifications',
+        { method: 'PATCH', body: { all: true } },
+      )
+      // Report what actually changed. The previous version claimed success unconditionally, which
+      // is how a broken request looked like a working feature for anyone reading the toast.
+      const marked = Number(result.marked) || 0
+      if (result.truncated) {
+        push('warning', `Marked ${marked} as read — there were more, press again to finish.`)
+      } else if (marked === 0) {
+        push('info', 'Nothing left to mark as read.')
+      } else {
+        push('success', `${marked} notification${marked === 1 ? '' : 's'} marked as read.`)
+      }
       await load()
     } catch {
       push('error', 'Could not mark notifications as read.')

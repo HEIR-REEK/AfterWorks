@@ -31,7 +31,13 @@
 import { DEFAULT_COUNTRY, isKnownCountry } from '@/lib/countries'
 
 /** Headers a proxy sets to tell us the country it resolved. Lower-case; `Headers.get` is case-insensitive. */
-const COUNTRY_HEADERS = ['cf-ipcountry', 'x-vercel-ip-country', 'cloudfront-viewer-country', 'x-geo-country'] as const
+const COUNTRY_HEADERS = [
+  'cf-ipcountry',
+  'x-vercel-ip-country',
+  'cloudfront-viewer-country',
+  'x-amz-cf-ipcountry',
+  'x-geo-country',
+] as const
 
 /**
  * Values these headers emit that are **not** countries.

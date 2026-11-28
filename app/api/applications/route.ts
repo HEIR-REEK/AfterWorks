@@ -17,6 +17,52 @@ import { sanitizeLine } from '@/lib/security-core'
 
 export const dynamic = 'force-dynamic'
 
+/**
+ * Refuse an application to a card that belongs to another region's board.
+ *
+ * Reads the card's `region` and compares it with the region this request's connection resolves to.
+ * A card with no region is global — the pre-region behaviour — and is allowed everywhere, so this
+ * cannot lock anybody out of work that already existed.
+ *
+ * Fails **open** when the region cannot be resolved: the point of the rule is to enforce the board,
+ * not to make a member's application depend on a geo lookup being configured. A missing answer is
+ * our problem, and blocking a legitimate application over it would be a worse outcome than allowing
+ * a card the member could already see.
+ */
+async function checkJobRegionForRequest(
+  req: NextRequest,
+  jobId: string,
+): Promise<{ ok: true } | { ok: false; message: string; jobRegion: string }> {
+  try {
+    const { dbOrNull } = await import('@/lib/firestore-admin')
+    const db = dbOrNull()
+    if (!db) return { ok: true }
+    const snap = await db.collection('jobs').doc(jobId).get()
+    if (!snap.exists) return { ok: true } // the application itself reports "no longer listed"
+
+    const { jobAudienceOf, JOB_REGION_LABELS } = await import('@/lib/job-regions')
+    const audience = jobAudienceOf((snap.data() ?? {}).region)
+    if (audience.kind === 'global') return { ok: true }
+
+    const { clientIdentity } = await import('@/lib/security-core')
+    const { resolveRequestCountry } = await import('@/lib/geo-country')
+    const { regionForCountry } = await import('@/lib/pay-regions')
+    const identity = clientIdentity(req.headers)
+    const resolved = await resolveRequestCountry(req.headers, identity.ip)
+    if (!resolved.country) return { ok: true }
+    if (regionForCountry(resolved.country) === audience.region) return { ok: true }
+
+    return {
+      ok: false,
+      jobRegion: audience.region,
+      message: `This job card is part of the ${JOB_REGION_LABELS[audience.region]} board, and you are connecting from ${JOB_REGION_LABELS[regionForCountry(resolved.country)]}. Connect from the ${JOB_REGION_LABELS[audience.region]} to apply.`,
+    }
+  } catch {
+    // A failed lookup must not block an application.
+    return { ok: true }
+  }
+}
+
 export async function GET(req: NextRequest) {
   const guard = await requireUser(req)
   if (!guard.ok) return guard.response
@@ -94,6 +140,15 @@ export async function POST(req: NextRequest) {
     if (!firestore.isFirebaseAdminUsable()) {
       return fail(503, 'Applications cannot be accepted right now. Please try again in a few minutes.', { code: 'storage_unavailable' })
     }
+    // The board only *shows* a member their region's cards; this is what actually stops them
+    // applying to another region's card by pasting its id from a previous session, a shared link or
+    // a friend's screen. The region comes from this request's own connection, so a member who moves
+    // to a VPN in the Americas can apply to Americas cards — by design, not by accident.
+    const regionCheck = await checkJobRegionForRequest(req, jobId)
+    if (!regionCheck.ok) {
+      return fail(403, regionCheck.message, { code: 'region_locked', details: { jobRegion: regionCheck.jobRegion } })
+    }
+
     const application = await firestore.createApplicationServer(guard.value.uid, jobId)
 
     // Send the receipt after the response so a slow or rejected email can never turn a recorded

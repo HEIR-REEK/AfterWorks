@@ -116,6 +116,11 @@ export type Job = {
   description: string
   responsibilities: string[]
   payAmountUsd: number
+  /**
+   * Per-region pricing. Absent → the card pays `payAmountUsd` everywhere, exactly as before this
+   * existed. Present → the member's *verified* region picks the number (see `lib/pay-regions.ts`).
+   */
+  payByRegion?: import('./pay-regions').RegionalPay
   estimatedMinutes: number
   capacity: number
   slotsRemaining: number
@@ -138,6 +143,12 @@ export type Job = {
   trainingNotes?: TrainingSection[]
   /** Admin-authored assessment questions. Empty/absent → the built-in category bank is used. */
   assessmentQuestions?: AssessmentQuestion[]
+  /**
+   * Which board this card belongs to. Absent/blank → every region (how every card published before
+   * regions existed behaves). Set → only members connecting from that region may open it; see
+   * `lib/job-regions.ts`.
+   */
+  region?: string
   requiresVerified: boolean
   status: JobStatus
   // ISO date string for the closing condition
@@ -204,6 +215,12 @@ export type WorkerProfile = {
   languages?: string[]
   preferredPayoutMethod?: string
   country?: string
+  /**
+   * The ISO code an owner confirmed against the member's identity document when approving KYC.
+   * Server-written, never editable by the member. This — not the request IP — decides which regional
+   * rate they are paid, because it is the only country value that was actually checked.
+   */
+  verifiedCountry?: string
   zipCode?: string
   bankName?: string
   bankBranch?: string
@@ -480,11 +497,30 @@ export const ASSESSMENT_ONLY_CATALOGUE_JOB_IDS = [
  */
 export const CODE_REVIEW_CATALOGUE_JOB_IDS = ['job-code-diff-review'] as const
 
+/**
+ * The region-scoped batch: three cards in each of the four regions.
+ *
+ * Its own batch, again, because it is the only set whose cards are *locked to a board* — see
+ * `lib/job-regions.ts`. Kept out of the other batches so their frozen shapes (two cards per
+ * category, exactly twelve ids) stay true.
+ *
+ * Declared here rather than imported from `lib/regional-jobs.ts`: that module imports this one for
+ * its types, and a cycle would be worse than the duplicated list. The two are kept in step by a
+ * test that asserts the ids match exactly.
+ */
+export const REGIONAL_CATALOGUE_JOB_IDS = [
+  'job-africa-invoice-entry', 'job-africa-content-review', 'job-africa-market-research',
+  'job-americas-invoice-entry', 'job-americas-content-review', 'job-americas-market-research',
+  'job-europe-invoice-entry', 'job-europe-content-review', 'job-europe-market-research',
+  'job-asia-invoice-entry', 'job-asia-content-review', 'job-asia-market-research',
+] as const
+
 /** Every id either import path is allowed to publish. */
 export const IMPORTABLE_CATALOGUE_JOB_IDS = [
   ...EXPANDED_CATALOGUE_JOB_IDS,
   ...ASSESSMENT_ONLY_CATALOGUE_JOB_IDS,
   ...CODE_REVIEW_CATALOGUE_JOB_IDS,
+  ...REGIONAL_CATALOGUE_JOB_IDS,
 ] as const
 
 export function seedJobs(): Job[] {

@@ -169,6 +169,10 @@ export function normaliseJobRecord(docId: string, raw: unknown, now: number = Da
     description: typeof data.description === 'string' ? data.description.trim().slice(0, 4_000) : '',
     responsibilities: stringList(data.responsibilities, 12, 300),
     payAmountUsd: Math.max(0, number(data.payAmountUsd, 0)),
+    // The per-region table rides along so the card can be priced for the reader. Without it the
+    // board would show the legacy scalar while the server priced the application regionally — a
+    // member shown $8 and paid $4 is the worst possible version of this feature.
+    ...regionalPayFrom(data.payByRegion),
     estimatedMinutes: Math.max(5, Math.round(number(data.estimatedMinutes, 60))),
     capacity,
     slotsRemaining: clamp(Number.isFinite(slotsRaw) ? slotsRaw : capacity, 0, capacity),
@@ -186,6 +190,24 @@ export function normaliseJobRecord(docId: string, raw: unknown, now: number = Da
     closesAt,
     postedAgo: text(data.postedAgo, 40) || 'just now',
   }
+}
+
+/**
+ * Read a stored regional price table into the shape the pricing helper expects.
+ *
+ * Tolerant on purpose: this parses documents a human typed into a console, and a single bad entry
+ * must not make a whole card unreadable. Rows that fail validation are dropped, so the card simply
+ * falls back to its scalar for those regions rather than disappearing from the board.
+ */
+function regionalPayFrom(raw: unknown): { payByRegion?: Record<string, number> } {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
+  const out: Record<string, number> = {}
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    const num = Number(value)
+    if (!Number.isFinite(num) || num < 0.5 || num > 10_000) continue
+    out[key] = Math.round(num * 100) / 100
+  }
+  return Object.keys(out).length > 0 ? { payByRegion: out } : {}
 }
 
 /** True when two rows would render identically — used to keep object identity across snapshots. */

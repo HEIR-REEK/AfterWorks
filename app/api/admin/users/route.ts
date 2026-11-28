@@ -273,7 +273,10 @@ export async function PATCH(req: NextRequest) {
       case 'kyc': {
         const approve = payload.approve === true
         if (!approve && reason.length < 4) return fail(400, 'Tell the worker what to fix.', { code: 'reason_required' })
-        await firestore.verifyKycAdmin(uid, approve, reason, guard.value.email)
+        // The country the owner confirmed on the document. It decides the member's regional pay
+        // rate, so it is passed through rather than inferred from the profile's self-declared field.
+        const verifiedCountry = typeof payload.country === 'string' ? payload.country : ''
+        await firestore.verifyKycAdmin(uid, approve, reason, guard.value.email, verifiedCountry)
         if (approve) {
           // Admin approval is a KYC path too. A pending referral whose referee already completed
           // their profile must not wait forever just because the webhook was not the source.

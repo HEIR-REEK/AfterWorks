@@ -24,7 +24,8 @@ import {
   assertPhoneAvailable,
   phoneTakenError,
 } from '@/lib/account-uniqueness'
-import { normalisePhone } from '@/lib/countries'
+import { isKnownCountry, normalisePhone } from '@/lib/countries'
+import { validateJobRegion } from '@/lib/job-regions'
 import {
   adminUserDetailFromDoc,
   adminUserRowFromDoc,
@@ -2444,6 +2445,15 @@ export async function verifyKycAdmin(
   approve: boolean,
   reason: string,
   actorEmail: string,
+  /**
+   * The ISO country the reviewing owner confirmed against the member's identity document.
+   *
+   * Stamped as `verifiedCountry` and never editable by the member, because it is what decides which
+   * regional pay rate they earn. Without it, pricing falls back to the payout destination and then
+   * to the self-declared country — so it is strongly recommended on approval, not required, so an
+   * owner who genuinely cannot tell a country is not blocked from verifying the identity.
+   */
+  verifiedCountry?: string,
 ): Promise<void> {
   const db = adminDb()
   const now = new Date().toISOString()
@@ -2457,6 +2467,10 @@ export async function verifyKycAdmin(
   // Manual KYC approval proves identity; it must not silently lift a suspension or ban that an
   // owner applied. Support can verify the document, but only an owner can restore the account.
   const restricted = currentState === 'suspended' || currentState === 'banned'
+  // A country we do not know how to price is worse than none at all: it would silently drop the
+  // member onto the fallback region, so it is refused rather than stored.
+  const rawCountry = String(verifiedCountry ?? '').trim().toUpperCase()
+  const stampedCountry = isKnownCountry(rawCountry) ? rawCountry : ''
   // Deciding on a review retires the request that produced it, so the console's queue empties.
   const retire = { kycRequestedAt: null, updatedAt: now }
   await db.collection('users').doc(uid).set(
@@ -2468,6 +2482,9 @@ export async function verifyKycAdmin(
           kycVerifiedAt: now,
           kycRejectionReason: null,
           kycProvider: 'admin-review',
+          // Only written when the owner supplied one: a re-approval with the field left blank must
+          // not erase a country that was established the first time.
+          ...(stampedCountry ? { verifiedCountry: stampedCountry } : {}),
           ...retire,
         }
       : {
@@ -2482,7 +2499,11 @@ export async function verifyKycAdmin(
         },
     { merge: true },
   )
-  await createAuditEntry(approve ? 'KYC_APPROVED' : 'KYC_REJECTED', { uid, reason: approve ? undefined : reason.slice(0, 300) }, actorEmail)
+  await createAuditEntry(
+    approve ? 'KYC_APPROVED' : 'KYC_REJECTED',
+    { uid, reason: approve ? undefined : reason.slice(0, 300), ...(stampedCountry ? { verifiedCountry: stampedCountry } : {}) },
+    actorEmail,
+  )
   await notifyUser(uid, {
     title: approve ? 'Identity verified' : 'Verification needs another look',
     body: approve
@@ -2753,6 +2774,8 @@ export type AdminJobInput = {
   trainingNotes?: TrainingSection[]
   /** Admin-authored assessment questions. Empty list → built-in category bank. */
   assessmentQuestions?: AssessmentQuestion[]
+  /** Board this card belongs to. Blank = every region (the pre-region behaviour). */
+  region?: string
   requiresVerified: boolean
   status: string
   closesAt?: string
@@ -2864,7 +2887,12 @@ export function sanitizeJob(input: AdminJobInput, existing?: Record<string, unkn
     .filter((question) => question.question && question.options.length >= 2)
     .slice(0, 50)
 
+  // A region we do not recognise would make the card invisible on every board rather than visible
+  // on the wrong one, so an invalid value is refused at the door instead of stored.
+  const regionCheck = validateJobRegion(input.region)
+
   return {
+    region: regionCheck.ok ? regionCheck.value : '',
     title,
     category: (JOB_CATEGORIES as readonly string[]).includes(input.category) ? input.category : 'Data Entry',
     description: String(input.description ?? '').trim().slice(0, 4000),
@@ -3065,6 +3093,41 @@ export type CreatedApplication = {
   workerName: string
 }
 
+/**
+ * The country the member's payout destination is held in, or ''.
+ *
+ * An M-Pesa number is Kenyan by construction, so a member with one is operating in Kenya whatever
+ * their profile says. Bank and PayPal destinations do not record a country today, so they return
+ * '' and the verified country decides. Deliberately a *recent* request rather than "any ever":
+ * somebody who moved from M-Pesa to a foreign bank account should not keep a Kenyan rate forever.
+ *
+ * Failing to read this is not fatal — it only costs the destination evidence, and the verified
+ * country (the stronger signal anyway) is still applied.
+ */
+async function resolvePayoutCountryFor(uid: string): Promise<string> {
+  try {
+    const snap = await adminDb()
+      .collection('payout_requests')
+      .where('uid', '==', uid)
+      .limit(25)
+      .get()
+    // No `orderBy`: it would need a composite index that does not exist yet, and this runs on the
+    // apply path where a failed query would cost the destination evidence. Sorting a bounded page
+    // in memory answers the same question — "was their most recent destination in Kenya?" — with no
+    // index to deploy and no way to break on a project that has not run `deploy:indexes`.
+    const latest = snap.docs
+      .map((d) => (d.data() ?? {}) as Record<string, unknown>)
+      .sort((a, b) => String(b.requestedAt ?? b.createdAt ?? '').localeCompare(String(a.requestedAt ?? a.createdAt ?? '')))[0]
+    if (!latest) return ''
+    const data = latest
+    const stored = String(data.destinationCountry ?? '').trim().toUpperCase()
+    if (stored) return stored
+    return String(data.method ?? '') === 'M-Pesa' ? 'KE' : ''
+  } catch {
+    return ''
+  }
+}
+
 export async function createApplicationServer(uid: string, jobId: string): Promise<CreatedApplication> {
   const db = adminDb()
   const [userSnap, jobSnap] = await Promise.all([db.collection('users').doc(uid).get(), db.collection('jobs').doc(jobId).get()])
@@ -3117,6 +3180,23 @@ export async function createApplicationServer(uid: string, jobId: string): Promi
   const closesAt = job.closesAt as string | undefined
   if (closesAt && new Date(closesAt).getTime() < Date.now()) throw new TransitionError('The application window for this job has closed.', 409)
 
+  // Which region this member is priced at, and on what evidence. `verifiedCountry` is stamped by an
+  // owner at KYC approval and cannot be edited from the profile; M-Pesa is Kenyan by construction;
+  // the self-declared country is the last resort for accounts that predate verification.
+  const [payRegionModule, payoutCountry] = await Promise.all([
+    import('@/lib/pay-regions'),
+    resolvePayoutCountryFor(uid),
+  ])
+  const resolvedRegion = payRegionModule.resolveWorkerRegion({
+    verifiedCountry: user.verifiedCountry,
+    payoutCountry,
+    declaredCountry: user.country,
+  })
+  const pricing = {
+    ...resolvedRegion,
+    amountUsd: payRegionModule.payForRegion(job as { payAmountUsd: number; payByRegion?: never }, resolvedRegion.region),
+  }
+
   const applicationId = `app-${uid.slice(-6)}-${Date.now().toString(36)}`
   const now = new Date().toISOString()
   const appRef = db.collection('applications').doc(applicationId)
@@ -3141,7 +3221,17 @@ export async function createApplicationServer(uid: string, jobId: string): Promi
       jobTitle: jobData.title ?? '',
       workerUid: uid,
       workerEmail: user.email ?? '',
-      payAmountUsd: jobData.payAmountUsd ?? 0,
+      // The number that will be credited on approval, decided here and copied onto the application
+      // so it cannot move underneath the worker afterwards.
+      //
+      // It is priced from the member's VERIFIED region, not the request IP: the IP is the client's
+      // egress, it is free to change, and it can differ between applying and getting paid. A
+      // Nairobi member on a US VPN would otherwise be priced at the US rate, do the work from
+      // Nyeri and be paid it — as a perfectly valid application. See `lib/pay-regions.ts`.
+      payAmountUsd: pricing.amountUsd,
+      payRegion: pricing.region,
+      payRegionBasis: pricing.basis,
+      payRegionCountry: pricing.country,
       status: 'under_review',
       appliedAt: now,
       reviewExpiresAt: new Date(Date.now() + 48 * 3600_000).toISOString(),
@@ -3650,6 +3740,7 @@ export async function listJobsServer(opts: { status?: string; pageSize?: number;
         id: d.id,
         title: String(data.title ?? ''),
         category: String(data.category ?? 'Data Entry'),
+        region: String(data.region ?? ''),
         description: String(data.description ?? ''),
         responsibilities: Array.isArray(data.responsibilities) ? (data.responsibilities as string[]).map(String) : [],
         payAmountUsd: Number(data.payAmountUsd ?? 0) || 0,

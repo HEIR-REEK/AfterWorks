@@ -553,6 +553,11 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
         availableKes: Number(fx.availableKes ?? 0) || 0,
         asOf: (data.asOf as string) ?? null,
       })
+      // The price tiers come from the same read as the balances, so the board, the card page and the
+      // wallet panel all learn about a purchase at the same moment.
+      if (Array.isArray(data.unlockedPriceRegions)) {
+        setUnlockedPriceRegions((data.unlockedPriceRegions as string[]).filter(Boolean))
+      }
       const bonus = (data.welcomeBonus ?? {}) as Partial<WelcomeBonusState>
       setPayouts({
         totalUsd:
@@ -586,11 +591,7 @@ export function AfterWorksProvider({ children }: { children: ReactNode }) {
       if (Array.isArray(data.paidTrainings)) {
         setPaidTrainings((prev) => Array.from(new Set([...prev, ...(data.paidTrainings as string[]).filter(Boolean)])))
       }
-      // The price tiers this member has paid to work. Read back from the server on every wallet
-      // refresh, so a region bought on another device appears here without a re-login.
-      if (Array.isArray(data.unlockedPriceRegions)) {
-        setUnlockedPriceRegions((data.unlockedPriceRegions as string[]).filter(Boolean))
-      }
+
     } catch (err) {
       // A wallet read failing must not wipe the numbers already on screen.
       console.warn('[wallet] refresh failed:', describeError(err))

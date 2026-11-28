@@ -36,7 +36,7 @@ export default function JobDetailPage({
 }) {
   const { id } = use(params)
   const router = useRouter()
-  const { getApplicationForJob, isJobPaid, worker } = useAfterWorks()
+  const { getApplicationForJob, isJobPaid, worker, unlockedPriceRegions, jobRegion } = useAfterWorks()
   const [error, setError] = useState<string | null>(null)
   const [isApplying, setIsApplying] = useState(false)
 
@@ -73,6 +73,13 @@ export default function JobDetailPage({
   // A card has a fee because it has training. No authored sections → assessment-only, free.
   const hasTraining = jobHasTraining(job)
   const trainingRequired = hasTraining
+  // The region this card belongs to, and whether the member has paid to work it. A card priced for
+  // another region is the new gate: the money is the way in, not a VPN.
+  const cardRegion = String((job as { region?: string }).region ?? '')
+  const ownRegion = String(jobRegion?.region ?? '')
+  const foreignPriced = cardRegion !== '' && cardRegion !== ownRegion
+  const unlocked = cardRegion !== '' && unlockedPriceRegions.includes(cardRegion)
+  const needsUnlock = foreignPriced && !unlocked
 
   async function handleApply() {
     setError(null)
@@ -272,7 +279,13 @@ export default function JobDetailPage({
                       className="w-full gap-2 whitespace-normal px-3 text-center leading-snug"
                     >
                       {isApplying && <Loader2 className="size-4 animate-spin" />}
-                      {isApplying ? 'Redirecting...' : isClosed ? 'Slots full' : `Pay ${trainingFee} to Start Training`}
+                      {isApplying
+                        ? 'Redirecting...'
+                        : isClosed
+                          ? 'Slots full'
+                          : needsUnlock
+                            ? `Pay ${trainingFee} to Unlock ${cardRegion} Prices`
+                            : `Pay ${trainingFee} to Start Training`}
                     </Button>
                     <Button
                       render={<Link href="/profile" />}
@@ -284,7 +297,9 @@ export default function JobDetailPage({
                       Request verification in Profile
                     </Button>
                     <p className="text-center text-xs text-muted-foreground">
-                      The course and the task unlock once your identity review is approved — there is no fee for this card. Unlocking another region’s prices is a separate, optional payment.
+                      {needsUnlock
+                        ? `This card is priced for ${cardRegion}. Paying ${trainingFee} opens ${cardRegion} job prices for you — no VPN needed — and the course and task open once your identity review is approved.`
+                        : `Paying ${trainingFee} opens this card's course and its paid task. Payment can be made now; both open once your identity review is approved.`}
                     </p>
                   </div>
                 ) : (
@@ -309,11 +324,13 @@ export default function JobDetailPage({
                     ? 'Redirecting...'
                     : isClosed
                       ? 'Slots full'
-                      : hasTraining
-                        ? isPaid
-                          ? 'Continue Training & Assessment'
-                          : `Pay ${trainingFee} to Unlock Training`
-                        : 'Take Assessment to Apply'}
+                      : needsUnlock
+                        ? `Pay ${trainingFee} to Unlock ${cardRegion} Prices`
+                        : hasTraining
+                          ? isPaid
+                            ? 'Continue Training & Assessment'
+                            : `Pay ${trainingFee} to Unlock Training`
+                          : 'Take Assessment to Apply'}
                 </Button>
               )}
 
@@ -326,7 +343,7 @@ export default function JobDetailPage({
 
               {!application && !isClosed && (
                 <p className="mt-3 text-center text-xs text-muted-foreground">
-                  No fee to submit an application, and no training fee on the card. Working another region’s prices is the only optional payment. Your saved professional details are attached automatically.
+                  No charge to submit an application. A card that shows a fee must be paid before its course and task open — for a card from another region, that payment unlocks that region’s prices, not just this card. Your saved professional details are attached automatically.
                 </p>
               )}
             </div>

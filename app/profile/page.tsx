@@ -149,6 +149,7 @@ function ProfilePageContent() {
     bankName: worker.bankName || '',
     bankBranch: worker.bankBranch || '',
     bankAccountNumber: worker.bankAccountNumber || '',
+    paypalEmail: worker.paypalEmail || '',
     skillsStr: (worker.skills || []).join(', '),
     languagesStr: (worker.languages || []).join(', '),
     school: worker.school || '',
@@ -181,6 +182,7 @@ function ProfilePageContent() {
       bankName: worker.bankName || '',
       bankBranch: worker.bankBranch || '',
       bankAccountNumber: worker.bankAccountNumber || '',
+    paypalEmail: worker.paypalEmail || '',
       skillsStr: (worker.skills || []).join(', '),
       languagesStr: (worker.languages || []).join(', '),
       school: worker.school || '',
@@ -204,6 +206,7 @@ function ProfilePageContent() {
       bankName: worker.bankName || '',
       bankBranch: worker.bankBranch || '',
       bankAccountNumber: worker.bankAccountNumber || '',
+    paypalEmail: worker.paypalEmail || '',
       skillsStr: (worker.skills || []).join(', '),
       languagesStr: (worker.languages || []).join(', '),
       school: worker.school || '',
@@ -264,6 +267,7 @@ function ProfilePageContent() {
       bankName: formData.preferredPayoutMethod === 'Bank Transfer' ? formData.bankName : '',
       bankBranch: formData.preferredPayoutMethod === 'Bank Transfer' ? formData.bankBranch : '',
       bankAccountNumber: formData.preferredPayoutMethod === 'Bank Transfer' ? formData.bankAccountNumber.trim() : '',
+      paypalEmail: formData.preferredPayoutMethod === 'PayPal' ? formData.paypalEmail.trim() : '',
       school: formData.school.trim(),
       course: formData.course.trim(),
       jobExperience: formData.jobExperience.trim(),
@@ -823,6 +827,7 @@ function ProfilePageContent() {
                   >
                     <option value="M-Pesa">M-Pesa (mobile money)</option>
                     <option value="Bank Transfer">Bank Transfer</option>
+                    <option value="PayPal">PayPal</option>
                   </select>
                 </div>
 
@@ -884,6 +889,36 @@ function ProfilePageContent() {
                         className="h-10 w-full rounded-lg border border-input bg-card px-3 text-sm outline-none focus:ring-2 focus:ring-primary"
                         placeholder="e.g. 1234567890"
                       />
+                    </div>
+                  </div>
+                ) : formData.preferredPayoutMethod === 'PayPal' ? (
+                  <div className="animate-in fade-in slide-in-from-top-2 space-y-2">
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-medium text-muted-foreground">PayPal email</label>
+                      <input
+                        type="email"
+                        inputMode="email"
+                        autoComplete="email"
+                        required
+                        value={formData.paypalEmail}
+                        onChange={(e) => setFormData({ ...formData, paypalEmail: e.target.value })}
+                        className="h-10 w-full rounded-lg border border-input bg-card px-3 text-sm outline-none focus:ring-2 focus:ring-primary"
+                        placeholder="you@example.com"
+                      />
+                      <p className="text-[11px] text-muted-foreground">
+                        The email address on the PayPal account that should receive your money. This
+                        address is the account — check it carefully, because a typo sends the payment
+                        somewhere else.
+                      </p>
+                    </div>
+                    {/* Honest status: the details are saved now, the payout is not switched on yet. */}
+                    <div className="flex gap-2 rounded-lg bg-warning/10 p-3 text-xs text-warning">
+                      <AlertCircle className="size-4 shrink-0" />
+                      <span>
+                        PayPal withdrawals are not live yet. You can save your address today and we
+                        will email you when they are — until then, request a payout to M-Pesa or a
+                        bank account.
+                      </span>
                     </div>
                   </div>
                 ) : (

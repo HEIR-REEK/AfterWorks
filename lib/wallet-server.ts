@@ -45,6 +45,9 @@ import {
 } from '@/lib/referral-server'
 import {
   describeDestination,
+  isPayoutMethodPayable,
+  PAYOUT_METHODS,
+  payoutMethodPendingNote,
   isCancellablePayoutStatus,
   isOpenPayoutStatus,
   mapPayoutRequest,
@@ -104,13 +107,19 @@ function toEntry(id: string, data: Record<string, unknown>): WalletEntry {
 
 /** Payout details currently on file, with the member-facing reason when they are incomplete. */
 export function payoutDestinationState(data: Record<string, unknown>): PayoutDestinationState {
-  const method: PayoutMethod = String(data.preferredPayoutMethod ?? 'M-Pesa') === 'Bank Transfer' ? 'Bank Transfer' : 'M-Pesa'
+  // Only the three known methods are allowed through; an unrecognised stored value falls back to
+  // M-Pesa for *display*, but validation below will refuse it rather than coerce it into a payout.
+  const rawMethod = String(data.preferredPayoutMethod ?? 'M-Pesa')
+  const method: PayoutMethod = (PAYOUT_METHODS as readonly string[]).includes(rawMethod)
+    ? (rawMethod as PayoutMethod)
+    : 'M-Pesa'
   const wallet = asRecord(data.wallet)
   const accountName = String(data.name ?? '').trim()
   const phone = String(data.phone ?? wallet.payoutNumber ?? '').trim()
   const bankName = String(data.bankName ?? '').trim()
   const bankBranch = String(data.bankBranch ?? '').trim()
   const bankAccountNumber = String(data.bankAccountNumber ?? '').trim()
+  const paypalEmail = String(data.paypalEmail ?? '').trim()
 
   const check = validatePayoutDestination({
     method,
@@ -120,19 +129,31 @@ export function payoutDestinationState(data: Record<string, unknown>): PayoutDes
     bankName,
     bankBranch,
     bankAccountNumber,
+    paypalEmail,
   })
 
+  const notYetPayable = isPayoutMethodPayable(method) ? null : payoutMethodPendingNote(method)
+
   if (check.ok) {
-    return { ready: true, method, label: describeDestination(check.destination), accountName, problem: null }
+    return {
+      ready: true,
+      method,
+      label: describeDestination(check.destination),
+      accountName,
+      problem: null,
+      notYetPayable,
+    }
   }
 
   const label =
-    method === 'Bank Transfer'
-      ? `Bank transfer · ${bankName || 'bank not set'}`
-      : phone
-        ? `M-Pesa · ${phone}`
-        : 'No payout details saved'
-  return { ready: false, method, label, accountName, problem: check.error }
+    method === 'PayPal'
+      ? `PayPal · ${paypalEmail || 'no address saved'}`
+      : method === 'Bank Transfer'
+        ? `Bank transfer · ${bankName || 'bank not set'}`
+        : phone
+          ? `M-Pesa · ${phone}`
+          : 'No payout details saved'
+  return { ready: false, method, label, accountName, problem: check.error, notYetPayable }
 }
 
 // ─── Wallet snapshot ─────────────────────────────────────────────────────────
@@ -753,9 +774,21 @@ export async function submitPayoutRequest(input: { uid: string; amountUsd: numbe
       bankName: data.bankName,
       bankBranch: data.bankBranch,
       bankAccountNumber: data.bankAccountNumber,
+      paypalEmail: data.paypalEmail,
     })
     if (!destinationCheck.ok) {
       throw new WalletError(`${destinationCheck.error} Add your payout details on the profile page.`, 400, 'destination_incomplete')
+    }
+    // The destination may be recorded and still not be payable yet. Refuse here, before any money
+    // is held: a request that takes the amount out of `availableUsd` and can never be sent would
+    // sit in the console until someone refunded it by hand.
+    if (!isPayoutMethodPayable(destinationCheck.destination.method)) {
+      throw new WalletError(
+        payoutMethodPendingNote(destinationCheck.destination.method) ??
+          'That payout method is not available yet.',
+        400,
+        'method_not_payable',
+      )
     }
 
     const availableUsd = roundUsd(Number(wallet.availableUsd ?? 0) || 0)
@@ -783,6 +816,7 @@ export async function submitPayoutRequest(input: { uid: string; amountUsd: numbe
       bankName: destinationCheck.destination.bankName,
       bankBranch: destinationCheck.destination.bankBranch,
       bankAccountNumber: destinationCheck.destination.bankAccountNumber,
+      paypalEmail: destinationCheck.destination.paypalEmail,
       destinationLabel: describeDestination(destinationCheck.destination),
       requestedAt: now,
       createdAt: now,

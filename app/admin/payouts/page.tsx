@@ -527,6 +527,9 @@ function normaliseRow(row: AdminPayoutRow): PayoutRequestRow {
   const known: PayoutRequestStatus[] = ['pending', 'approved', 'processing', 'paid', 'rejected', 'failed', 'cancelled']
   return {
     ...row,
+    // `paypalEmail` is optional on the console transport (older documents predate it) but the
+    // domain type requires the field, so it is defaulted here once instead of at every use site.
+    destination: { ...row.destination, paypalEmail: row.destination.paypalEmail ?? '' },
     history: (row.history ?? []).map((entry) => ({
       ...entry,
       status: (known as string[]).includes(entry.status) ? (entry.status as PayoutRequestStatus) : 'pending',

@@ -26,6 +26,7 @@ import {
   Loader2,
   Landmark,
   Smartphone,
+  Wallet,
   XCircle,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -81,6 +82,9 @@ export function WithdrawPanel() {
   if (!payouts.kycVerified) blockers.push('Identity verification must be approved. Request it from your profile.')
   if (payouts.accountState && payouts.accountState !== 'active') blockers.push(`Your account is ${payouts.accountState.replace(/_/g, ' ')} — withdrawals are paused.`)
   if (!payouts.destination.ready) blockers.push(payouts.destination.problem || 'Add your payout details on the profile page.')
+  // Details saved but the method cannot be disbursed yet (PayPal). The server refuses this too —
+  // this is so the member reads it here instead of after filling in an amount.
+  if (payouts.destination.notYetPayable) blockers.push(payouts.destination.notYetPayable)
   if (openPayout) blockers.push('You already have a payout request in progress.')
   if (quote.withdrawableUsd < minUsd && !openPayout) {
     blockers.push(
@@ -129,7 +133,12 @@ export function WithdrawPanel() {
           <div>
             <h2 className="text-base font-semibold tracking-tight">Withdraw your earnings</h2>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              Request a payout to your saved {payouts.destination.method === 'Bank Transfer' ? 'bank account' : 'M-Pesa number'}.
+              Request a payout to your saved{' '}
+              {payouts.destination.method === 'Bank Transfer'
+                ? 'bank account'
+                : payouts.destination.method === 'PayPal'
+                  ? 'PayPal account'
+                  : 'M-Pesa number'}.
               {site.payoutSla ? ` ${site.payoutSla}` : ''}
             </p>
           </div>
@@ -204,8 +213,19 @@ export function WithdrawPanel() {
           <div className="flex items-start justify-between gap-3 rounded-xl border border-border bg-muted/25 p-3">
             <div className="min-w-0">
               <p className="flex items-center gap-1.5 text-xs font-semibold">
-                {payouts.destination.method === 'Bank Transfer' ? <Landmark className="size-3.5" /> : <Smartphone className="size-3.5 text-success" />}
+                {payouts.destination.method === 'Bank Transfer' ? (
+                  <Landmark className="size-3.5" />
+                ) : payouts.destination.method === 'PayPal' ? (
+                  <Wallet className="size-3.5 text-primary" />
+                ) : (
+                  <Smartphone className="size-3.5 text-success" />
+                )}
                 {payouts.destination.label}
+                {payouts.destination.notYetPayable && (
+                  <span className="rounded-full bg-warning/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-warning">
+                    Not live
+                  </span>
+                )}
               </p>
               <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">
                 {payouts.destination.ready

@@ -3,6 +3,8 @@ import test from 'node:test'
 import { readFileSync } from 'node:fs'
 import { listingCards, listingCardsByRegion, findListingCard, isListingCardId, boardPayUsd, arrangeBoard, REGION_PAY_BAND } from '@/lib/job-cards'
 import { seedRegionalJobs } from '@/lib/regional-jobs'
+import { seedJobs } from '@/lib/afterworks-data'
+import { payForRegion } from '@/lib/pay-regions'
 import { buildRegionalCatalogue } from '@/lib/job-regions'
 import { SAMPLE_JOBS } from '@/lib/sample-jobs'
 import { categoryForListing, PAY_BASIS } from '@/lib/sample-jobs'
@@ -195,4 +197,44 @@ test('a member’s board opens with its own listings, with micro-work woven in',
   assert.ok(arranged.slice(0, 8).some((card) => !card.id.startsWith('listing-')), 'micro-work must be woven in')
   // Nothing from another board sneaks in.
   assert.ok(arranged.every((card) => !card.region || card.region === 'Asia'))
+})
+
+// ─── The whole board obeys the bands, not just the listing batch ─────────────
+
+test('no card on the Africa board can be priced at or above $15', () => {
+  // The complaint this fixes: the 100 listings were capped, but the 46 global cards still paid their
+  // own scalar — a $70 transcription card appeared on the Africa board at $70.
+  const catalogue = [...seedJobs(), ...seedRegionalJobs(), ...listingCards()]
+  const board = buildRegionalCatalogue(catalogue, { region: 'Africa', source: 'header' })
+  const arranged = arrangeBoard('Africa', board.jobs)
+  const over = arranged.filter((card) => card.payAmountUsd >= 15)
+  assert.deepEqual(over.map((card) => `${card.id} $${card.payAmountUsd}`), [], 'no Africa card may reach $15')
+  // And the fee is money too: never above the same ceiling.
+  for (const card of arranged.filter((entry) => entry.trainingRequired)) {
+    assert.ok(Number(card.trainingFeeUsd ?? 0) <= 14, `${card.id} charges a fee above the Africa ceiling`)
+  }
+})
+
+test('the Americas board sits above $45, global cards included', () => {
+  const catalogue = [...seedJobs(), ...seedRegionalJobs(), ...listingCards()]
+  const board = buildRegionalCatalogue(catalogue, { region: 'Americas', source: 'header' })
+  const arranged = arrangeBoard('Americas', board.jobs)
+  const under = arranged.filter((card) => card.payAmountUsd < 45)
+  assert.deepEqual(under.map((card) => `${card.id} $${card.payAmountUsd}`), [], 'no Americas card may sit under $45')
+})
+
+test('the board shows the price it will pay, not a different one', () => {
+  // The board is priced through `payForRegion`, the same function the payout uses, so the two can
+  // never disagree — which they did while the board served the raw scalar.
+  const catalogue = [...seedJobs(), ...seedRegionalJobs(), ...listingCards()]
+  for (const region of ['Africa', 'Asia', 'Europe', 'Americas'] as const) {
+    const board = buildRegionalCatalogue(catalogue, { region, source: 'header' })
+    for (const card of board.jobs) {
+      const expected = payForRegion(
+        { payAmountUsd: card.payAmountUsd, payByRegion: card.payByRegion },
+        region,
+      )
+      assert.equal(card.payAmountUsd, expected, `${card.id} on ${region} is displayed at a different price than it pays`)
+    }
+  }
 })

@@ -166,6 +166,45 @@ export type RegionalPay = Partial<Record<PayRegion, number>> & { default?: numbe
  * silently making the work unpaid, because "the admin forgot a region" must not become "this
  * member worked for nothing".
  */
+/**
+ * The ceiling a card may pay in each region.
+ *
+ * A card with an explicit `payByRegion` table has already stated what it pays in every region — the
+ * admin decided it. A card **without** one is a legacy global card whose single scalar was written
+ * for the whole world, and paying its full value to a member in a lower-cost region was the reason
+ * the Africa board still showed $70 cards: the card paid whatever it said, wherever the member was.
+ *
+ * So the scalar is a ceiling by region, not a global promise: the same card pays its stated amount
+ * in the region it was authored for and less in the others. These are the caps the platform asked
+ * for — Africa below $15, and a rising ladder above it.
+ */
+export const REGION_PAY_CEILING: Record<PayRegion, number> = {
+  Africa: 14,
+  Asia: 40,
+  Europe: 62,
+  Americas: 75,
+}
+
+/**
+ * The lowest a **legacy** card is raised to on a board that prices above it.
+ *
+ * Only the Americas gets one. The platform asked for that board to sit above $45, and a global card
+ * authored at $12 was landing there and dragging the whole board under the band. Africa has no floor:
+ * raising a card there would mean paying more than the card says, and the ceiling is the rule that
+ * matters on that board. A card with an explicit `payByRegion` table is never adjusted at all — the
+ * admin has stated the price.
+ */
+export const REGION_PAY_FLOOR: Partial<Record<PayRegion, number>> = {
+  Americas: 46,
+}
+
+/**
+ * The amount a card pays in a region.
+ *
+ * An explicit table always wins, because that is the admin stating the price per region. Without
+ * one, the scalar is capped at the region's ceiling. Either way the result is rounded to cents, so
+ * the number on the card and the number credited on approval cannot differ.
+ */
 export function payForRegion(
   card: { payAmountUsd: number; payByRegion?: RegionalPay | null },
   region: PayRegion,
@@ -178,7 +217,17 @@ export function payForRegion(
     const fallback = Number(table.default ?? NaN)
     if (Number.isFinite(fallback) && fallback > 0) return round2(fallback)
   }
-  return round2(scalar)
+  const capped = Math.min(scalar, REGION_PAY_CEILING[region])
+  const floor = REGION_PAY_FLOOR[region]
+  return round2(floor !== undefined ? Math.max(capped, floor) : capped)
+}
+
+/** A card's pay **as the board shows it**: the same rule the payout uses, never the raw scalar. */
+export function boardPayForRegion(
+  card: { payAmountUsd: number; payByRegion?: RegionalPay | null },
+  region: PayRegion,
+): number {
+  return payForRegion(card, region)
 }
 
 function round2(value: number): number {
@@ -246,6 +295,22 @@ export function validateRegionalPay(
   }
 
   return { ok: errors.length === 0, value: errors.length === 0 ? value : null, errors }
+}
+
+/**
+ * The training fee for a card, capped by the same rule as its pay.
+ *
+ * A fee is money taken from the member, so a card worth $14 in Africa must not charge a fee written
+ * for the Americas. A card that states its own fee is capped at the region ceiling too — the console
+ * remains the place to set a lower price deliberately.
+ */
+export function trainingFeeForRegion(
+  card: { trainingFeeUsd?: number | null },
+  region: PayRegion,
+): number {
+  const fee = Number(card.trainingFeeUsd ?? 0) || 0
+  if (fee <= 0) return 0
+  return round2(Math.min(fee, REGION_PAY_CEILING[region]))
 }
 
 /** Reverse view for the admin editor: which countries sit in this region. */

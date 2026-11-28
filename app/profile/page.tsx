@@ -33,6 +33,7 @@ import { formatKesValue, formatUsd } from '@/lib/afterworks-data'
 import { formatTimestamp } from '@/lib/datetime'
 import { KENYAN_BANKS } from '@/lib/banks'
 import { CountrySelect, PhoneInput } from '@/components/phone-input'
+import { useDetectedCountry } from '@/components/use-detected-country'
 import { DEFAULT_COUNTRY, guessCountryFromE164, isKnownCountry, normalisePhone } from '@/lib/countries'
 import {
   PAYOUT_METHOD_PRESENTATION,
@@ -63,7 +64,11 @@ function ProfilePageContent() {
   const { worker, wallet, applications, getJob, saveProfile, claimWelcomeBonus, payouts, onboarding, refreshWallet, pending, mode } = useAfterWorks()
   const { user } = useAuth()
   const searchParams = useSearchParams()
+  // Where the *connection* says this member is, for the phone picker. Complements the device's
+  // time zone: an IP follows a VPN, a clock does not. `pending` holds the device fallback back for
+  // one round trip so a VPN member is not flashed a Kenyan flag first.
   const [isEditing, setIsEditing] = useState(false)
+  const geo = useDetectedCountry(isEditing)
   const [saving, setSaving] = useState(false)
   const [showToast, setShowToast] = useState(false)
   const [toastMessage, setToastMessage] = useState('Profile updated successfully!')
@@ -796,9 +801,12 @@ function ProfilePageContent() {
                   id="country"
                   value={formData.country}
                   onChange={(country) => setFormData({ ...formData, country })}
-                  // A brand-new profile opens on the country this device reports, and the member
-                  // can override it in one tap. Never fires once a country is already set.
+                  // A brand-new profile opens on the country the *connection* reports, falling back
+                  // to the device's time zone, and the member can override it in one tap. Never
+                  // fires once a country is already set.
                   autoDetect
+                  detectedCountry={geo.country}
+                  detectionPending={geo.pending}
                   required
                 />
 
@@ -937,6 +945,8 @@ function ProfilePageContent() {
                       country={formData.phoneCountry}
                       onChange={(phone, phoneCountry) => setFormData({ ...formData, phone, phoneCountry })}
                       autoDetect
+                      detectedCountry={geo.country}
+                      detectionPending={geo.pending}
                       required
                       error={phoneError}
                       hint="Your M-Pesa number. It must match the name on your verified ID, and it can only be linked to one AfterWorks account."

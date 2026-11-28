@@ -22,10 +22,23 @@
  * the parent decides whether it is valid. Switching country keeps the national number and only
  * replaces the code — which is the behaviour somebody re-typing a number expects.
  *
- * `autoDetect` preselects the country from the device (see `detectCountry` in `lib/countries`).
- * It fires once, only while the number is still empty, and only when the parent has not already
- * chosen a country — a preselection must never overwrite a choice somebody has made, nor appear
- * mid-typing. `onCountryDetected` reports it so the form can show what it assumed.
+ * `autoDetect` preselects the country, once, only while the number is still empty, and only when
+ * the parent has not already chosen a country — a preselection must never overwrite a choice
+ * somebody has made, nor appear mid-typing. `onCountryDetected` reports it so the form can show
+ * what it assumed.
+ *
+ * Two signals answer "which country", and the order between them is the point:
+ *
+ *  1. **`detectedCountry`** — the provider's server-side guess (`/api/geo`), which sees the IP the
+ *     request actually arrived from. A VPN changes that IP, which is exactly the case the device
+ *     cannot handle.
+ *  2. **The device's time zone** (`detectCountry`), used only when the server could not tell and
+ *     only after the provider has finished asking. A tunnel does not change a handset's clock, so
+ *     this still answers correctly for a member who is simply not on a VPN.
+ *
+ * The server guess is what makes the VPN case work; the time zone is kept because it is free and
+ * covers the (common) deployment where no geo source is configured. Both are preselections and
+ * neither survives a choice the member has made.
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -39,6 +52,7 @@ import {
   normalisePhone,
   rememberDetectedCountry,
 } from '@/lib/countries'
+import { preselectCountry } from '@/lib/geo-country'
 import { cn } from '@/lib/utils'
 
 export type PhoneInputProps = {
@@ -57,10 +71,22 @@ export type PhoneInputProps = {
   /** Rendered under the field when there is no error. */
   hint?: string
   className?: string
-  /** Preselect the country from the device's time zone / locale, once, while the field is empty. */
+  /** Preselect the country once, while the field is empty. */
   autoDetect?: boolean
   /** Fires with the ISO code the detector chose, so the parent can label it as an assumption. */
   onCountryDetected?: (countryCode: string) => void
+  /**
+   * The country the provider resolved from the request IP (`/api/geo`), or `null` when it could
+   * not tell. Takes precedence over the device's time zone, because an IP follows a VPN and a
+   * clock does not.
+   */
+  detectedCountry?: string | null
+  /**
+   * True while `detectedCountry` is still being fetched. The device fallback waits for this: on a
+   * VPN, guessing from the clock first and correcting a moment later would flash a Kenyan flag and
+   * a `+254` prefix at exactly the member who complained about it.
+   */
+  detectionPending?: boolean
 }
 
 export function PhoneInput({
@@ -77,6 +103,8 @@ export function PhoneInput({
   className,
   autoDetect = false,
   onCountryDetected,
+  detectedCountry = null,
+  detectionPending = false,
 }: PhoneInputProps) {
   // An empty or unrecognised country is a real state ("not chosen yet"), not a licence to paint
   // Kenya on the form — so `selected` is the display fallback while the *stored* value stays empty
@@ -84,28 +112,35 @@ export function PhoneInput({
   const chosen = isKnownCountry(country) ? country : ''
   const selected = chosen || DEFAULT_COUNTRY
   const meta = useMemo(() => COUNTRIES.find((c) => c.code === selected) ?? COUNTRIES[0]!, [selected])
-  const [detected, setDetected] = useState<string | null>(null)
+  const [detected, setDetected] = useState<{ code: string; source: 'provider' | 'device' } | null>(null)
   const autoDetectDone = useRef(false)
 
   useEffect(() => {
     if (!autoDetect || disabled || autoDetectDone.current) return
-    // Never preselect over a value that already exists, and never interrupt a half-typed number.
-    if (chosen || value.trim()) return
+    // The precedence rule lives in `preselectCountry` so it can be tested as behaviour rather
+    // than as the order two lines happen to appear in this file.
+    const pick = preselectCountry({
+      provider: detectedCountry,
+      device: detectCountry,
+      pending: detectionPending,
+      chosen,
+      nationalNumber: value,
+    })
+    if (!pick) return
     autoDetectDone.current = true
-    const guess = detectCountry()
-    if (!guess || guess === selected) return
-    rememberDetectedCountry(guess)
-    setDetected(guess)
-    onChange(value, guess)
-    onCountryDetected?.(guess)
+    if (pick.code === selected) return
+    rememberDetectedCountry(pick.code)
+    setDetected({ code: pick.code, source: pick.source })
+    onChange(value, pick.code)
+    onCountryDetected?.(pick.code)
     // `autoDetectDone` is a ref, not a dependency: it is a latch, not a value to re-run on.
-  }, [autoDetect, chosen, disabled, onChange, onCountryDetected, selected, value])
+  }, [autoDetect, chosen, disabled, detectedCountry, detectionPending, onChange, onCountryDetected, selected, value])
 
   // The full international preview, so the member can see exactly what will be stored and
   // compared for uniqueness — which is the thing the old single field never showed them.
   const preview = value.trim() ? normalisePhone(value, selected) : null
   const previewText = preview?.ok ? preview.display : value.trim() ? null : `+${meta.dial} `
-  const detectedCountry = detected ? COUNTRIES.find((c) => c.code === detected) ?? null : null
+  const detectedMeta = detected ? COUNTRIES.find((c) => c.code === detected.code) ?? null : null
 
   return (
     <div className={cn('flex flex-col gap-1.5', className)}>
@@ -171,11 +206,12 @@ export function PhoneInput({
       ) : (
         <>
           {hint ? <p className="text-[11px] text-muted-foreground">{hint}</p> : null}
-          {detectedCountry ? (
+          {detectedMeta ? (
             <p className="flex items-center gap-1 text-[11px] text-muted-foreground">
               <MapPin className="size-3 shrink-0" aria-hidden="true" />
-              We filled in {detectedCountry.flag} {detectedCountry.name} from this device. Change it above if that is
-              wrong.
+              {detected?.source === 'provider'
+                ? `We filled in ${detectedMeta.flag} ${detectedMeta.name} from your connection. Change it above if that is wrong.`
+                : `We filled in ${detectedMeta.flag} ${detectedMeta.name} from this device. Change it above if that is wrong.`}
             </p>
           ) : null}
           {!hint ? (
@@ -202,6 +238,8 @@ export function CountrySelect({
   className,
   autoDetect = false,
   onCountryDetected,
+  detectedCountry = null,
+  detectionPending = false,
 }: {
   value: string
   onChange: (countryName: string) => void
@@ -210,30 +248,41 @@ export function CountrySelect({
   required?: boolean
   disabled?: boolean
   className?: string
-  /** Preselect from the device's time zone / locale, once, while nothing has been chosen. */
+  /** Preselect once, while nothing has been chosen. */
   autoDetect?: boolean
   onCountryDetected?: (countryName: string) => void
+  /** The provider's server-side guess; outranks the device's time zone (a VPN moves an IP). */
+  detectedCountry?: string | null
+  /** True while that guess is still in flight — the device fallback waits rather than correcting. */
+  detectionPending?: boolean
 }) {
   const current = COUNTRIES.find((c) => c.name.toLowerCase() === value.trim().toLowerCase())
-  const [detected, setDetected] = useState<string | null>(null)
+  const [detected, setDetected] = useState<{ code: string; source: 'provider' | 'device' } | null>(null)
   const autoDetectDone = useRef(false)
 
   useEffect(() => {
     if (!autoDetect || disabled || autoDetectDone.current) return
-    // A member who has already picked a country keeps it; the detector only fills a blank.
-    if (current || value.trim()) return
+    // `chosen` is the ISO code of whatever is currently selected; a name we do not recognise is
+    // left alone, because rewriting an operator-typed country would be a surprise.
+    const pick = preselectCountry({
+      provider: detectedCountry,
+      device: detectCountry,
+      pending: detectionPending,
+      chosen: current?.code ?? '',
+      // The national field does not exist here, so only an existing country holds it back.
+      nationalNumber: '',
+    })
+    if (!pick) return
     autoDetectDone.current = true
-    const guess = detectCountry()
-    if (!guess) return
-    const meta = COUNTRIES.find((c) => c.code === guess)
-    if (!meta || meta.name.toLowerCase() === value.trim().toLowerCase()) return
-    rememberDetectedCountry(guess)
-    setDetected(guess)
+    const meta = COUNTRIES.find((c) => c.code === pick.code)
+    if (!meta) return
+    rememberDetectedCountry(pick.code)
+    setDetected({ code: pick.code, source: pick.source })
     onChange(meta.name)
     onCountryDetected?.(meta.name)
-  }, [autoDetect, current, disabled, onChange, onCountryDetected, value])
+  }, [autoDetect, current, detectedCountry, detectionPending, disabled, onChange, onCountryDetected, value])
 
-  const detectedCountry = detected ? COUNTRIES.find((c) => c.code === detected) ?? null : null
+  const detectedMeta = detected ? COUNTRIES.find((c) => c.code === detected.code) ?? null : null
 
   return (
     <div className={cn('flex flex-col gap-1.5', className)}>
@@ -261,10 +310,12 @@ export function CountrySelect({
         </select>
         <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
       </div>
-      {detectedCountry ? (
+      {detectedMeta ? (
         <p className="flex items-center gap-1 text-[11px] text-muted-foreground">
           <MapPin className="size-3 shrink-0" aria-hidden="true" />
-          Detected {detectedCountry.flag} {detectedCountry.name} — change it if that is wrong.
+          {detected?.source === 'provider'
+            ? `Detected ${detectedMeta.flag} ${detectedMeta.name} from your connection — change it if that is wrong.`
+            : `Detected ${detectedMeta.flag} ${detectedMeta.name} — change it if that is wrong.`}
         </p>
       ) : null}
     </div>

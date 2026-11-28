@@ -222,6 +222,13 @@ function JobsPageInner() {
         </div>
       </div>
 
+      {/* The demo listings are labelled wherever they appear, because an employment card that looks
+          like a verified vacancy is a claim the platform must not make. */}
+      <p className="text-[11px] leading-relaxed text-muted-foreground">
+        Cards built from our sample listings are demo content: the employers are fictional and the pay is
+        illustrative. They are not verified vacancies. Real work is published by the operations team.
+      </p>
+
       {/* A locked board: the cards are visible, blurred and inert. Nothing in this subtree is
           focusable, so removing the blur reveals a card that still cannot be clicked. */}
       {activeRegionEntry && !activeRegionEntry.open ? (

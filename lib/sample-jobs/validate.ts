@@ -1,10 +1,10 @@
 /**
  * Structural checks for the 100 sample listings.
  *
- * Deliberately a plain function rather than a test-only helper: it is what a CI run asserts, and
- * what an operator can call before importing the batch. It checks the rules the dataset claims to
- * obey — 25 per region, no repeated title within a region, real country spread, a currency that
- * matches the country, and every required field present and non-empty.
+ * Deliberately a plain function rather than a test-only helper: it is what CI asserts, and what an
+ * operator can call before importing the batch. It checks the rules the dataset claims to obey —
+ * 25 per region, no repeated title within a region, real country spread, a currency that matches
+ * the country, and every required field present and non-empty.
  */
 
 import { SAMPLE_JOBS, SAMPLE_JOBS_BY_REGION } from './index'

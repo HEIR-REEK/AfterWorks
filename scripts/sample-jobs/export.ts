@@ -12,9 +12,9 @@
 
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { SAMPLE_JOBS, SAMPLE_JOBS_BY_REGION, SAMPLE_JOBS_DISCLOSURE } from './index'
-import { validateSampleJobs } from './validate'
-import type { SampleJob, SampleRegion } from './types'
+import { SAMPLE_JOBS, SAMPLE_JOBS_BY_REGION, SAMPLE_JOBS_DISCLOSURE } from '@/lib/sample-jobs'
+import { validateSampleJobs } from '@/lib/sample-jobs/validate'
+import type { SampleJob, SampleRegion } from '@/lib/sample-jobs/types'
 
 const OUT = resolve(process.cwd(), 'data/sample-job-listings')
 
